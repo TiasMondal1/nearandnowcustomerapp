@@ -19,7 +19,6 @@ import { useLocation } from "../location/locationContent";
 
 const API_BASE = "http://192.168.1.117:3001";
 
-/* ───────── COLORS ───────── */
 const BG = "#05030A";
 const CARD = "#140F2D";
 const CARD_SOFT = "#1A1440";
@@ -36,8 +35,6 @@ export default function CheckoutScreen() {
   const { location } = useLocation();
 
   const [payment, setPayment] = useState<PaymentMode>("upi");
-
-  /* ───────── SAME PRICING LOGIC AS cart.tsx ───────── */
 
   const derivedSubtotal = useMemo(
     () => items.reduce((s, i) => s + i.price * i.quantity, 0),
@@ -113,7 +110,6 @@ export default function CheckoutScreen() {
     typeof location.latitude === "number" &&
     typeof location.longitude === "number";
 
-  /* ───────── SLIDE TO PAY ───────── */
   const placeOrder = async () => {
     if (!location) {
       alert("Please select a delivery location");
@@ -126,7 +122,6 @@ export default function CheckoutScreen() {
     }
 
     try {
-      // 🔹 Group items by store
       const grouped: Record<string, typeof items> = {};
 
       items.forEach((item) => {
@@ -148,7 +143,6 @@ export default function CheckoutScreen() {
         }),
       );
 
-      // 🔒 HARD SAFETY (UI already blocks this)
       if (ordersPayload.length > 2) {
         alert("You can order from a maximum of 2 stores");
         return;
@@ -222,7 +216,6 @@ export default function CheckoutScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      {/* HEADER */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <MaterialCommunityIcons name="arrow-left" size={24} color="#fff" />
@@ -235,7 +228,6 @@ export default function CheckoutScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
-        {/* ITEMS */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Items</Text>
 
@@ -266,7 +258,6 @@ export default function CheckoutScreen() {
           ))}
         </View>
 
-        {/* COUPON */}
         <TouchableOpacity
           style={styles.couponCard}
           activeOpacity={0.85}
@@ -319,7 +310,6 @@ export default function CheckoutScreen() {
           </View>
         )}
 
-        {/* BILL */}
         <View style={styles.billCard}>
           <BillRow label="Items Total" value={derivedSubtotal} />
           {convFee > 0 && <BillRow label="Convenience Fee" value={convFee} />}
@@ -346,7 +336,6 @@ export default function CheckoutScreen() {
           </View>
         </View>
 
-        {/* PAYMENT */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Payment Method</Text>
 
@@ -366,7 +355,6 @@ export default function CheckoutScreen() {
         </View>
       </ScrollView>
 
-      {/* SLIDE TO PAY */}
       <View style={styles.slideDock}>
         <Text style={styles.slideHint}>Slide to Pay</Text>
         <View style={styles.slider}>
@@ -458,7 +446,6 @@ export default function CheckoutScreen() {
               onPress={() => {
                 setShowSuccess(false);
 
-                // ⏳ small delay so modal closes smoothly
                 setTimeout(() => {
                   router.replace("../(tabs)/orders");
                 }, 200);
@@ -472,8 +459,6 @@ export default function CheckoutScreen() {
     </SafeAreaView>
   );
 }
-
-/* ───────── SMALL COMPONENTS ───────── */
 
 function BillRow({
   label,
@@ -522,8 +507,6 @@ function PaymentOption({
     </TouchableOpacity>
   );
 }
-
-/* ───────── STYLES ───────── */
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: BG },

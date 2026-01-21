@@ -27,12 +27,7 @@ function AddressCard({
   return (
     <Swipeable
       renderLeftActions={() => (
-        <Action
-          color="#2ecc71"
-          icon="pencil"
-          label="Edit"
-          onPress={onEdit}
-        />
+        <Action color="#2ecc71" icon="pencil" label="Edit" onPress={onEdit} />
       )}
       renderRightActions={() => (
         <Action
@@ -66,8 +61,6 @@ function AddressCard({
   );
 }
 
-/* ---------- Swipe action ---------- */
-
 function Action({
   color,
   icon,
@@ -91,8 +84,6 @@ function Action({
 }
 
 export default memo(AddressCard);
-
-/* ---------- Styles ---------- */
 
 const styles = StyleSheet.create({
   card: {

@@ -1,12 +1,12 @@
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-    FlatList,
-    RefreshControl,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  FlatList,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -14,9 +14,6 @@ import { Alert } from "react-native";
 import { getSession } from "../../session";
 import AddressCard from "./AddressCard";
 import { useLocation } from "./locationContent";
-
-
-
 
 const API_BASE = "http://192.168.1.117:3001";
 const PRIMARY = "#765fba";
@@ -82,39 +79,38 @@ export default function LocationIndex() {
 
       router.replace("/home");
     },
-    [setLocation]
+    [setLocation],
   );
 
   const deleteLocation = useCallback(
-  async (id: string) => {
-    Alert.alert(
-      "Delete address",
-      "Are you sure you want to remove this address?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            const session = await getSession();
-            if (!session?.token) return;
+    async (id: string) => {
+      Alert.alert(
+        "Delete address",
+        "Are you sure you want to remove this address?",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Delete",
+            style: "destructive",
+            onPress: async () => {
+              const session = await getSession();
+              if (!session?.token) return;
 
-            await fetch(`${API_BASE}/customer/locations/${id}`, {
-              method: "DELETE",
-              headers: {
-                Authorization: `Bearer ${session.token}`,
-              },
-            });
+              await fetch(`${API_BASE}/customer/locations/${id}`, {
+                method: "DELETE",
+                headers: {
+                  Authorization: `Bearer ${session.token}`,
+                },
+              });
 
-            fetchLocations(); // refresh list
+              fetchLocations(); // refresh list
+            },
           },
-        },
-      ]
-    );
-  },
-  [fetchLocations]
-);
-
+        ],
+      );
+    },
+    [fetchLocations],
+  );
 
   const renderItem = useCallback(
     ({ item }: { item: LocationItem }) => {
@@ -127,101 +123,82 @@ export default function LocationIndex() {
         <TouchableOpacity
           activeOpacity={0.85}
           onPress={() => selectLocation(item)}
-          style={[
-            styles.card,
-            item.is_default && styles.defaultCard,
-          ]}
+          style={[styles.card, item.is_default && styles.defaultCard]}
         >
           <View style={styles.row}>
             <Text style={styles.label}>{item.label}</Text>
-            {item.is_default && (
-              <Text style={styles.badge}>DEFAULT</Text>
-            )}
+            {item.is_default && <Text style={styles.badge}>DEFAULT</Text>}
           </View>
 
           <Text style={styles.address}>{item.address}</Text>
 
-          <Text style={styles.meta}>
-            Delivering to {receiver}
-          </Text>
+          <Text style={styles.meta}>Delivering to {receiver}</Text>
         </TouchableOpacity>
       );
     },
-    [selectLocation]
+    [selectLocation],
   );
 
   const emptyComponent = useMemo(
     () => (
       <View style={styles.emptyWrap}>
-        <Text style={styles.emptyTitle}>
-          No addresses yet
-        </Text>
-        <Text style={styles.emptySub}>
-          Add one to start ordering
-        </Text>
+        <Text style={styles.emptyTitle}>No addresses yet</Text>
+        <Text style={styles.emptySub}>Add one to start ordering</Text>
 
         <TouchableOpacity
           style={styles.emptyBtn}
           onPress={() => router.push("/location/add")}
         >
-          <Text style={styles.emptyBtnText}>
-            Add Address
-          </Text>
+          <Text style={styles.emptyBtnText}>Add Address</Text>
         </TouchableOpacity>
       </View>
     ),
-    []
+    [],
   );
 
   return (
     <SafeAreaView style={styles.safe}>
-      <Text style={styles.title}>
-        Choose delivery address
-      </Text>
+      <Text style={styles.title}>Choose delivery address</Text>
 
-     <FlatList
-  data={locations}
-  keyExtractor={(i) => i.id}
-  contentContainerStyle={
-    !locations.length && !loading ? { flex: 1 } : undefined
-  }
-  refreshControl={
-    <RefreshControl
-      refreshing={refreshing}
-      onRefresh={onRefresh}
-      tintColor={PRIMARY}
-    />
-  }
-  
-  showsVerticalScrollIndicator={false}
-  ListEmptyComponent={loading ? <SkeletonList /> : emptyComponent}
-  renderItem={({ item }) => (
-    <AddressCard
-      id={item.id}                     // ✅ REQUIRED for gestures
-      label={item.label}
-      address={item.address}
-      onSelect={() => selectLocation(item)} 
-      isDefault={item.is_default}
-      onEdit={() =>
-        router.push({
-          pathname: "/location/edit",
-          params: { id: item.id },
-        })
-      }
-      onDelete={() => deleteLocation(item.id)}
-    />
-  )}
-/>
-
+      <FlatList
+        data={locations}
+        keyExtractor={(i) => i.id}
+        contentContainerStyle={
+          !locations.length && !loading ? { flex: 1 } : undefined
+        }
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={PRIMARY}
+          />
+        }
+        showsVerticalScrollIndicator={false}
+        ListEmptyComponent={loading ? <SkeletonList /> : emptyComponent}
+        renderItem={({ item }) => (
+          <AddressCard
+            id={item.id} // ✅ REQUIRED for gestures
+            label={item.label}
+            address={item.address}
+            onSelect={() => selectLocation(item)}
+            isDefault={item.is_default}
+            onEdit={() =>
+              router.push({
+                pathname: "/location/edit",
+                params: { id: item.id },
+              })
+            }
+            onDelete={() => deleteLocation(item.id)}
+          />
+        )}
+      />
 
       {!!locations.length && (
         <TouchableOpacity
           style={styles.addBtn}
           onPress={() => router.push("/location/add")}
         >
-          <Text style={styles.addText}>
-            ＋ Add new address
-          </Text>
+          <Text style={styles.addText}>＋ Add new address</Text>
         </TouchableOpacity>
       )}
     </SafeAreaView>

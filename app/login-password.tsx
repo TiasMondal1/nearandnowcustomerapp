@@ -1,4 +1,3 @@
-// app/login-password.tsx
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useState } from "react";
 import {
@@ -30,9 +29,7 @@ export default function LoginPasswordScreen() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const isValid =
-    email.trim().includes("@") &&
-    password.trim().length >= 6;
+  const isValid = email.trim().includes("@") && password.trim().length >= 6;
 
   const handleLogin = async () => {
     if (!isValid || loading) return;
@@ -86,7 +83,6 @@ export default function LoginPasswordScreen() {
         keyboardVerticalOffset={Platform.OS === "ios" ? 80 : 0}
       >
         <View style={styles.container}>
-          {/* HEADER */}
           <View style={styles.header}>
             <Text style={styles.pageName}>Login</Text>
             <Text style={styles.title}>Welcome back</Text>
@@ -94,7 +90,6 @@ export default function LoginPasswordScreen() {
               Login with your password instead of an OTP.
             </Text>
 
-            {/* PHONE CHIP (kept as-is) */}
             <View style={styles.phoneChip}>
               <Text style={styles.phoneChipLabel}>Phone</Text>
               <Text style={styles.phoneChipValue}>
@@ -103,9 +98,7 @@ export default function LoginPasswordScreen() {
             </View>
           </View>
 
-          {/* FORM */}
           <View style={styles.form}>
-            {/* EMAIL INPUT (NEW, typeable) */}
             <View style={styles.inputBlock}>
               <Text style={styles.label}>Email</Text>
               <TextInput
@@ -120,7 +113,6 @@ export default function LoginPasswordScreen() {
               />
             </View>
 
-            {/* PASSWORD INPUT (unchanged) */}
             <View style={styles.inputBlock}>
               <Text style={styles.label}>Password</Text>
               <TextInput
@@ -135,15 +127,12 @@ export default function LoginPasswordScreen() {
 
             <TouchableOpacity
               style={styles.linkRow}
-              onPress={() =>
-                Alert.alert("Coming soon", "Reset password flow")
-              }
+              onPress={() => Alert.alert("Coming soon", "Reset password flow")}
             >
               <Text style={styles.linkText}>Forgot password?</Text>
             </TouchableOpacity>
           </View>
 
-          {/* BOTTOM */}
           <View style={styles.bottomSection}>
             <TouchableOpacity
               activeOpacity={isValid && !loading ? 0.85 : 1}
@@ -172,7 +161,6 @@ export default function LoginPasswordScreen() {
   );
 }
 
-/* STYLES — UNCHANGED */
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,

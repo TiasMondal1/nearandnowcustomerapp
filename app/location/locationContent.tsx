@@ -1,9 +1,9 @@
 import React, {
-    createContext,
-    ReactNode,
-    useCallback,
-    useContext,
-    useState,
+  createContext,
+  ReactNode,
+  useCallback,
+  useContext,
+  useState,
 } from "react";
 
 export type LocationSource = "profile" | "saved" | "manual";
@@ -11,7 +11,7 @@ export type LocationSource = "profile" | "saved" | "manual";
 export type ActiveLocation = {
   latitude: number;
   longitude: number;
-  label: string; // 👈 REQUIRED, fixes TS error
+  label: string; ///gpt5 code -> const fix ( couldnt fix it on prod )
   address?: string;
   source: LocationSource;
 };
@@ -23,7 +23,7 @@ type LocationContextType = {
 };
 
 const LocationContext = createContext<LocationContextType | undefined>(
-  undefined
+  undefined,
 );
 
 export function LocationProvider({ children }: { children: ReactNode }) {

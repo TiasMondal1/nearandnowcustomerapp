@@ -15,7 +15,6 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useCart } from "../cart/CartContext";
 
-/* ───────── COLORS ───────── */
 const BG = "#05030A";
 const CARD = "#140F2D";
 const PRIMARY = "#765fba";
@@ -28,14 +27,10 @@ export default function CartScreen() {
   const [showInfo, setShowInfo] = useState(false);
   const CHECKOUT_HEIGHT = 104;
 
-  /* ───────── LIVE CALCULATIONS (DERIVED) ───────── */
-
-  // 🛒 Subtotal
   const derivedSubtotal = useMemo(() => {
     return items.reduce((sum, item) => sum + item.price * item.quantity, 0);
   }, [items]);
 
-  // 🧾 Convenience Fee
   const convFee = useMemo(() => {
     if (derivedSubtotal <= 0) return 0;
     if (derivedSubtotal < 100) return 60;
@@ -43,7 +38,6 @@ export default function CartScreen() {
     return 0;
   }, [derivedSubtotal]);
 
-  // 📦 Packaging Fee
   const totalItems = useMemo(() => {
     return items.reduce((sum, i) => sum + i.quantity, 0);
   }, [items]);
@@ -53,7 +47,6 @@ export default function CartScreen() {
     return Math.ceil(totalItems / 3) * 5;
   }, [totalItems]);
 
-  // 🚚 DELIVERY FEE (NEW, PER STORE)
   const deliveryFee = useMemo(() => {
     const storeMap = new Map<string, number>();
 
@@ -73,14 +66,12 @@ export default function CartScreen() {
     return total;
   }, [items]);
 
-  // 💚 Final Amount
   const projectedAmount = useMemo(() => {
     return derivedSubtotal + convFee + packagingFee + deliveryFee;
   }, [derivedSubtotal, convFee, packagingFee, deliveryFee]);
 
   return (
     <SafeAreaView style={styles.safe}>
-      {/* HEADER */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <MaterialCommunityIcons name="arrow-left" size={24} color="#fff" />
@@ -97,7 +88,6 @@ export default function CartScreen() {
         )}
       </View>
 
-      {/* EMPTY */}
       {items.length === 0 ? (
         <View style={styles.empty}>
           <MaterialCommunityIcons name="cart-outline" size={64} color={MUTED} />
@@ -105,7 +95,6 @@ export default function CartScreen() {
         </View>
       ) : (
         <>
-          {/* CART LIST */}
           <FlatList
             data={items}
             keyExtractor={(item) => item.product_id}
@@ -177,7 +166,6 @@ export default function CartScreen() {
             }}
           />
 
-          {/* CHECKOUT BAR */}
           <View style={[styles.checkoutBar, { height: CHECKOUT_HEIGHT }]}>
             <View>
               <View style={styles.projectedRow}>
@@ -206,7 +194,6 @@ export default function CartScreen() {
         </>
       )}
 
-      {/* INFO MODAL (UNCHANGED TEXT + LIVE VALUES) */}
       <Modal transparent animationType="fade" visible={showInfo}>
         <Pressable
           style={styles.modalOverlay}
@@ -228,12 +215,12 @@ export default function CartScreen() {
 
               <View style={styles.divider} />
 
-              <Text style={styles.modalItem}>📦 Packaging Fee</Text>
+              <Text style={styles.modalItem}>Packaging Fee</Text>
               <Text style={styles.modalDesc}>₹5 per 3 items (rounded up)</Text>
 
               <View style={styles.divider} />
 
-              <Text style={styles.modalItem}>🚚 Delivery Fee</Text>
+              <Text style={styles.modalItem}>Delivery Fee</Text>
               <Text style={styles.modalDesc}>₹4 per 500m per store</Text>
 
               <View style={styles.divider} />
@@ -260,8 +247,6 @@ export default function CartScreen() {
     </SafeAreaView>
   );
 }
-
-/* ─────────── STYLES (ENHANCED ONLY) ─────────── */
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: BG },

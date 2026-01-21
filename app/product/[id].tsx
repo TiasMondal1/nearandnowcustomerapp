@@ -18,7 +18,6 @@ import { useCart } from "../cart/CartContext";
 const API_BASE = "http://192.168.1.117:3001";
 const { width } = Dimensions.get("window");
 
-
 const COLORS = {
   bg: "#05030A",
   card: "#140F2D",
@@ -42,7 +41,6 @@ export default function ProductDetailsScreen() {
 
   const cartItem = items.find((i) => i.product_id === product?.id);
 
-
   useEffect(() => {
     fetchProduct();
   }, [id]);
@@ -62,23 +60,18 @@ export default function ProductDetailsScreen() {
       setProduct(json.product);
       setDetails(json.details || null);
 
-      const cover = json.product?.image_url
-        ? [json.product.image_url]
-        : [];
+      const cover = json.product?.image_url ? [json.product.image_url] : [];
 
-      const gallery =
-        json.images?.map((i: any) => i.image_url) || [];
+      const gallery = json.images?.map((i: any) => i.image_url) || [];
 
       setImages([...cover, ...gallery]);
     } catch (e) {
-      console.error("❌ PRODUCT FETCH ERROR", e);
+      console.error(" PRODUCT FETCH ERROR", e);
       setProduct(null);
     } finally {
       setLoading(false);
     }
   };
-
- 
 
   if (loading) {
     return (
@@ -96,11 +89,8 @@ export default function ProductDetailsScreen() {
     );
   }
 
-
-
   return (
     <SafeAreaView style={styles.safe}>
-     
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <MaterialCommunityIcons name="arrow-left" size={22} color="#fff" />
@@ -111,12 +101,10 @@ export default function ProductDetailsScreen() {
         </Text>
       </View>
 
-     
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 180 }}
       >
-        {/* IMAGE CAROUSEL */}
         <View style={styles.imageWrap}>
           <FlatList
             data={images}
@@ -139,11 +127,9 @@ export default function ProductDetailsScreen() {
           />
         </View>
 
-        {/* DETAILS CARD */}
         <View style={styles.detailsCard}>
           <Text style={styles.name}>{product.name}</Text>
 
-          {/* PRICE */}
           <View style={styles.priceRow}>
             <MaterialCommunityIcons
               name="currency-inr"
@@ -154,7 +140,6 @@ export default function ProductDetailsScreen() {
             <Text style={styles.unit}> / {product.unit}</Text>
           </View>
 
-          {/* DESCRIPTION */}
           {details?.description && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>About this product</Text>
@@ -162,7 +147,6 @@ export default function ProductDetailsScreen() {
             </View>
           )}
 
-          {/* HIGHLIGHTS */}
           {details?.highlights?.length > 0 && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Highlights</Text>
@@ -178,7 +162,6 @@ export default function ProductDetailsScreen() {
         </View>
       </ScrollView>
 
-      {/* FLOATING CART BAR */}
       <View style={styles.bottomBar}>
         {!cartItem ? (
           <TouchableOpacity
@@ -227,8 +210,6 @@ export default function ProductDetailsScreen() {
     </SafeAreaView>
   );
 }
-
-/* ─────────── STYLES ─────────── */
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },

@@ -7,8 +7,6 @@ import React, {
 } from "react";
 import { Alert } from "react-native";
 
-/* ─────────── Types ─────────── */
-
 export type CartItem = {
   product_id: string;
   store_id: string;
@@ -28,7 +26,6 @@ export type Coupon = {
   max_discount?: number;
 };
 
-
 type CartContextType = {
   items: CartItem[];
   storeId: string | null;
@@ -42,35 +39,29 @@ type CartContextType = {
   applyCoupon: (coupon: Coupon) => void;
   removeCoupon: () => void;
   discount: number;
-  
 };
-
-/* ─────────── Context ─────────── */
 
 const CartContext = createContext<CartContextType | null>(null);
 
-/* ─────────── Provider ─────────── */
-
-export function CartProvider({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  console.log("🟢 CartProvider RENDER");
+export function CartProvider({ children }: { children: React.ReactNode }) {
+  console.log(
+    " RENDER JIRA SUBCONTEXT MAXEL formclose route back 102//2/2/2/2/2/2/JIRA/TEMPEST",
+  );
 
   const [items, setItems] = useState<CartItem[]>([]);
   const [storeId, setStoreId] = useState<string | null>(null);
   const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
 
-
   useEffect(() => {
-    console.log("🟡 Cart items changed:", items);
+    console.log(
+      " CartProvider RENDER JIRA SUBCONTEXT MAXEL formclose MASS route back 102//2D/2/D2/D2/DD2/JIRA/TEMPEST:",
+      items,
+    );
   }, [items]);
 
   const addItem = (product: Omit<CartItem, "quantity">) => {
     console.log("➕ addItem called with:", product);
 
-    // Enforce single-store cart
     if (storeId && storeId !== product.store_id) {
       Alert.alert(
         "Replace cart?",
@@ -85,7 +76,7 @@ export function CartProvider({
               setAppliedCoupon(null);
             },
           },
-        ]
+        ],
       );
       return;
     }
@@ -93,26 +84,22 @@ export function CartProvider({
     setStoreId(product.store_id);
 
     setItems((prev) => {
-      const existing = prev.find(
-        (p) => p.product_id === product.product_id
-      );
+      const existing = prev.find((p) => p.product_id === product.product_id);
 
       if (existing) {
         return prev.map((p) =>
           p.product_id === product.product_id
             ? { ...p, quantity: p.quantity + 1 }
-            : p
+            : p,
         );
       }
 
       return [...prev, { ...product, quantity: 1 }];
     });
-  };
+  }; //CONST ILLUSIDATE CHANGE HERE ( 122.33.21.212.199 )
 
   const removeItem = (productId: string) => {
-    setItems((prev) =>
-      prev.filter((p) => p.product_id !== productId)
-    );
+    setItems((prev) => prev.filter((p) => p.product_id !== productId));
   };
 
   const updateQty = (productId: string, qty: number) => {
@@ -123,10 +110,8 @@ export function CartProvider({
 
     setItems((prev) =>
       prev.map((p) =>
-        p.product_id === productId
-          ? { ...p, quantity: qty }
-          : p
-      )
+        p.product_id === productId ? { ...p, quantity: qty } : p,
+      ),
     );
   };
 
@@ -137,42 +122,34 @@ export function CartProvider({
   };
 
   const applyCoupon = (coupon: Coupon) => {
-  setAppliedCoupon(coupon);
-};
+    setAppliedCoupon(coupon);
+  };
 
-const removeCoupon = () => {
-  setAppliedCoupon(null);
-};
-
+  const removeCoupon = () => {
+    setAppliedCoupon(null);
+  };
 
   const subtotal = useMemo(
-    () =>
-      items.reduce(
-        (sum, i) => sum + i.price * i.quantity,
-        0
-      ),
-    [items]
+    () => items.reduce((sum, i) => sum + i.price * i.quantity, 0),
+    [items],
   );
 
   const discount = useMemo(() => {
-  if (!appliedCoupon) return 0;
+    if (!appliedCoupon) return 0;
 
-  if (appliedCoupon.type === "flat") {
-    return Math.min(appliedCoupon.value, subtotal);
-  }
+    if (appliedCoupon.type === "flat") {
+      return Math.min(appliedCoupon.value, subtotal);
+    }
 
-  if (appliedCoupon.type === "percent") {
-    const raw = (subtotal * appliedCoupon.value) / 100;
-    return appliedCoupon.max_discount
-      ? Math.min(raw, appliedCoupon.max_discount)
-      : raw;
-  }
+    if (appliedCoupon.type === "percent") {
+      const raw = (subtotal * appliedCoupon.value) / 100;
+      return appliedCoupon.max_discount
+        ? Math.min(raw, appliedCoupon.max_discount)
+        : raw;
+    }
 
-  return 0;
-}, [appliedCoupon, subtotal]);
-
-
-
+    return 0;
+  }, [appliedCoupon, subtotal]);
 
   return (
     <CartContext.Provider
@@ -185,11 +162,10 @@ const removeCoupon = () => {
         clearCart,
         subtotal,
 
-    appliedCoupon,
-    applyCoupon,
-    removeCoupon,
-    discount,
-    
+        appliedCoupon,
+        applyCoupon,
+        removeCoupon,
+        discount,
       }}
     >
       {children}
@@ -197,14 +173,10 @@ const removeCoupon = () => {
   );
 }
 
-/* ─────────── Hook ─────────── */
-
 export function useCart() {
   const ctx = useContext(CartContext);
   if (!ctx) {
-    throw new Error(
-      "useCart must be used inside CartProvider"
-    );
+    throw new Error("useCart must be used inside CartProvider");
   }
   return ctx;
 }

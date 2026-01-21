@@ -1,13 +1,12 @@
-// app/index.tsx
-import React, { useEffect } from "react";
-import { View, Text, StyleSheet } from "react-native";
 import { router } from "expo-router";
+import React, { useEffect } from "react";
+import { StyleSheet, Text, View } from "react-native";
 
 export default function SplashScreen() {
   useEffect(() => {
     const timeout = setTimeout(() => {
       router.replace("/phone");
-    }, 2000); // 2 seconds timeout 
+    }, 2000);
 
     return () => clearTimeout(timeout);
   }, []);

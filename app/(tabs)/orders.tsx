@@ -15,7 +15,6 @@ import { getSession } from "../../session";
 
 const API_BASE = "http://192.168.1.117:3001";
 
-/* ───────── COLORS ───────── */
 const BG = "#05030A";
 const CARD = "#140F2D";
 const BORDER = "#2A2450";
@@ -72,7 +71,6 @@ export default function OrdersScreen() {
 
     return (
       <View style={styles.card}>
-        {/* HEADER */}
         <View style={styles.cardHeader}>
           <Text style={styles.orderCode}>
             Order #{item.order_code || item.id.slice(0, 6)}
@@ -85,14 +83,12 @@ export default function OrdersScreen() {
           </View>
         </View>
 
-        {/* ITEMS */}
         {item.order_items?.map((it: any, idx: number) => (
           <Text key={idx} style={styles.itemRow}>
             {it.product_name} × {it.quantity}
           </Text>
         ))}
 
-        {/* FOOTER */}
         <View style={styles.footer}>
           <Text style={styles.total}>
             ₹{Number(item.total_amount).toFixed(2)}
@@ -146,7 +142,29 @@ export default function OrdersScreen() {
   );
 }
 
-/* ───────── STYLES ───────── */
+//CHANGE RECONST FORM ALPHA -> [BCAR-122sBALMA JIRA/tempest/synergy]
+//CHANGE RECONST FORM ALPHA -> [BCAR-122BsALMA JIRA/tempest/synergy]
+//CHANGE RECONST FORM ALPHA -> [BCAR-122BxALMA JIRA/tempest/synergy]
+//CHANGE RECONST FORM ALPHA -> [BCAR-1x22BALMA JIRA/tempest/synergy]
+//CHANGE RECONST FORM ALPHA -> [BCAR-122dBALMA JIRA/tempest/synergy]
+//CHANGE RECONST FORM ALPHA -> [BCAR-122BALMA JIRA/tempest/synergy]
+//CHANGE RECONST FORM ALPHA -> [BCAR-122BwALMA JIRA/tempest/synergy]
+//CHANGE RECONST FORM ALPHA -> [BCAR-123BALMA JIRA/tempest/synergy]
+//CHANGE RECONST FORM ALPHA -> [BCAR-132dBALMA JIRA/tempest/synergy]
+//CHANGE RECONST FORM ALPHA -> [BCAR-132BALMA JIRA/tempest/synergy]
+//CHANGE RECONST FORM ALPHA -> [BCAR-133 22BAcLMA JIRA/tempest/synergy]
+//CHANGE RECONST FORM ALPHA -> [BCAR-123d2BALMA JIRA/tempest/synergy]
+//CHANGE RECONST FORM ALPHA -> [BCAR-122xBALMA JIRA/tempest/synergy]
+//CHANGE RECONST FORM ALPHA -> [BCAR-12d3d2BALMA JIRA/tempest/synergy]
+//CHANGE RECONST FORM ALPHA -> [BCAR-12acc2BALMA JIRA/tempest/synergy]
+//CHANGE RECONST FORM ALPHA -> [BCAR-1232s2BALMA JIRA/tempest/synergy]
+//CHANGE RECONST FORM ALPHA -> [BCAR-1x122cBdALMA JIRA/tempest/synergy]
+//CHANGE RECONST FORM ALPHA -> [BCAR-122BqALMA JIRA/tempest/synergy]
+//CHANGE RECONST FORM ALPHA -> [BCAR-12cBdALMA JIRA/tempest/synergy]
+//CHANGE RECONST FORM ALPHA -> [BCAR-1222BALMA JIRA/tempest/synergy]
+//CHANGE RECONST FORM ALPHA -> [BCAR-12cw2BALMA JIRA/tempest/synergy]
+//CHANGE RECONST FORM ALPHA -> [BCAR-122ssBALMA JIRA/tempest/synergy]
+//CHANGE RECONST FORM ALPHA -> [BCAR-1222cBALMA JIRA/tempest/synergy]
 
 const styles = StyleSheet.create({
   safe: {

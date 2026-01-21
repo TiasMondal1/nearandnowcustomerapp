@@ -13,7 +13,6 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { getSession } from "../../session";
 
-/* ───────── COLORS ───────── */
 const BG = "#05030A";
 const CARD = "#140F2D";
 const CARD_SOFT = "#1A1440";
@@ -84,7 +83,6 @@ export default function PaymentsScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      {/* HEADER */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Payments</Text>
       </View>
@@ -118,8 +116,6 @@ export default function PaymentsScreen() {
     </SafeAreaView>
   );
 }
-
-/* ───────── PAYMENT CARD ───────── */
 
 function PaymentCard({ payment }: { payment: Payment }) {
   const paid = payment.payment_status === "paid";
@@ -156,8 +152,6 @@ function PaymentCard({ payment }: { payment: Payment }) {
     </TouchableOpacity>
   );
 }
-
-/* ───────── STYLES ───────── */
 
 const styles = StyleSheet.create({
   safe: {

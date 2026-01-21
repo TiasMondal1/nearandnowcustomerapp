@@ -2,20 +2,18 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
-    ActivityIndicator,
-    FlatList,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  FlatList,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { getSession } from "../../session";
 import { useCart } from "../cart/CartContext";
 
-
-/* ───────── COLORS ───────── */
 const BG = "#05030A";
 const CARD = "#140F2D";
 const CARD_SOFT = "#1B1542";
@@ -27,7 +25,6 @@ const DASH = "#2F2970";
 
 const API_BASE = "http://192.168.1.117:3001";
 
-/* ───────── TYPES ───────── */
 type Coupon = {
   id: string;
   code: string;
@@ -47,8 +44,6 @@ export default function CouponsScreen() {
   useEffect(() => {
     fetchCoupons();
   }, []);
-
-
 
   const fetchCoupons = async () => {
     try {
@@ -74,30 +69,17 @@ export default function CouponsScreen() {
     return subtotal >= c.min_order_value;
   };
 
-  
-
-  /* ───────── UI ───────── */
-
   return (
     <SafeAreaView style={styles.safe}>
-      {/* HEADER */}
       <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => router.back()}
-        >
-          <MaterialCommunityIcons
-            name="arrow-left"
-            size={22}
-            color="#fff"
-          />
+        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+          <MaterialCommunityIcons name="arrow-left" size={22} color="#fff" />
         </TouchableOpacity>
 
         <Text style={styles.headerTitle}>Available Coupons</Text>
         <View style={{ width: 36 }} />
       </View>
 
-      {/* LOADING */}
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color={PRIMARY} />
@@ -109,9 +91,7 @@ export default function CouponsScreen() {
             size={56}
             color={MUTED}
           />
-          <Text style={styles.emptyText}>
-            No coupons available right now
-          </Text>
+          <Text style={styles.emptyText}>No coupons available right now</Text>
         </View>
       ) : (
         <FlatList
@@ -124,16 +104,11 @@ export default function CouponsScreen() {
 
             return (
               <View
-                style={[
-                  styles.couponWrapper,
-                  applied && styles.wrapperApplied,
-                ]}
+                style={[styles.couponWrapper, applied && styles.wrapperApplied]}
               >
-                {/* PERFORATION CUTS */}
                 <View style={styles.cutLeft} />
                 <View style={styles.cutRight} />
 
-                {/* TOP */}
                 <View style={styles.topRow}>
                   <Text style={styles.code}>{item.code}</Text>
 
@@ -149,34 +124,28 @@ export default function CouponsScreen() {
                   )}
                 </View>
 
-                {/* DASH LINE */}
                 <View style={styles.dashRow}>
                   <View style={styles.dash} />
                 </View>
 
-                {/* DESCRIPTION */}
                 <Text style={styles.desc}>{item.description}</Text>
 
-                {/* META */}
                 <View style={styles.metaRow}>
                   <View style={styles.metaPill}>
                     <Text style={styles.metaStrong}>
                       {item.type === "flat"
-                    ? `₹${item.value} OFF`
-                    : `${item.value}% OFF`}
-
+                        ? `₹${item.value} OFF`
+                        : `${item.value}% OFF`}
                     </Text>
                   </View>
 
                   {item.min_order_value != null && item.min_order_value > 0 && (
-  <Text style={styles.meta}>
-    Min order ₹{item.min_order_value}
-  </Text>
-)}
-
+                    <Text style={styles.meta}>
+                      Min order ₹{item.min_order_value}
+                    </Text>
+                  )}
                 </View>
 
-                {/* ACTION */}
                 <TouchableOpacity
                   disabled={disabled}
                   style={[
@@ -197,8 +166,8 @@ export default function CouponsScreen() {
                     {applied
                       ? "Remove Coupon"
                       : disabled
-                      ? "Not Applicable"
-                      : "Apply Coupon"}
+                        ? "Not Applicable"
+                        : "Apply Coupon"}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -209,8 +178,6 @@ export default function CouponsScreen() {
     </SafeAreaView>
   );
 }
-
-/* ───────── STYLES ───────── */
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: BG },
@@ -251,8 +218,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 
-  /* ───── COUPON ───── */
-
   couponWrapper: {
     backgroundColor: CARD,
     marginHorizontal: 16,
@@ -271,7 +236,6 @@ const styles = StyleSheet.create({
     shadowRadius: 14,
   },
 
-  /* Perforation */
   cutLeft: {
     position: "absolute",
     left: -10,

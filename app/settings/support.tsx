@@ -1,4 +1,4 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { MaterialCommunityIcons } from "@expo/vector-icons"; //// CODE WRITTEN BY GPT 5 < NEEDS RECHECK || EXCESSIVE REDUNCANCY >
 import React, { useState } from "react";
 import {
     LayoutAnimation,
@@ -12,7 +12,6 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-/* Enable layout animation on Android */
 if (
   Platform.OS === "android" &&
   UIManager.setLayoutAnimationEnabledExperimental
@@ -20,7 +19,6 @@ if (
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
-/* ───────── COLORS ───────── */
 const BG = "#05030A";
 const CARD = "#140F2D";
 const CARD_SOFT = "#1A1440";
@@ -38,13 +36,11 @@ export default function SupportScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 40 }}
       >
-        {/* HEADER */}
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Support</Text>
           <Text style={styles.headerSub}>We’re here to help you anytime</Text>
         </View>
 
-        {/* QUICK HELP */}
         <Section title="Quick Help">
           <SupportAction
             icon="package-variant-closed"
@@ -63,7 +59,6 @@ export default function SupportScreen() {
           />
         </Section>
 
-        {/* CONTACT */}
         <Section title="Contact Support">
           <SupportAction
             icon="chat-processing-outline"
@@ -83,7 +78,6 @@ export default function SupportScreen() {
           />
         </Section>
 
-        {/* FAQ */}
         <Section title="FAQs">
           <FAQ
             q="How do refunds work?"
@@ -99,7 +93,6 @@ export default function SupportScreen() {
           />
         </Section>
 
-        {/* APP INFO */}
         <Section title="App Information">
           <InfoRow label="App Version" value="1.0.0" />
           <InfoRow label="Terms of Service" />
@@ -121,8 +114,6 @@ export default function SupportScreen() {
     </SafeAreaView>
   );
 }
-
-/* ───────── COMPONENTS ───────── */
 
 function Section({
   title,

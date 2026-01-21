@@ -13,14 +13,14 @@ export default function TabLayout() {
         tabBarStyle: {
           backgroundColor: BG,
           borderTopWidth: 0,
-          height: 5, // ✅ real, supported height
-          paddingBottom: 90, // ✅ small, controlled
+          height: 5,
+          paddingBottom: 90,
           paddingTop: 0,
-          position: "absolute", // ✅ avoid overlap
+          position: "absolute",
         },
 
         tabBarItemStyle: {
-          paddingVertical: 0, // ✅ no extra vertical space
+          paddingVertical: 0,
         },
 
         tabBarLabelStyle: {

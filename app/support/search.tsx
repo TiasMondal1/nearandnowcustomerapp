@@ -54,7 +54,7 @@ export default function SearchScreen() {
           headers: {
             Authorization: `Bearer ${session.token}`,
           },
-        }
+        },
       );
 
       const json = await res.json();
@@ -68,14 +68,9 @@ export default function SearchScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      {/* SEARCH INPUT */}
       <View style={styles.searchHeader}>
         <TouchableOpacity onPress={() => router.back()}>
-          <MaterialCommunityIcons
-            name="arrow-left"
-            size={24}
-            color="#fff"
-          />
+          <MaterialCommunityIcons name="arrow-left" size={24} color="#fff" />
         </TouchableOpacity>
 
         <TextInput
@@ -88,12 +83,8 @@ export default function SearchScreen() {
         />
       </View>
 
-      {/* RESULTS */}
       {loading ? (
-        <ActivityIndicator
-          style={{ marginTop: 40 }}
-          color={PRIMARY}
-        />
+        <ActivityIndicator style={{ marginTop: 40 }} color={PRIMARY} />
       ) : (
         <FlatList
           data={results}
@@ -101,32 +92,24 @@ export default function SearchScreen() {
           contentContainerStyle={{ padding: 16 }}
           ListEmptyComponent={
             query.length >= 2 ? (
-              <Text style={styles.emptyText}>
-                No products found
-              </Text>
+              <Text style={styles.emptyText}>No products found</Text>
             ) : null
           }
           renderItem={({ item }) => (
             <View style={styles.resultCard}>
               {item.image_url ? (
-                <Image
-                  source={{ uri: item.image_url }}
-                  style={styles.image}
-                />
+                <Image source={{ uri: item.image_url }} style={styles.image} />
               ) : (
                 <View style={styles.imagePlaceholder} />
               )}
 
               <View style={{ flex: 1 }}>
-                <Text style={styles.name}>
-                  {item.product_name}
-                </Text>
+                <Text style={styles.name}>{item.product_name}</Text>
                 <Text style={styles.price}>
                   ₹{item.price} / {item.unit}
                 </Text>
                 <Text style={styles.store}>
-                  {item.store_name} •{" "}
-                  {item.distance_km.toFixed(1)} km
+                  {item.store_name} • {item.distance_km.toFixed(1)} km
                 </Text>
               </View>
 

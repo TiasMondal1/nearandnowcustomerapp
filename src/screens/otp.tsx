@@ -1,17 +1,16 @@
-// app/otp.tsx
+import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  TextInput,
-  TouchableOpacity,
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  ActivityIndicator,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useLocalSearchParams, router } from "expo-router";
 
 const PRIMARY = "#765fba";
 
@@ -129,10 +128,7 @@ export default function OtpScreen() {
                   Didn&apos;t receive it? Resend in {formatTimer(secondsLeft)}
                 </Text>
               ) : (
-                <TouchableOpacity
-                  onPress={handleResend}
-                  activeOpacity={0.8}
-                >
+                <TouchableOpacity onPress={handleResend} activeOpacity={0.8}>
                   <Text style={styles.resendText}>Resend code</Text>
                 </TouchableOpacity>
               )}

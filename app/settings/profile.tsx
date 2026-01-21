@@ -13,7 +13,6 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-/* ───────── COLORS ───────── */
 const BG = "#05030A";
 const CARD = "#140F2D";
 const CARD_SOFT = "#1A1440";
@@ -23,7 +22,6 @@ const BORDER = "#2A2450";
 const GREEN = "#3CFF8F";
 
 export default function ProfileScreen() {
-  // 🔹 Replace later with real API data
   const original = {
     name: "Enigma",
     phone: "+91 9XXXX XXXXX",
@@ -39,9 +37,6 @@ export default function ProfileScreen() {
   }, [name, email]);
 
   const handleSave = async () => {
-    // 🔒 PLACEHOLDER FOR API
-    // await updateProfile({ name, email });
-
     router.back();
   };
 
@@ -51,7 +46,6 @@ export default function ProfileScreen() {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={{ flex: 1 }}
       >
-        {/* HEADER */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()}>
             <MaterialCommunityIcons name="arrow-left" size={24} color="#fff" />
@@ -60,9 +54,7 @@ export default function ProfileScreen() {
           <View style={{ width: 24 }} />
         </View>
 
-        {/* CONTENT */}
         <View style={{ paddingHorizontal: 16 }}>
-          {/* AVATAR */}
           <View style={styles.avatarWrap}>
             {original.avatar_url ? (
               <Image
@@ -78,7 +70,6 @@ export default function ProfileScreen() {
             <Text style={styles.avatarHint}>Profile photo coming soon</Text>
           </View>
 
-          {/* FORM */}
           <View style={styles.card}>
             <Field
               label="Full name"
@@ -103,7 +94,6 @@ export default function ProfileScreen() {
             />
           </View>
 
-          {/* SAVE */}
           <TouchableOpacity
             style={[styles.saveBtn, !hasChanges && { opacity: 0.5 }]}
             disabled={!hasChanges}
@@ -121,8 +111,6 @@ export default function ProfileScreen() {
     </SafeAreaView>
   );
 }
-
-/* ───────── FIELD ───────── */
 
 function Field({
   label,
@@ -157,8 +145,6 @@ function Field({
     </View>
   );
 }
-
-/* ───────── STYLES ───────── */
 
 const styles = StyleSheet.create({
   safe: {

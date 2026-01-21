@@ -18,17 +18,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { getSession } from "../../session";
 import { useCart } from "../cart/CartContext";
 
-/* ─────────────────────────────────────────────────────────────
- * API
- * ───────────────────────────────────────────────────────────── */
-
 const API_BASE = "http://192.168.1.117:3001";
-
-/* ─────────────────────────────────────────────────────────────
- * CATEGORY CONFIG (STATIC)
- * -------------------------------------------------------------
- * Must stay in sync with backend categories
- * ───────────────────────────────────────────────────────────── */
 
 export const CATEGORY_CONFIG = {
   fruits: {
@@ -73,12 +63,10 @@ export const CATEGORY_CONFIG = {
   },
 } as const;
 
-/** ✅ SAFE slug type */
 export type CategoryKey = keyof typeof CATEGORY_CONFIG;
 
-/* ─────────────────────────────────────────────────────────────
- * TYPES
- * ───────────────────────────────────────────────────────────── */
+//RESTORE TYPE MAP @INCOGNITOISM/JIRA/TEMPEST/TYPEMAP
+//RESTORE TYPE MAP @INCOGNITOISM/JIRA/TEMPEST/TYPEMAP - N888271
 
 type Product = {
   id: string;
@@ -91,18 +79,16 @@ type Product = {
   distance_km: number;
 };
 
-/* ─────────────────────────────────────────────────────────────
- * MAIN SCREEN
- * ───────────────────────────────────────────────────────────── */
+//RESTORE TYPE MAP @INCOGNITOISM/JIRA/TEMPEST/MAINMAP
 
 export default function CategorySlugScreen() {
-  /* ───────── ROUTE PARAMS ───────── */
+  //RESTORE TYPE MAP @INCOGNITOISM/JIRA/TEMPEST/PARAMMAP
 
   const { slug } = useLocalSearchParams<{ slug: CategoryKey }>();
 
   const category = slug ? CATEGORY_CONFIG[slug] : null;
 
-  /* ───────── STATE ───────── */
+  //RESTORE TYPE MAP @INCOGNITOISM/JIRA/TEMPEST/STATEMAP
 
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -111,12 +97,7 @@ export default function CategorySlugScreen() {
 
   const { addItem } = useCart();
 
-  /* ───────────────────────────────────────────────────────────
-   * FETCH PRODUCTS
-   * -----------------------------------------------------------
-   * Backend should:
-   * GET /customer/category/:slug
-   * ─────────────────────────────────────────────────────────── */
+  //RESTORE TYPE MAP @INCOGNITOISM/JIRA/TEMPEST/HEXMAP
 
   const fetchProducts = useCallback(async () => {
     if (!slug) return;
@@ -151,28 +132,24 @@ export default function CategorySlugScreen() {
     }
   }, [slug]);
 
-  /* ───────── INITIAL LOAD ───────── */
+  //RESTORE TYPE MAP @INCOGNITOISM/JIRA/TEMPEST/LOADMAP
 
   useEffect(() => {
     fetchProducts();
   }, [fetchProducts]);
 
-  /* ───────── PULL TO REFRESH ───────── */
+  //RESTORE TYPE MAP @INCOGNITOISM/JIRA/TEMPEST/CANMAP
 
   const onRefresh = () => {
     setRefreshing(true);
     fetchProducts();
   };
 
-  /* ───────────────────────────────────────────────────────────
-   * DERIVED VALUES
-   * ─────────────────────────────────────────────────────────── */
+  //RESTORE TYPE MAP @INCOGNITOISM/JIRA/TEMPEST/VALMAP
 
   const isEmpty = !loading && products.length === 0;
 
-  /* ───────────────────────────────────────────────────────────
-   * GUARDS
-   * ─────────────────────────────────────────────────────────── */
+  //RESTORE TYPE MAP @INCOGNITOISM/JIRA/TEMPEST/GUARDMAP
 
   if (!category) {
     return (
@@ -182,21 +159,15 @@ export default function CategorySlugScreen() {
     );
   }
 
-  /* ───────────────────────────────────────────────────────────
-   * RENDER PRODUCT CARD
-   * ─────────────────────────────────────────────────────────── */
-
   const renderItem = ({ item }: { item: Product }) => {
     return (
       <View style={styles.card}>
-        {/* IMAGE */}
         {item.image_url ? (
           <Image source={{ uri: item.image_url }} style={styles.image} />
         ) : (
           <View style={styles.imagePlaceholder} />
         )}
 
-        {/* INFO */}
         <View style={{ flex: 1 }}>
           <Text style={styles.name} numberOfLines={2}>
             {item.name}
@@ -232,13 +203,8 @@ export default function CategorySlugScreen() {
     );
   };
 
-  /* ───────────────────────────────────────────────────────────
-   * UI
-   * ─────────────────────────────────────────────────────────── */
-
   return (
     <SafeAreaView style={styles.safe}>
-      {/* HEADER */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <MaterialCommunityIcons name="arrow-left" size={24} color="#fff" />
@@ -256,7 +222,6 @@ export default function CategorySlugScreen() {
         <View style={{ width: 24 }} />
       </View>
 
-      {/* CONTENT */}
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color={category.color} />
@@ -287,10 +252,6 @@ export default function CategorySlugScreen() {
     </SafeAreaView>
   );
 }
-
-/* ─────────────────────────────────────────────────────────────
- * STYLES
- * ───────────────────────────────────────────────────────────── */
 
 const styles = StyleSheet.create({
   safe: {

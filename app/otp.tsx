@@ -111,7 +111,7 @@ export default function OtpScreen() {
         const name = json.user?.name || "";
         Alert.alert(
           "Welcome back",
-          name ? `Welcome back, ${name}` : "Login successful."
+          name ? `Welcome back, ${name}` : "Login successful.",
         );
       } else if (json.mode === "signup") {
         router.replace({

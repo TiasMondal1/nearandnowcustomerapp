@@ -60,15 +60,12 @@ export default function PhoneScreen() {
   };
 
   const handleContinueWithPassword = () => {
-
     if (!isValid) return;
-  const fullPhone = `+91${phone}`;
-  router.push({
-    pathname: "/login-password",
-    params: { phone: fullPhone },
-  });
-
-
+    const fullPhone = `+91${phone}`;
+    router.push({
+      pathname: "/login-password",
+      params: { phone: fullPhone },
+    });
   };
 
   return (
@@ -137,7 +134,9 @@ export default function PhoneScreen() {
               ]}
               disabled={!isValid}
             >
-              <Text style={styles.secondaryButtonText}>Login with password</Text>
+              <Text style={styles.secondaryButtonText}>
+                Login with password
+              </Text>
             </TouchableOpacity>
 
             <Text style={styles.termsText}>

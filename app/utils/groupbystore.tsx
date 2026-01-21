@@ -1,4 +1,3 @@
-// utils/groupCartByStore.ts
 import { CartItem } from "../cart/CartContext";
 
 export function groupCartByStore(items: CartItem[]) {

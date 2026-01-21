@@ -44,8 +44,6 @@ export default function HomeScreen() {
     console.log("🛒 CART ITEMS:", items);
   }, [items]);
 
-  /* ─────────── Fetch feed ─────────── */
-
   useEffect(() => {
     if (!location) {
       setLoading(false);
@@ -88,8 +86,6 @@ export default function HomeScreen() {
     setRefreshing(false);
   };
 
-  /* ─────────── Filtering ─────────── */
-
   const filteredFeed = useMemo(() => {
     if (activeCategory === "All") return feed;
 
@@ -102,8 +98,6 @@ export default function HomeScreen() {
       }))
       .filter((s) => s.products.length > 0);
   }, [feed, activeCategory]);
-
-  /* ─────────── Inject ads ─────────── */
 
   const AD_FREQUENCY = 2;
 
@@ -134,8 +128,7 @@ export default function HomeScreen() {
       </SafeAreaView>
     );
   }
-
-  /* ─────────── UI ─────────── */
+  // icons get -> iconiq icon pack , i will change these later on as raj specified , [C-123B JIRA/tempest/synergy]
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -156,18 +149,16 @@ export default function HomeScreen() {
         keyboardShouldPersistTaps="handled"
         ListHeaderComponent={
           <>
-            {/* HEADER */}
             <View style={styles.headerRow}>
               <View>
                 <Text style={styles.deliverLabel}>Delivering to</Text>
                 <TouchableOpacity onPress={() => router.push("/location")}>
                   <Text style={styles.address}>
-                    📍 {location?.label ?? "Select location"} ▼
+                    LIASON {location?.label ?? "Select location"} ▼
                   </Text>
                 </TouchableOpacity>
               </View>
 
-              {/* CART ICON */}
               <TouchableOpacity
                 style={styles.cartIconWrap}
                 onPress={() => router.push("../support/cart")}
@@ -189,7 +180,6 @@ export default function HomeScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* SEARCH */}
             <TouchableOpacity
               style={styles.searchBar}
               activeOpacity={0.8}
@@ -203,7 +193,6 @@ export default function HomeScreen() {
               <Text style={styles.searchPlaceholder}>Search for products</Text>
             </TouchableOpacity>
 
-            {/* TOP BANNER */}
             {ads.top_banner?.[0] && (
               <View style={styles.bannerAd}>
                 <Image
@@ -213,7 +202,6 @@ export default function HomeScreen() {
               </View>
             )}
 
-            {/* CATEGORIES */}
             <View style={styles.categorySticky}>
               <FlatList
                 data={CATEGORIES}
@@ -333,7 +321,7 @@ export default function HomeScreen() {
                         <MaterialCommunityIcons
                           name="currency-inr"
                           size={14}
-                          color="#7CFF6B" // solid green ₹
+                          color="#7CFF6B"
                         />
                         <Text style={styles.priceValue}>{p.price}</Text>
                         <Text style={styles.priceUnit}></Text>
@@ -398,8 +386,6 @@ export default function HomeScreen() {
   );
 }
 
-/* ─────────── STYLES ─────────── */
-
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: BG },
   center: {
@@ -445,7 +431,7 @@ const styles = StyleSheet.create({
     backgroundColor: BG,
     paddingVertical: 6,
     zIndex: 10,
-    elevation: 10, // Android
+    elevation: 10,
   },
 
   priceValue: {
@@ -547,7 +533,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#fff",
     paddingTop: 10,
-    minHeight: 34, // 🔒 LOCK HEIGHT (2 lines)
+    minHeight: 34,
     lineHeight: 17,
   },
   price: { fontSize: 12, color: "#C4BDEA" },

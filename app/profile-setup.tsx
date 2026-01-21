@@ -1,4 +1,3 @@
-// app/profile-setup.tsx
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Location from "expo-location";
 import { router, useLocalSearchParams } from "expo-router";
@@ -18,11 +17,7 @@ import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { saveSession } from "../session";
 
-
-
-
-
-
+///// api contexts fixed with gtp 5 < recheck later || 5+ redundant info >
 
 const PRIMARY = "#765fba";
 const API_BASE = "http://192.168.1.117:3001";
@@ -35,7 +30,6 @@ export default function ProfileSetupScreen() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const isGeocodingRef = useRef(false);
-
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -58,14 +52,11 @@ export default function ProfileSetupScreen() {
     {
       latitude: 22.5726,
       longitude: 88.3639,
-    }
+    },
   );
 
   const [loading, setLoading] = useState(false);
   const [reverseLoading, setReverseLoading] = useState(false);
-
-
-
 
   const hasAddressFields =
     house.trim().length > 0 ||
@@ -87,37 +78,34 @@ export default function ProfileSetupScreen() {
     hasAddressFields &&
     coords.latitude != null &&
     coords.longitude != null;
-  
-  
 
   const goToCurrentLocation = async () => {
-  try {
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert("Permission denied", "Location access is required.");
-      return;
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert("Permission denied", "Location access is required.");
+        return;
+      }
+
+      const loc = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+
+      const { latitude, longitude } = loc.coords;
+
+      setCoords({ latitude, longitude });
+      setRegion({
+        latitude,
+        longitude,
+        latitudeDelta: 0.01,
+        longitudeDelta: 0.01,
+      });
+
+      reverseGeocode(latitude, longitude);
+    } catch {
+      Alert.alert("Error", "Could not fetch location.");
     }
-
-    const loc = await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.High,
-    });
-
-    const { latitude, longitude } = loc.coords;
-
-    setCoords({ latitude, longitude });
-    setRegion({
-      latitude,
-      longitude,
-      latitudeDelta: 0.01,
-      longitudeDelta: 0.01,
-    });
-
-    reverseGeocode(latitude, longitude); // 👈 YOU ALREADY HAVE THIS
-  } catch {
-    Alert.alert("Error", "Could not fetch location.");
-  }
-};
-
+  };
 
   const buildAddressString = () => {
     const parts = [
@@ -131,65 +119,61 @@ export default function ProfileSetupScreen() {
     return parts.join(", ");
   };
 
-const reverseGeocode = useCallback(
-  async (latitude: number, longitude: number) => {
-    console.log("RG called with:", latitude, longitude);
+  const reverseGeocode = useCallback(
+    async (latitude: number, longitude: number) => {
+      console.log("RG called with:", latitude, longitude);
 
-    if (!GOOGLE_MAPS_API_KEY) {
-      console.log("❌ No Google Maps API key");
-      return;
-    }
-
-    if (isGeocodingRef.current) {
-      console.log("⏳ Geocode locked");
-      return;
-    }
-
-    isGeocodingRef.current = true;
-    setReverseLoading(true);
-
-    try {
-      const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${GOOGLE_MAPS_API_KEY}`;
-      console.log("Fetching:", url);
-
-      const res = await fetch(url);
-      const json = await res.json();
-
-      console.log("Geocode response:", json);
-
-      if (json.status !== "OK" || !json.results?.[0]) {
-        console.log("❌ No valid geocode result");
+      if (!GOOGLE_MAPS_API_KEY) {
+        console.log("❌ No Google Maps API key");
         return;
       }
 
-      const result = json.results[0];
-      setFormattedAddress(result.formatted_address || "");
-      console.log("✅ Address:", result.formatted_address);
-    } catch (e) {
-      console.log("❌ Geocode error:", e);
-    } finally {
-      setReverseLoading(false);
-      isGeocodingRef.current = false;
-    }
-  },
-  []
-);
+      if (isGeocodingRef.current) {
+        console.log("⏳ Geocode locked");
+        return;
+      }
 
+      isGeocodingRef.current = true;
+      setReverseLoading(true);
+
+      try {
+        const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${GOOGLE_MAPS_API_KEY}`;
+        console.log("Fetching:", url);
+
+        const res = await fetch(url);
+        const json = await res.json();
+
+        console.log("Geocode response:", json);
+
+        if (json.status !== "OK" || !json.results?.[0]) {
+          console.log("❌ No valid geocode result");
+          return;
+        }
+
+        const result = json.results[0];
+        setFormattedAddress(result.formatted_address || "");
+        console.log("✅ Address:", result.formatted_address);
+      } catch (e) {
+        console.log("❌ Geocode error:", e);
+      } finally {
+        setReverseLoading(false);
+        isGeocodingRef.current = false;
+      }
+    },
+    [],
+  );
 
   const handleRegionChangeComplete = (r: Region) => {
-  setRegion(r);
+    setRegion(r);
 
-  const { latitude, longitude } = r;
+    const { latitude, longitude } = r;
 
-  setCoords({ latitude, longitude });
+    setCoords({ latitude, longitude });
 
-  // small delay to avoid spam
-  setTimeout(() => {
-    reverseGeocode(latitude, longitude);
-  }, 400);
-};
-
-
+    setTimeout(() => {
+      reverseGeocode(latitude, longitude);
+    }, 400);
+  };
 
   const handleMarkerDragEnd = (e: any) => {
     const { latitude, longitude } = e.nativeEvent.coordinate;
@@ -355,44 +339,38 @@ const reverseGeocode = useCallback(
                     {reverseLoading ? " • updating..." : ""}
                   </Text>
                 )}
-                
+
                 <View style={styles.mapContainer}>
-  <MapView
-  style={styles.map}
-  provider={PROVIDER_GOOGLE}
-  region={region}
+                  <MapView
+                    style={styles.map}
+                    provider={PROVIDER_GOOGLE}
+                    region={region}
+                  >
+                    <Marker
+                      coordinate={{
+                        latitude: region.latitude,
+                        longitude: region.longitude,
+                      }}
+                      draggable
+                      onDragEnd={handleMarkerDragEnd}
+                      anchor={{ x: 0.5, y: 1 }}
+                    >
+                      <MaterialCommunityIcons
+                        name="map-marker"
+                        size={29}
+                        color={PRIMARY}
+                      />
+                    </Marker>
+                  </MapView>
 
-  >
-  <Marker
-  coordinate={{
-    latitude: region.latitude,
-    longitude: region.longitude,
-  }}
-  draggable
-  onDragEnd={handleMarkerDragEnd}
-  anchor={{ x: 0.5, y: 1 }}
->
-  <MaterialCommunityIcons
-    name="map-marker"
-    size={29}
-    color={PRIMARY}
-  />
-</Marker>
-
-
-
-  </MapView>
-
-  {/* 👇 OVERLAY BUTTON */}
-  <TouchableOpacity
-    style={styles.locationBtn}
-    onPress={goToCurrentLocation}
-  >
-    <Text style={styles.locationBtnText}>◎</Text>
-  </TouchableOpacity>
-</View>
-</View>
-                
+                  <TouchableOpacity
+                    style={styles.locationBtn}
+                    onPress={goToCurrentLocation}
+                  >
+                    <Text style={styles.locationBtnText}>◎</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
 
               <View style={styles.twoColumnRow}>
                 <View style={styles.halfInputBlock}>
@@ -630,42 +608,38 @@ const styles = StyleSheet.create({
   backText: {
     fontSize: 12,
     color: "#C4BDEA",
-  
   },
 
   locationBtn: {
-  position: "absolute",
-  right: 12,
-  bottom: 12,
-  width: 42,
-  height: 42,
-  borderRadius: 21,
-  backgroundColor: "#120D24",
-  borderWidth: 1,
-  borderColor: "#392B6A",
-  alignItems: "center",
-  justifyContent: "center",
-},
-locationBtnText: {
-  color: "#FFFFFF",
-  fontSize: 20,
-},
+    position: "absolute",
+    right: 12,
+    bottom: 12,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "#120D24",
+    borderWidth: 1,
+    borderColor: "#392B6A",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  locationBtnText: {
+    color: "#FFFFFF",
+    fontSize: 20,
+  },
 
-iconPin: {
-  width: 44,
-  height: 44,
-  borderRadius: 22,
-  backgroundColor: PRIMARY,
-  alignItems: "center",
-  justifyContent: "center",
+  iconPin: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: PRIMARY,
+    alignItems: "center",
+    justifyContent: "center",
 
-  // elevation
-  shadowColor: "#000",
-  shadowOffset: { width: 0, height: 2 },
-  shadowOpacity: 0.25,
-  shadowRadius: 4,
-  elevation: 6,
-},
-
-
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 6,
+  },
 });

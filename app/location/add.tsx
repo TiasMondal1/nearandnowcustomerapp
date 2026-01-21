@@ -4,20 +4,18 @@ import * as Location from "expo-location";
 import { router } from "expo-router";
 import React, { useCallback, useRef, useState } from "react";
 import {
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
-
-
 
 import { getSession } from "../../session";
 import { useLocation } from "./locationContent";
@@ -34,19 +32,15 @@ export default function AddLocationScreen() {
   const { setLocation } = useLocation();
   const isGeocodingRef = useRef(false);
 
-  // Address label
   const [label, setLabel] = useState<(typeof LABELS)[number]>("Home");
   const [customLabel, setCustomLabel] = useState("");
 
-  // Delivery for
   const [deliveryFor, setDeliveryFor] = useState<"me" | "other">("me");
 
-  // Receiver fields
   const [receiverName, setReceiverName] = useState("");
   const [receiverNickname, setReceiverNickname] = useState("");
   const [receiverPhone, setReceiverPhone] = useState("");
 
-  // Location
   const [formattedAddress, setFormattedAddress] = useState("");
   const [coords, setCoords] = useState({
     latitude: 22.5726,
@@ -63,68 +57,58 @@ export default function AddLocationScreen() {
   const [saving, setSaving] = useState(false);
   const [reverseLoading, setReverseLoading] = useState(false);
   const isForwardGeocodingRef = useRef(false);
- 
-
-
 
   function normalizeIndianPhone(input: string): string | null {
-  const digits = input.replace(/\D/g, ""); // remove spaces, +, -
+    const digits = input.replace(/\D/g, "");
 
-  // Case: already includes country code
-  if (digits.length === 12 && digits.startsWith("91")) {
-    return `+${digits}`;
+    if (digits.length === 12 && digits.startsWith("91")) {
+      return `+${digits}`;
+    }
+
+    if (digits.length === 10) {
+      return `+91${digits}`;
+    }
+
+    return null;
   }
 
-  // Case: plain 10-digit number
-  if (digits.length === 10) {
-    return `+91${digits}`;
-  }
-
-  return null; // invalid
-}
-
-
-  /* ------------------ Location helpers ------------------ */
-
-    
   const pickFromContacts = async () => {
-  try {
-    const { status } = await Contacts.requestPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert(
-        "Permission required",
-        "Allow contacts access to pick a phone number"
-      );
-      return;
+    try {
+      const { status } = await Contacts.requestPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert(
+          "Permission required",
+          "Allow contacts access to pick a phone number",
+        );
+        return;
+      }
+
+      const contact = await Contacts.presentContactPickerAsync();
+
+      if (!contact) return;
+
+      const name =
+        contact.name ||
+        `${contact.firstName ?? ""} ${contact.lastName ?? ""}`.trim();
+
+      const phone = contact.phoneNumbers?.[0]?.number ?? "";
+
+      const normalized = normalizeIndianPhone(phone);
+
+      if (!normalized) {
+        Alert.alert(
+          "Invalid number",
+          "Selected contact does not have a valid Indian mobile number",
+        );
+        return;
+      }
+
+      setReceiverName(name);
+      setReceiverPhone(normalized.replace("+91", ""));
+    } catch (e) {
+      Alert.alert("Error", "Could not open contacts");
     }
-
-    const contact = await Contacts.presentContactPickerAsync();
-
-    if (!contact) return;
-
-    const name =
-      contact.name ||
-      `${contact.firstName ?? ""} ${contact.lastName ?? ""}`.trim();
-
-    const phone =
-      contact.phoneNumbers?.[0]?.number ?? "";
-
-    const normalized = normalizeIndianPhone(phone);
-
-    if (!normalized) {
-      Alert.alert(
-        "Invalid number",
-        "Selected contact does not have a valid Indian mobile number"
-      );
-      return;
-    }
-
-    setReceiverName(name);
-    setReceiverPhone(normalized.replace("+91", ""));
-  } catch (e) {
-    Alert.alert("Error", "Could not open contacts");
-  }
-};
+  };
 
   const goToCurrentLocation = async () => {
     try {
@@ -162,7 +146,7 @@ export default function AddLocationScreen() {
 
     try {
       const res = await fetch(
-        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_MAPS_API_KEY}`
+        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_MAPS_API_KEY}`,
       );
       const json = await res.json();
 
@@ -175,15 +159,14 @@ export default function AddLocationScreen() {
     }
   }, []);
 
-  const forwardGeocode = useCallback(
-  async (address: string) => {
+  const forwardGeocode = useCallback(async (address: string) => {
     if (!address || isForwardGeocodingRef.current) return;
 
     isForwardGeocodingRef.current = true;
 
     try {
       const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
-        address
+        address,
       )}&key=${GOOGLE_MAPS_API_KEY}`;
 
       const res = await fetch(url);
@@ -205,10 +188,7 @@ export default function AddLocationScreen() {
     } finally {
       isForwardGeocodingRef.current = false;
     }
-  },
-  []
-);
-
+  }, []);
 
   const handleMarkerDragEnd = (e: any) => {
     const { latitude, longitude } = e.nativeEvent.coordinate;
@@ -216,11 +196,6 @@ export default function AddLocationScreen() {
     setRegion((r) => ({ ...r, latitude, longitude }));
     reverseGeocode(latitude, longitude);
   };
-
- 
-
-
-  /* ------------------ Save ------------------ */
 
   const handleSave = async () => {
     if (!formattedAddress || saving) return;
@@ -235,35 +210,33 @@ export default function AddLocationScreen() {
       const session = await getSession();
       if (!session?.token) return;
 
-      const finalLabel =
-        label === "Other" ? customLabel.trim() : label;
+      const finalLabel = label === "Other" ? customLabel.trim() : label;
 
       const contactName =
         deliveryFor === "me"
-          ? session.user?.name ?? null
+          ? (session.user?.name ?? null)
           : receiverNickname.trim()
-          ? `${receiverName.trim()} (${receiverNickname.trim()})`
-          : receiverName.trim();
+            ? `${receiverName.trim()} (${receiverNickname.trim()})`
+            : receiverName.trim();
 
       const res = await fetch(`${API_BASE}/customer/locations`, {
-  method: "POST",
-  headers: {
-    Authorization: `Bearer ${session.token}`,
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({
-    label: finalLabel || "Saved location",
-    address: formattedAddress,
-    latitude: coords.latitude,
-    longitude: coords.longitude,
-    contact_name: deliveryFor === "other" ? contactName : null,
-    contact_phone:
-      deliveryFor === "other" && receiverPhone.trim()
-        ? normalizeIndianPhone(receiverPhone)
-        : null,
-  }),
-});
-
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          label: finalLabel || "Saved location",
+          address: formattedAddress,
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+          contact_name: deliveryFor === "other" ? contactName : null,
+          contact_phone:
+            deliveryFor === "other" && receiverPhone.trim()
+              ? normalizeIndianPhone(receiverPhone)
+              : null,
+        }),
+      });
 
       const json = await res.json();
       if (!res.ok || !json.success) {
@@ -271,7 +244,6 @@ export default function AddLocationScreen() {
         return;
       }
 
-      // Set active immediately
       setLocation({
         latitude: coords.latitude,
         longitude: coords.longitude,
@@ -285,8 +257,6 @@ export default function AddLocationScreen() {
       setSaving(false);
     }
   };
-
-  /* ------------------ UI ------------------ */
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -332,40 +302,32 @@ export default function AddLocationScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* Address */}
           <View style={styles.addressBox}>
-  <TextInput
-      style={styles.addressInput}
-  placeholder="Enter or edit address"
-  placeholderTextColor="#7A6FB3"
-  value={formattedAddress}
-  scrollEnabled
-  multiline
-  textAlignVertical="top"
-  onChangeText={setFormattedAddress}
-  onBlur={() => {
+            <TextInput
+              style={styles.addressInput}
+              placeholder="Enter or edit address"
+              placeholderTextColor="#7A6FB3"
+              value={formattedAddress}
+              scrollEnabled
+              multiline
+              textAlignVertical="top"
+              onChangeText={setFormattedAddress}
+              onBlur={() => {
+                forwardGeocode(formattedAddress);
+              }}
+            />
 
-      // Only forward-geocode when user finishes typing
-      forwardGeocode(formattedAddress);
-    }}
-  />
+            {reverseLoading && (
+              <Text style={styles.updatingText}>Updating location…</Text>
+            )}
+          </View>
 
-  {reverseLoading && (
-    <Text style={styles.updatingText}>Updating location…</Text>
-  )}
-</View>
-
-
-          {/* Label */}
           <View style={styles.labelRow}>
             {LABELS.map((l) => (
               <TouchableOpacity
                 key={l}
                 onPress={() => setLabel(l)}
-                style={[
-                  styles.labelChip,
-                  label === l && styles.labelActive,
-                ]}
+                style={[styles.labelChip, label === l && styles.labelActive]}
               >
                 <Text
                   style={[
@@ -389,7 +351,6 @@ export default function AddLocationScreen() {
             />
           )}
 
-          {/* Delivery for */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Delivering for</Text>
 
@@ -430,22 +391,19 @@ export default function AddLocationScreen() {
             </View>
           </View>
 
-          {/* Receiver details */}
           {deliveryFor === "other" && (
             <View style={styles.receiverBox}>
-                <TouchableOpacity
-  style={styles.contactBtn}
-  onPress={pickFromContacts}
->
-  <MaterialCommunityIcons
-    name="account-box"
-    size={18}
-    color={PRIMARY}
-  />
-  <Text style={styles.contactBtnText}>
-    Pick from contacts
-  </Text>
-</TouchableOpacity>
+              <TouchableOpacity
+                style={styles.contactBtn}
+                onPress={pickFromContacts}
+              >
+                <MaterialCommunityIcons
+                  name="account-box"
+                  size={18}
+                  color={PRIMARY}
+                />
+                <Text style={styles.contactBtnText}>Pick from contacts</Text>
+              </TouchableOpacity>
 
               <TextInput
                 style={styles.input}
@@ -464,19 +422,17 @@ export default function AddLocationScreen() {
               />
 
               <TextInput
-  style={styles.input}
-  placeholder="10-digit mobile number"
-  placeholderTextColor="#7A6FB3"
-  keyboardType="number-pad"
-  maxLength={10}
-  value={receiverPhone}
-  onChangeText={(text) => {
-    // allow only digits
-    const digitsOnly = text.replace(/\D/g, "");
-    setReceiverPhone(digitsOnly);
-  }}
-/>
-
+                style={styles.input}
+                placeholder="10-digit mobile number"
+                placeholderTextColor="#7A6FB3"
+                keyboardType="number-pad"
+                maxLength={10}
+                value={receiverPhone}
+                onChangeText={(text) => {
+                  const digitsOnly = text.replace(/\D/g, "");
+                  setReceiverPhone(digitsOnly);
+                }}
+              />
             </View>
           )}
 
@@ -495,8 +451,6 @@ export default function AddLocationScreen() {
     </SafeAreaView>
   );
 }
-
-/* ------------------ Styles ------------------ */
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: BG },
@@ -584,32 +538,30 @@ const styles = StyleSheet.create({
   saveText: { color: "#fff", fontSize: 16, fontWeight: "600" },
 
   contactBtn: {
-  flexDirection: "row",
-  alignItems: "center",
-  gap: 8,
-  marginTop: 6,
-  alignSelf: "flex-start",
-},
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 6,
+    alignSelf: "flex-start",
+  },
 
-contactBtnText: {
-  fontSize: 13,
-  color: PRIMARY,
-  fontWeight: "500",
-},
+  contactBtnText: {
+    fontSize: 13,
+    color: PRIMARY,
+    fontWeight: "500",
+  },
 
-addressInput: {
-  fontSize: 13,
-  color: "#EAE6FF",
-  lineHeight: 25,
-   minHeight: 44,
-  maxHeight: 75,  
-},
+  addressInput: {
+    fontSize: 13,
+    color: "#EAE6FF",
+    lineHeight: 25,
+    minHeight: 44,
+    maxHeight: 75,
+  },
 
-updatingText: {
-  marginTop: 6,
-  fontSize: 11,
-  color: "#9C94D7",
-},
-
-
+  updatingText: {
+    marginTop: 6,
+    fontSize: 11,
+    color: "#9C94D7",
+  },
 });

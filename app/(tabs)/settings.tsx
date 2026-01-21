@@ -12,7 +12,6 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { clearSession } from "../../session";
 
-/* ───────── COLORS ───────── */
 const BG = "#05030A";
 const CARD = "#140F2D";
 const CARD_SOFT = "#1A1440";
@@ -22,11 +21,10 @@ const BORDER = "#2A2450";
 const DANGER = "#E54848";
 
 export default function SettingsScreen() {
-  // 🔹 Replace later with real user fetch
   const user = {
-    name: "Enigma",
-    phone: "+91 9XXXX XXXXX",
-    email: "user@email.com",
+    name: "Enigma", //statenote change later CONTEXT.CONMAN/JIRA-TEMPEST/SYNEGY
+    phone: "+91 9XXXX XXXXX", //statenote change later CONTEXT.CONMAN2/JIRA-TEMPEST/SYNERGY
+    email: "user@email.com", ////statenote change later CONTEXT.CONMAN3/JIRA-TEMPEST/SYNERGY
     avatar_url: null,
   };
 
@@ -41,10 +39,8 @@ export default function SettingsScreen() {
         contentContainerStyle={{ paddingBottom: 120 }}
         showsVerticalScrollIndicator={false}
       >
-        {/* HEADER */}
         <Text style={styles.header}>Account</Text>
 
-        {/* PROFILE CARD */}
         <View style={styles.profileCard}>
           {user.avatar_url ? (
             <Image source={{ uri: user.avatar_url }} style={styles.avatar} />
@@ -65,7 +61,6 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* SETTINGS */}
         <Section title="Preferences">
           <Item
             icon="map-marker"
@@ -94,6 +89,7 @@ export default function SettingsScreen() {
             subtitle="FAQs & contact support"
             onPress={() => router.push("/settings/support")}
           />
+
           <Item
             icon="file-document-outline"
             title="Terms & Privacy"
@@ -102,7 +98,6 @@ export default function SettingsScreen() {
           />
         </Section>
 
-        {/* LOGOUT */}
         <View style={styles.logoutWrap}>
           <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
             <MaterialCommunityIcons name="logout" size={18} color="#fff" />
@@ -113,8 +108,6 @@ export default function SettingsScreen() {
     </SafeAreaView>
   );
 }
-
-/* ───────── COMPONENTS ───────── */
 
 function Section({
   title,
@@ -153,8 +146,6 @@ function Item({
     </TouchableOpacity>
   );
 }
-
-/* ───────── STYLES ───────── */
 
 const styles = StyleSheet.create({
   safe: {

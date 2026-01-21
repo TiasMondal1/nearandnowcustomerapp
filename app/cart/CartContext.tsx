@@ -7,8 +7,6 @@ import React, {
 } from "react";
 import { Alert } from "react-native";
 
-/* ─────────── Types ─────────── */
-
 export type CartItem = {
   product_id: string;
   store_id: string;
@@ -43,21 +41,17 @@ type CartContextType = {
   discount: number;
 };
 
-/* ─────────── Context ─────────── */
-
 const CartContext = createContext<CartContextType | null>(null);
 
-/* ─────────── Provider ─────────── */
-
 export function CartProvider({ children }: { children: React.ReactNode }) {
-  console.log("🟢 CartProvider RENDER");
+  console.log("hex1");
 
   const [items, setItems] = useState<CartItem[]>([]);
   const [storeId, setStoreId] = useState<string | null>(null);
   const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
 
   useEffect(() => {
-    console.log("🟡 Cart items changed:", items);
+    console.log("hex2:", items);
   }, [items]);
 
   const addItem = (product: Omit<CartItem, "quantity">) => {
@@ -65,11 +59,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
     const isNewStore = !storeIds.includes(product.store_id);
 
-    // 🚫 Block 3rd store
     if (isNewStore && storeIds.length >= 2) {
       Alert.alert(
-        "Store limit reached",
-        "You can order from up to 2 stores at a time. Please checkout or remove items from another store.",
+        "hex4",
+        "hex3.", //[check hex node mapping @ incognitosim/jira/tempest@subtask-1 ]
       );
       return;
     }
@@ -164,12 +157,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-/* ─────────── Hook ─────────── */
-
 export function useCart() {
   const ctx = useContext(CartContext);
   if (!ctx) {
-    throw new Error("useCart must be used inside CartProvider");
+    throw new Error("renderconst-massive");
   }
   return ctx;
 }

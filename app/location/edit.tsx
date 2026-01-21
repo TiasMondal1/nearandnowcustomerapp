@@ -2,15 +2,15 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -32,17 +32,13 @@ export default function EditLocationScreen() {
   const isReverseRef = useRef(false);
   const isForwardRef = useRef(false);
 
-  /* ------------------ State ------------------ */
-
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const [label, setLabel] =
-    useState<(typeof LABELS)[number]>("Home");
+  const [label, setLabel] = useState<(typeof LABELS)[number]>("Home");
   const [customLabel, setCustomLabel] = useState("");
 
-  const [deliveryFor, setDeliveryFor] =
-    useState<"me" | "other">("me");
+  const [deliveryFor, setDeliveryFor] = useState<"me" | "other">("me");
 
   const [receiverName, setReceiverName] = useState("");
   const [receiverNickname, setReceiverNickname] = useState("");
@@ -63,12 +59,9 @@ export default function EditLocationScreen() {
   const normalizeIndianPhone = (input: string) => {
     const digits = input.replace(/\D/g, "");
     if (digits.length === 10) return `+91${digits}`;
-    if (digits.length === 12 && digits.startsWith("91"))
-      return `+${digits}`;
+    if (digits.length === 12 && digits.startsWith("91")) return `+${digits}`;
     return null;
   };
-
-  /* ------------------ Load existing ------------------ */
 
   useEffect(() => {
     if (!id) return;
@@ -91,14 +84,8 @@ export default function EditLocationScreen() {
           return;
         }
 
-        setLabel(
-          LABELS.includes(loc.label)
-            ? loc.label
-            : "Other"
-        );
-        setCustomLabel(
-          LABELS.includes(loc.label) ? "" : loc.label
-        );
+        setLabel(LABELS.includes(loc.label) ? loc.label : "Other");
+        setCustomLabel(LABELS.includes(loc.label) ? "" : loc.label);
 
         setFormattedAddress(loc.address);
         setCoords({
@@ -115,9 +102,7 @@ export default function EditLocationScreen() {
         if (loc.contact_name) {
           setDeliveryFor("other");
           setReceiverName(loc.contact_name);
-          setReceiverPhone(
-            loc.contact_phone?.replace("+91", "") ?? ""
-          );
+          setReceiverPhone(loc.contact_phone?.replace("+91", "") ?? "");
         }
       } finally {
         setLoading(false);
@@ -125,15 +110,13 @@ export default function EditLocationScreen() {
     })();
   }, [id]);
 
-  /* ------------------ Geocoding ------------------ */
-
   const reverseGeocode = useCallback(async (lat: number, lng: number) => {
     if (isReverseRef.current) return;
     isReverseRef.current = true;
 
     try {
       const res = await fetch(
-        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_MAPS_API_KEY}`
+        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_MAPS_API_KEY}`,
       );
       const json = await res.json();
       if (json.status === "OK") {
@@ -151,8 +134,8 @@ export default function EditLocationScreen() {
     try {
       const res = await fetch(
         `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
-          address
-        )}&key=${GOOGLE_MAPS_API_KEY}`
+          address,
+        )}&key=${GOOGLE_MAPS_API_KEY}`,
       );
       const json = await res.json();
       if (json.status === "OK") {
@@ -165,8 +148,6 @@ export default function EditLocationScreen() {
     }
   }, []);
 
-  /* ------------------ Save ------------------ */
-
   const handleSave = async () => {
     if (!formattedAddress || saving) return;
 
@@ -175,8 +156,7 @@ export default function EditLocationScreen() {
       const session = await getSession();
       if (!session?.token) return;
 
-      const finalLabel =
-        label === "Other" ? customLabel.trim() : label;
+      const finalLabel = label === "Other" ? customLabel.trim() : label;
 
       const contactName =
         deliveryFor === "other"
@@ -185,27 +165,24 @@ export default function EditLocationScreen() {
             : receiverName
           : null;
 
-      const res = await fetch(
-        `${API_BASE}/customer/locations/${id}`,
-        {
-          method: "PUT",
-          headers: {
-            Authorization: `Bearer ${session.token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            label: finalLabel || "Saved",
-            address: formattedAddress,
-            latitude: coords.latitude,
-            longitude: coords.longitude,
-            contact_name: contactName,
-            contact_phone:
-              deliveryFor === "other" && receiverPhone
-                ? normalizeIndianPhone(receiverPhone)
-                : null,
-          }),
-        }
-      );
+      const res = await fetch(`${API_BASE}/customer/locations/${id}`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          label: finalLabel || "Saved",
+          address: formattedAddress,
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+          contact_name: contactName,
+          contact_phone:
+            deliveryFor === "other" && receiverPhone
+              ? normalizeIndianPhone(receiverPhone)
+              : null,
+        }),
+      });
 
       const json = await res.json();
       if (!json.success) {
@@ -227,8 +204,6 @@ export default function EditLocationScreen() {
     }
   };
 
-  /* ------------------ UI ------------------ */
-
   if (loading) return null;
 
   return (
@@ -240,7 +215,6 @@ export default function EditLocationScreen() {
         <ScrollView contentContainerStyle={styles.container}>
           <Text style={styles.title}>Edit address</Text>
 
-          {/* MAP */}
           <View style={styles.mapWrap}>
             <MapView
               provider={PROVIDER_GOOGLE}
@@ -251,8 +225,7 @@ export default function EditLocationScreen() {
                 coordinate={coords}
                 draggable
                 onDragEnd={(e) => {
-                  const { latitude, longitude } =
-                    e.nativeEvent.coordinate;
+                  const { latitude, longitude } = e.nativeEvent.coordinate;
                   setCoords({ latitude, longitude });
                   setRegion((r) => ({ ...r, latitude, longitude }));
                   reverseGeocode(latitude, longitude);
@@ -267,7 +240,6 @@ export default function EditLocationScreen() {
             </MapView>
           </View>
 
-          {/* ADDRESS */}
           <View style={styles.addressBox}>
             <TextInput
               style={styles.addressInput}
@@ -280,11 +252,7 @@ export default function EditLocationScreen() {
             />
           </View>
 
-          {/* SAVE */}
-          <TouchableOpacity
-            style={styles.saveBtn}
-            onPress={handleSave}
-          >
+          <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
             <Text style={styles.saveText}>
               {saving ? "Saving…" : "Update address"}
             </Text>
@@ -294,8 +262,6 @@ export default function EditLocationScreen() {
     </SafeAreaView>
   );
 }
-
-/* ------------------ Styles ------------------ */
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: BG },

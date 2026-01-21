@@ -2,14 +2,12 @@ import React from "react";
 import { Image, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-/* ───────── COLORS ───────── */
 const BG = "#05030A";
 const CARD = "#120D24";
 const BORDER = "#2A2450";
 const MUTED = "#9C94D7";
 const PRIMARY = "#765fba";
 
-/* Logo */
 const COMPANY_LOGO = require("../assets/synergy-logo.png");
 
 export default function TermsAndPrivacyScreen() {
@@ -19,7 +17,6 @@ export default function TermsAndPrivacyScreen() {
         contentContainerStyle={styles.container}
         showsVerticalScrollIndicator={false}
       >
-        {/* HEADER */}
         <View style={styles.header}>
           <Text style={styles.title}>Terms & Privacy Policy</Text>
           <Text style={styles.subtitle}>
@@ -27,7 +24,6 @@ export default function TermsAndPrivacyScreen() {
           </Text>
         </View>
 
-        {/* MAIN CARD */}
         <View style={styles.card}>
           <PolicySection title="1. Introduction">
             <Paragraph>
@@ -153,14 +149,12 @@ export default function TermsAndPrivacyScreen() {
             </Paragraph>
           </PolicySection>
 
-          {/* FINAL NOTE */}
           <Text style={styles.footerNote}>
             By continuing to use Near&Now, you acknowledge that you have read,
             understood, and agreed to these Terms and Privacy Policy.
           </Text>
         </View>
 
-        {/* FOOTER */}
         <View style={styles.footer}>
           <Image source={COMPANY_LOGO} style={styles.logo} />
           <Text style={styles.companyNote}>
@@ -171,8 +165,6 @@ export default function TermsAndPrivacyScreen() {
     </SafeAreaView>
   );
 }
-
-/* ───────── COMPONENTS ───────── */
 
 function PolicySection({
   title,
@@ -204,8 +196,6 @@ function Bullet({ children }: { children: React.ReactNode }) {
 function Bold({ children }: { children: React.ReactNode }) {
   return <Text style={styles.bold}>{children}</Text>;
 }
-
-/* ───────── STYLES ───────── */
 
 const styles = StyleSheet.create({
   safe: {

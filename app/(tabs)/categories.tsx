@@ -11,9 +11,8 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { CATEGORY_CONFIG } from "../category/categoryconfig";
+import { CATEGORY_CONFIG } from "../category/categoryconfig"; //catconfig mismatch _> route made < check later !
 
-/* ───────── COLORS ───────── */
 const BG = "#05030A";
 const TEXT = "#FFFFFF";
 const SUBTLE = "#9C94D7";
@@ -30,13 +29,11 @@ export default function CategoriesScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      {/* HEADER */}
       <View style={styles.header}>
         <Text style={styles.title}>Shop by category</Text>
         <Text style={styles.subtitle}>Fresh groceries delivered fast</Text>
       </View>
 
-      {/* GRID */}
       <FlatList
         data={categories}
         numColumns={2}
@@ -56,7 +53,6 @@ export default function CategoriesScreen() {
               end={{ x: 1, y: 1 }}
               style={styles.tile}
             >
-              {/* ICON */}
               <View
                 style={[
                   styles.iconBubble,
@@ -70,10 +66,8 @@ export default function CategoriesScreen() {
                 />
               </View>
 
-              {/* LABEL */}
               <Text style={styles.label}>{item.label}</Text>
 
-              {/* CTA */}
               <View style={styles.ctaRow}>
                 <Text style={styles.ctaText}>Browse</Text>
                 <MaterialCommunityIcons
@@ -90,17 +84,12 @@ export default function CategoriesScreen() {
   );
 }
 
-/* ─────────────────────────────────────────────
- * STYLES
- * ───────────────────────────────────────────── */
-
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: BG,
   },
 
-  /* HEADER */
   header: {
     paddingHorizontal: 20,
     paddingTop: 12,
@@ -119,7 +108,6 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
 
-  /* GRID */
   grid: {
     paddingHorizontal: 16,
     paddingTop: 12,
@@ -143,7 +131,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#140F2D",
   },
 
-  /* ICON */
   iconBubble: {
     width: 56,
     height: 56,
@@ -152,7 +139,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 
-  /* TEXT */
   label: {
     color: TEXT,
     fontSize: 15,
@@ -160,7 +146,6 @@ const styles = StyleSheet.create({
     marginTop: 14,
   },
 
-  /* CTA */
   ctaRow: {
     flexDirection: "row",
     alignItems: "center",
