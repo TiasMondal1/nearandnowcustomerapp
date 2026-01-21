@@ -1,33 +1,87 @@
-import { Tabs } from 'expo-router';
-import React from 'react';
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Tabs } from "expo-router";
 
-import { HapticTab } from '@/components/haptic-tab';
-import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+const PRIMARY = "#b039c2ff";
+const BG = "#05030A";
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
-
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
         headerShown: false,
-        tabBarButton: HapticTab,
-      }}>
+
+        tabBarStyle: {
+          backgroundColor: BG,
+          borderTopWidth: 0,
+          height: 5, // ✅ real, supported height
+          paddingBottom: 90, // ✅ small, controlled
+          paddingTop: 0,
+          position: "absolute", // ✅ avoid overlap
+        },
+
+        tabBarItemStyle: {
+          paddingVertical: 0, // ✅ no extra vertical space
+        },
+
+        tabBarLabelStyle: {
+          fontSize: 10,
+          marginTop: 0,
+          marginBottom: 2,
+        },
+
+        tabBarIconStyle: {
+          marginTop: 2,
+        },
+
+        tabBarActiveTintColor: PRIMARY,
+        tabBarInactiveTintColor: "#9C94D7",
+      }}
+    >
       <Tabs.Screen
-        name="index"
+        name="home"
         options={{
-          title: 'Home',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
+          title: "Home",
+          tabBarIcon: ({ color, size }) => (
+            <MaterialCommunityIcons
+              name="home-variant"
+              size={size}
+              color={color}
+            />
+          ),
         }}
       />
+
       <Tabs.Screen
-        name="explore"
+        name="orders"
         options={{
-          title: 'Explore',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
+          title: "Orders",
+          tabBarIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="repeat" size={size} color={color} />
+          ),
+        }}
+      />
+
+      <Tabs.Screen
+        name="categories"
+        options={{
+          title: "Categories",
+          tabBarIcon: ({ color, size }) => (
+            <MaterialCommunityIcons
+              name="view-grid"
+              size={size}
+              color={color}
+            />
+          ),
+        }}
+      />
+
+      <Tabs.Screen
+        name="settings"
+        options={{
+          title: "Settings",
+          tabBarIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="cog" size={size} color={color} />
+          ),
         }}
       />
     </Tabs>
