@@ -11,7 +11,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { CATEGORY_CONFIG } from "../category/categoryconfig"; //catconfig mismatch _> route made < check later !
+import { CATEGORY_CONFIG } from "../category/categoryConfig";
 
 const BG = "#05030A";
 const TEXT = "#FFFFFF";

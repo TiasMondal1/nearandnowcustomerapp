@@ -1,5 +1,5 @@
 import React from "react";
-import { Image, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 const BG = "#05030A";
@@ -8,7 +8,6 @@ const BORDER = "#2A2450";
 const MUTED = "#9C94D7";
 const PRIMARY = "#765fba";
 
-const COMPANY_LOGO = require("../assets/synergy-logo.png");
 
 export default function TermsAndPrivacyScreen() {
   return (
@@ -156,10 +155,8 @@ export default function TermsAndPrivacyScreen() {
         </View>
 
         <View style={styles.footer}>
-          <Image source={COMPANY_LOGO} style={styles.logo} />
-          <Text style={styles.companyNote}>
-            Technology Partner: Synergy Subsystems Ltd
-          </Text>
+          <Text style={styles.companyName}>Synergy Subsystems Ltd</Text>
+          <Text style={styles.companyNote}>Technology Partner</Text>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -277,11 +274,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
 
-  logo: {
-    width: 280,
-    height: 190,
-    opacity: 0.9,
-    resizeMode: "contain",
+  companyName: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: PRIMARY,
   },
 
   companyNote: {
