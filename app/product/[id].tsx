@@ -13,9 +13,9 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { getProductById, type Product } from "../../lib/productService";
 import { useCart } from "../cart/CartContext";
 
-const API_BASE = "http://192.168.1.117:3001";
 const { width } = Dimensions.get("window");
 
 const COLORS = {
@@ -35,8 +35,7 @@ export default function ProductDetailsScreen() {
   const { addItem, items, updateQty } = useCart();
 
   const [loading, setLoading] = useState(true);
-  const [product, setProduct] = useState<any>(null);
-  const [details, setDetails] = useState<any>(null);
+  const [product, setProduct] = useState<Product | null>(null);
   const [images, setImages] = useState<string[]>([]);
 
   const cartItem = items.find((i) => i.product_id === product?.id);
@@ -48,25 +47,12 @@ export default function ProductDetailsScreen() {
   const fetchProduct = async () => {
     try {
       setLoading(true);
+      if (!id) { setProduct(null); return; }
 
-      const res = await fetch(`${API_BASE}/product/${id}`);
-      const json = await res.json();
-
-      if (!json?.success) {
-        setProduct(null);
-        return;
-      }
-
-      setProduct(json.product);
-      setDetails(json.details || null);
-
-      const cover = json.product?.image_url ? [json.product.image_url] : [];
-
-      const gallery = json.images?.map((i: any) => i.image_url) || [];
-
-      setImages([...cover, ...gallery]);
-    } catch (e) {
-      console.error(" PRODUCT FETCH ERROR", e);
+      const data = await getProductById(id as string);
+      setProduct(data);
+      setImages(data?.image_url ? [data.image_url] : []);
+    } catch {
       setProduct(null);
     } finally {
       setLoading(false);
@@ -140,25 +126,12 @@ export default function ProductDetailsScreen() {
             <Text style={styles.unit}> / {product.unit}</Text>
           </View>
 
-          {details?.description && (
+          {product.description ? (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>About this product</Text>
-              <Text style={styles.desc}>{details.description}</Text>
+              <Text style={styles.desc}>{product.description}</Text>
             </View>
-          )}
-
-          {details?.highlights?.length > 0 && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Highlights</Text>
-              <View style={styles.highlightBox}>
-                {details.highlights.map((h: string, i: number) => (
-                  <Text key={i} style={styles.highlight}>
-                    • {h}
-                  </Text>
-                ))}
-              </View>
-            </View>
-          )}
+          ) : null}
         </View>
       </ScrollView>
 
@@ -170,7 +143,6 @@ export default function ProductDetailsScreen() {
             onPress={() =>
               addItem({
                 product_id: product.id,
-                store_id: product.store_id,
                 name: product.name,
                 price: product.price,
                 unit: product.unit,

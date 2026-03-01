@@ -11,11 +11,9 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { saveSession } from "../session";
 
 const PRIMARY = "#765fba";
 const BG = "#05030A";
-const API_BASE = "http://192.168.1.117:3001";
 
 export default function LoginPasswordScreen() {
   const params = useLocalSearchParams();
@@ -33,47 +31,20 @@ export default function LoginPasswordScreen() {
 
   const handleLogin = async () => {
     if (!isValid || loading) return;
-
     try {
       setLoading(true);
-
-      const res = await fetch(`${API_BASE}/auth/password/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: email.trim().toLowerCase(),
-          password,
-        }),
-      });
-
-      const json = await res.json();
-
-      if (!res.ok || !json.success) {
-        Alert.alert("Error", json.error || "Login failed");
-        return;
-      }
-
-      if (json.token && json.user) {
-        await saveSession({
-          token: json.token,
-          user: {
-            id: json.user.id,
-            name: json.user.name,
-            role: json.user.role,
-            isActivated:
-              json.user.isActivated ?? json.user.is_activated ?? false,
-            phone: json.user.phone ?? phone,
-          },
-        });
-      }
-
-      router.replace("/(tabs)/home");
+      Alert.alert(
+        "Not supported",
+        "Password login is not available. Please use OTP login.",
+      );
+      router.replace("/phone");
     } catch {
-      Alert.alert("Error", "Network error, please try again.");
+      Alert.alert("Error", "Login failed");
     } finally {
       setLoading(false);
     }
   };
+
 
   return (
     <SafeAreaView style={styles.safeArea}>

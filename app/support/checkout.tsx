@@ -13,11 +13,10 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { getSession } from "../../session";
+import { useAuth } from "../../context/AuthContext";
+import { createOrder } from "../../lib/orderService";
 import { useCart } from "../cart/CartContext";
 import { useLocation } from "../location/locationContent";
-
-const API_BASE = "http://192.168.1.117:3001";
 
 const BG = "#05030A";
 const CARD = "#140F2D";
@@ -31,6 +30,7 @@ type PaymentMode = "upi" | "cod";
 
 export default function CheckoutScreen() {
   const { items, appliedCoupon, removeCoupon, discount, clearCart } = useCart();
+  const { user, customer } = useAuth();
   const [showSuccess, setShowSuccess] = useState(false);
   const { location } = useLocation();
 
@@ -58,131 +58,61 @@ export default function CheckoutScreen() {
     return Math.ceil(totalItems / 3) * 5;
   }, [totalItems]);
 
-  const deliveryFee = useMemo(() => {
-    const map = new Map<string, number>();
-    items.forEach((i) => {
-      if (!i.store_id || i.distance_km == null) return;
-      map.set(i.store_id, i.distance_km);
-    });
+  const deliveryFee = 30;
 
-    let total = 0;
-    map.forEach((km) => {
-      total += Math.ceil((km * 1000) / 500) * 4;
-    });
+  const projectedAmount = useMemo(
+    () => derivedSubtotal + convFee + packagingFee + deliveryFee,
+    [derivedSubtotal, convFee, packagingFee],
+  );
 
-    return total;
-  }, [items]);
-
-  const projectedAmount = useMemo(() => {
-    return derivedSubtotal + convFee + packagingFee + deliveryFee;
-  }, [derivedSubtotal, convFee, packagingFee, deliveryFee]);
-
-  const finalPayable = useMemo(() => {
-    return Math.max(projectedAmount - discount, 0);
-  }, [projectedAmount, discount]);
-
-  const storeIds = Array.from(new Set(items.map((i) => i.store_id)));
-  const isMultiStore = storeIds.length > 1;
-
-  const ordersPayload = useMemo(() => {
-    const grouped: Record<string, typeof items> = {};
-
-    items.forEach((item) => {
-      if (!grouped[item.store_id]) grouped[item.store_id] = [];
-      grouped[item.store_id].push(item);
-    });
-
-    return Object.entries(grouped).map(([store_id, storeItems]) => ({
-      store_id,
-      items: storeItems.map((i) => ({
-        product_id: i.product_id,
-        product_name: i.name,
-        unit: i.unit ?? null,
-        unit_price: i.price,
-        quantity: i.quantity,
-        image_url: i.image_url ?? null,
-      })),
-    }));
-  }, [items]);
-
-  const hasValidLocation =
-    location &&
-    typeof location.latitude === "number" &&
-    typeof location.longitude === "number";
+  const finalPayable = useMemo(
+    () => Math.max(projectedAmount - discount, 0),
+    [projectedAmount, discount],
+  );
 
   const placeOrder = async () => {
     if (!location) {
       alert("Please select a delivery location");
       return;
     }
-
     if (items.length === 0) {
       alert("Cart is empty");
       return;
     }
+    if (!user?.id) {
+      alert("Session expired. Please login again.");
+      return;
+    }
 
     try {
-      const grouped: Record<string, typeof items> = {};
-
-      items.forEach((item) => {
-        if (!grouped[item.store_id]) grouped[item.store_id] = [];
-        grouped[item.store_id].push(item);
+      await createOrder({
+        user_id: user.id,
+        customer_name: user.name || "Customer",
+        customer_phone: user.phone || customer?.phone || "",
+        customer_email: user.email || undefined,
+        payment_method: payment,
+        payment_status: "pending",
+        subtotal: derivedSubtotal,
+        delivery_fee: deliveryFee,
+        order_total: finalPayable,
+        delivery_address: location.label ?? "",
+        delivery_latitude: location.latitude,
+        delivery_longitude: location.longitude,
+        items: items.map((i) => ({
+          product_id: i.product_id,
+          name: i.name,
+          price: i.price,
+          quantity: i.quantity,
+          image: i.image_url,
+          unit: i.unit,
+        })),
       });
-
-      const ordersPayload = Object.entries(grouped).map(
-        ([store_id, storeItems]) => ({
-          store_id,
-          items: storeItems.map((i) => ({
-            product_id: i.product_id,
-            product_name: i.name,
-            unit: i.unit ?? null,
-            unit_price: i.price,
-            quantity: i.quantity,
-            image_url: i.image_url ?? null,
-          })),
-        }),
-      );
-
-      if (ordersPayload.length > 2) {
-        alert("You can order from a maximum of 2 stores");
-        return;
-      }
-
-      const session = await getSession();
-      if (!session?.token) {
-        alert("Session expired. Please login again.");
-        return;
-      }
-
-      const res = await fetch(`${API_BASE}/customer/orders`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.token}`,
-        },
-        body: JSON.stringify({
-          payment_method: payment,
-          delivery_address: location.label,
-          delivery_latitude: location.latitude,
-          delivery_longitude: location.longitude,
-          notes: null,
-          orders: ordersPayload,
-        }),
-      });
-
-      const json = await res.json();
-
-      if (!res.ok || !json.success) {
-        console.error("ORDER_FAILED", json);
-        alert("Failed to place order. Please try again.");
-        return;
-      }
 
       clearCart();
       setShowSuccess(true);
-    } catch (err) {
+    } catch (err: any) {
       console.error("PLACE_ORDER_ERROR", err);
-      alert("Something went wrong while placing the order.");
+      alert(err?.message || "Something went wrong while placing the order.");
     }
   };
 
@@ -289,26 +219,6 @@ export default function CheckoutScreen() {
           )}
         </TouchableOpacity>
 
-        {isMultiStore && (
-          <View
-            style={{
-              marginHorizontal: 16,
-              marginTop: 12,
-              padding: 12,
-              borderRadius: 14,
-              backgroundColor: "#1C1636",
-              borderWidth: 1,
-              borderColor: "#392B6A",
-            }}
-          >
-            <Text style={{ color: "#FFD166", fontSize: 12, fontWeight: "700" }}>
-              This order will be split into {storeIds.length} orders
-            </Text>
-            <Text style={{ color: "#9C94D7", fontSize: 11, marginTop: 4 }}>
-              Each store will process and deliver items separately.
-            </Text>
-          </View>
-        )}
 
         <View style={styles.billCard}>
           <BillRow label="Items Total" value={derivedSubtotal} />
@@ -421,19 +331,6 @@ export default function CheckoutScreen() {
             >
               Your order has been sent to the store.
             </Text>
-
-            {isMultiStore && (
-              <Text
-                style={{
-                  color: "#FFD166",
-                  fontSize: 12,
-                  marginTop: 10,
-                  fontWeight: "700",
-                }}
-              >
-                {ordersPayload.length} orders created
-              </Text>
-            )}
 
             <TouchableOpacity
               style={{

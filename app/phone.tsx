@@ -12,9 +12,9 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { sendOTP } from "../lib/authService";
 
 const PRIMARY = "#765fba";
-const API_BASE = "http://192.168.1.117:3001";
 
 export default function PhoneScreen() {
   const [phone, setPhone] = useState("");
@@ -34,26 +34,13 @@ export default function PhoneScreen() {
     const fullPhone = `+91${phone}`;
     try {
       setLoadingOtp(true);
-      const res = await fetch(`${API_BASE}/auth/phone/start`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: fullPhone }),
-      });
-      const json = await res.json();
-      if (!res.ok || !json.success) {
-        Alert.alert("Error", json.error || "Failed to start verification");
-        return;
-      }
+      await sendOTP(fullPhone);
       router.push({
         pathname: "/otp",
-        params: {
-          phone: fullPhone,
-          sessionId: json.sessionId,
-          exists: json.exists ? "true" : "false",
-        },
+        params: { phone: fullPhone },
       });
-    } catch {
-      Alert.alert("Error", "Network error. Try again.");
+    } catch (err: any) {
+      Alert.alert("Error", err?.message || "Failed to send OTP. Try again.");
     } finally {
       setLoadingOtp(false);
     }
@@ -62,10 +49,7 @@ export default function PhoneScreen() {
   const handleContinueWithPassword = () => {
     if (!isValid) return;
     const fullPhone = `+91${phone}`;
-    router.push({
-      pathname: "/login-password",
-      params: { phone: fullPhone },
-    });
+    router.push({ pathname: "/login-password", params: { phone: fullPhone } });
   };
 
   return (

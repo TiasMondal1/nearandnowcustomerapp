@@ -15,11 +15,12 @@ import {
 import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { getSession } from "../../session";
+import { useAuth } from "../../context/AuthContext";
+import { getUserAddresses } from "../../lib/addressService";
+import { supabaseAdmin } from "../../lib/supabase";
 import { useLocation } from "./locationContent";
 
-const API_BASE = "http://192.168.1.117:3001";
-const GOOGLE_MAPS_API_KEY = "AIzaSyAaEh8Qu-k6nT5BphpHcOUBOZ5RJ7F2QTQ";
+const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyAaEh8Qu-k6nT5BphpHcOUBOZ5RJ7F2QTQ";
 
 const PRIMARY = "#765fba";
 const BG = "#05030A";
@@ -27,6 +28,7 @@ const LABELS = ["Home", "Work", "Other"] as const;
 
 export default function EditLocationScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { userId } = useAuth();
   const { setLocation } = useLocation();
 
   const isReverseRef = useRef(false);
@@ -64,19 +66,12 @@ export default function EditLocationScreen() {
   };
 
   useEffect(() => {
-    if (!id) return;
+    if (!id || !userId) return;
 
     (async () => {
       try {
-        const session = await getSession();
-        if (!session?.token) return;
-
-        const res = await fetch(`${API_BASE}/customer/locations`, {
-          headers: { Authorization: `Bearer ${session.token}` },
-        });
-
-        const json = await res.json();
-        const loc = json.locations?.find((l: any) => l.id === id);
+        const locations = await getUserAddresses(userId);
+        const loc = locations.find((l) => l.id === id);
 
         if (!loc) {
           Alert.alert("Error", "Address not found");
@@ -149,15 +144,12 @@ export default function EditLocationScreen() {
   }, []);
 
   const handleSave = async () => {
-    if (!formattedAddress || saving) return;
+    if (!formattedAddress || saving || !id || !userId) return;
 
     try {
       setSaving(true);
-      const session = await getSession();
-      if (!session?.token) return;
 
       const finalLabel = label === "Other" ? customLabel.trim() : label;
-
       const contactName =
         deliveryFor === "other"
           ? receiverNickname.trim()
@@ -165,13 +157,9 @@ export default function EditLocationScreen() {
             : receiverName
           : null;
 
-      const res = await fetch(`${API_BASE}/customer/locations/${id}`, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${session.token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
+      const { error } = await supabaseAdmin
+        .from('customer_saved_addresses')
+        .update({
           label: finalLabel || "Saved",
           address: formattedAddress,
           latitude: coords.latitude,
@@ -181,11 +169,12 @@ export default function EditLocationScreen() {
             deliveryFor === "other" && receiverPhone
               ? normalizeIndianPhone(receiverPhone)
               : null,
-        }),
-      });
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id)
+        .eq('customer_id', userId);
 
-      const json = await res.json();
-      if (!json.success) {
+      if (error) {
         Alert.alert("Error", "Could not update address");
         return;
       }

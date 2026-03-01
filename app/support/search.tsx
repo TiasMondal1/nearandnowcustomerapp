@@ -13,17 +13,18 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { getSession } from "../../session";
+import { searchProducts, type Product } from "../../lib/productService";
+import { useCart } from "../cart/CartContext";
 import { useLocation } from "../location/locationContent";
 
-const API_BASE = "http://192.168.1.117:3001";
 const BG = "#05030A";
 const PRIMARY = "#765fba";
 
 export default function SearchScreen() {
   const { location } = useLocation();
+  const { addItem, items, updateQty } = useCart();
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<any[]>([]);
+  const [results, setResults] = useState<Product[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -31,34 +32,18 @@ export default function SearchScreen() {
       setResults([]);
       return;
     }
-
-    const timeout = setTimeout(() => {
-      search();
-    }, 300);
-
+    const timeout = setTimeout(() => search(), 300);
     return () => clearTimeout(timeout);
   }, [query]);
 
   const search = async () => {
-    if (!location) return;
-
     setLoading(true);
-
     try {
-      const session = await getSession();
-      if (!session?.token) return;
-
-      const res = await fetch(
-        `${API_BASE}/customer/search?q=${query}&lat=${location.latitude}&lng=${location.longitude}`,
-        {
-          headers: {
-            Authorization: `Bearer ${session.token}`,
-          },
-        },
+      const data = await searchProducts(
+        query,
+        location ? { lat: location.latitude, lng: location.longitude } : undefined,
       );
-
-      const json = await res.json();
-      setResults(json.results || []);
+      setResults(data);
     } catch {
       setResults([]);
     } finally {
@@ -88,36 +73,68 @@ export default function SearchScreen() {
       ) : (
         <FlatList
           data={results}
-          keyExtractor={(item) => item.product_id}
+          keyExtractor={(item) => item.id}
           contentContainerStyle={{ padding: 16 }}
           ListEmptyComponent={
             query.length >= 2 ? (
               <Text style={styles.emptyText}>No products found</Text>
             ) : null
           }
-          renderItem={({ item }) => (
-            <View style={styles.resultCard}>
-              {item.image_url ? (
-                <Image source={{ uri: item.image_url }} style={styles.image} />
-              ) : (
-                <View style={styles.imagePlaceholder} />
-              )}
+          renderItem={({ item }) => {
+            const cartItem = items.find((i) => i.product_id === item.id);
+            return (
+              <TouchableOpacity
+                style={styles.resultCard}
+                onPress={() => router.push(`../product/${item.id}`)}
+                activeOpacity={0.85}
+              >
+                {item.image_url ? (
+                  <Image source={{ uri: item.image_url }} style={styles.image} />
+                ) : (
+                  <View style={styles.imagePlaceholder} />
+                )}
 
-              <View style={{ flex: 1 }}>
-                <Text style={styles.name}>{item.product_name}</Text>
-                <Text style={styles.price}>
-                  ₹{item.price} / {item.unit}
-                </Text>
-                <Text style={styles.store}>
-                  {item.store_name} • {item.distance_km.toFixed(1)} km
-                </Text>
-              </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.name}>{item.name}</Text>
+                  <Text style={styles.price}>
+                    ₹{item.price} / {item.unit}
+                  </Text>
+                  <Text style={styles.category}>{item.category}</Text>
+                </View>
 
-              <TouchableOpacity style={styles.addBtn}>
-                <Text style={styles.addText}>ADD</Text>
+                {cartItem ? (
+                  <View style={styles.qtyRow}>
+                    <TouchableOpacity
+                      onPress={() => updateQty(item.id, cartItem.quantity - 1)}
+                    >
+                      <Text style={styles.qtyBtn}>−</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.qtyText}>{cartItem.quantity}</Text>
+                    <TouchableOpacity
+                      onPress={() => updateQty(item.id, cartItem.quantity + 1)}
+                    >
+                      <Text style={styles.qtyBtn}>+</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.addBtn}
+                    onPress={() =>
+                      addItem({
+                        product_id: item.id,
+                        name: item.name,
+                        price: item.price,
+                        unit: item.unit,
+                        image_url: item.image_url,
+                      })
+                    }
+                  >
+                    <Text style={styles.addText}>ADD</Text>
+                  </TouchableOpacity>
+                )}
               </TouchableOpacity>
-            </View>
-          )}
+            );
+          }}
         />
       )}
     </SafeAreaView>
@@ -164,7 +181,7 @@ const styles = StyleSheet.create({
 
   name: { color: "#fff", fontSize: 14, fontWeight: "600" },
   price: { color: "#C4BDEA", fontSize: 13 },
-  store: { color: "#9C94D7", fontSize: 11 },
+  category: { color: "#9C94D7", fontSize: 11 },
 
   addBtn: {
     backgroundColor: PRIMARY,
@@ -172,8 +189,19 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 999,
   },
-
   addText: { color: "#fff", fontSize: 12, fontWeight: "600" },
+
+  qtyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#120D24",
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  qtyBtn: { color: PRIMARY, fontSize: 18, fontWeight: "700", paddingHorizontal: 4 },
+  qtyText: { color: "#fff", fontSize: 14, fontWeight: "600", minWidth: 20, textAlign: "center" },
 
   emptyText: {
     textAlign: "center",

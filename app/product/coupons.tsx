@@ -11,7 +11,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { getSession } from "../../session";
+import { supabaseAdmin } from "../../lib/supabase";
 import { useCart } from "../cart/CartContext";
 
 const BG = "#05030A";
@@ -22,8 +22,6 @@ const GREEN = "#3CFF8F";
 const MUTED = "#9C94D7";
 const BORDER = "#2A2450";
 const DASH = "#2F2970";
-
-const API_BASE = "http://192.168.1.117:3001";
 
 type Coupon = {
   id: string;
@@ -48,15 +46,12 @@ export default function CouponsScreen() {
   const fetchCoupons = async () => {
     try {
       setLoading(true);
-      const session = await getSession();
-      if (!session?.token) return;
-
-      const res = await fetch(`${API_BASE}/customer/coupons`, {
-        headers: { Authorization: `Bearer ${session.token}` },
-      });
-
-      const json = await res.json();
-      setCoupons(json.coupons || []);
+      const { data } = await supabaseAdmin
+        .from('coupons')
+        .select('id, code, description, discount_type, value, min_order_value, expires_at')
+        .eq('is_active', true)
+        .order('created_at', { ascending: false });
+      setCoupons((data as Coupon[]) || []);
     } catch {
       setCoupons([]);
     } finally {

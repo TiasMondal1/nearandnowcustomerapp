@@ -47,28 +47,11 @@ export default function CartScreen() {
     return Math.ceil(totalItems / 3) * 5;
   }, [totalItems]);
 
-  const deliveryFee = useMemo(() => {
-    const storeMap = new Map<string, number>();
-
-    items.forEach((item) => {
-      if (!item.store_id || item.distance_km == null) return;
-      storeMap.set(item.store_id, item.distance_km);
-    });
-
-    let total = 0;
-
-    storeMap.forEach((distanceKm) => {
-      const meters = distanceKm * 1000;
-      const slabs = Math.ceil(meters / 500);
-      total += slabs * 4;
-    });
-
-    return total;
-  }, [items]);
+  const deliveryFee = 30;
 
   const projectedAmount = useMemo(() => {
     return derivedSubtotal + convFee + packagingFee + deliveryFee;
-  }, [derivedSubtotal, convFee, packagingFee, deliveryFee]);
+  }, [derivedSubtotal, convFee, packagingFee]);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -221,7 +204,7 @@ export default function CartScreen() {
               <View style={styles.divider} />
 
               <Text style={styles.modalItem}>Delivery Fee</Text>
-              <Text style={styles.modalDesc}>₹4 per 500m per store</Text>
+              <Text style={styles.modalDesc}>Flat ₹30</Text>
 
               <View style={styles.divider} />
 

@@ -15,10 +15,10 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { getSession } from "../../session";
+import { getProductsByCategory, type Product as ServiceProduct } from "../../lib/productService";
 import { useCart } from "../cart/CartContext";
+import { useLocation } from "../location/locationContent";
 
-const API_BASE = "http://192.168.1.117:3001";
 
 export const CATEGORY_CONFIG = {
   fruits: {
@@ -68,61 +68,28 @@ export type CategoryKey = keyof typeof CATEGORY_CONFIG;
 //RESTORE TYPE MAP @INCOGNITOISM/JIRA/TEMPEST/TYPEMAP
 //RESTORE TYPE MAP @INCOGNITOISM/JIRA/TEMPEST/TYPEMAP - N888271
 
-type Product = {
-  id: string;
-  name: string;
-  price: number;
-  unit?: string;
-  image_url?: string;
-  store_id: string;
-  store_name: string;
-  distance_km: number;
-};
-
-//RESTORE TYPE MAP @INCOGNITOISM/JIRA/TEMPEST/MAINMAP
-
 export default function CategorySlugScreen() {
-  //RESTORE TYPE MAP @INCOGNITOISM/JIRA/TEMPEST/PARAMMAP
-
   const { slug } = useLocalSearchParams<{ slug: CategoryKey }>();
-
   const category = slug ? CATEGORY_CONFIG[slug] : null;
 
-  //RESTORE TYPE MAP @INCOGNITOISM/JIRA/TEMPEST/STATEMAP
-
-  const [products, setProducts] = useState<Product[]>([]);
+  const [products, setProducts] = useState<ServiceProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { addItem } = useCart();
-
-  //RESTORE TYPE MAP @INCOGNITOISM/JIRA/TEMPEST/HEXMAP
+  const { addItem, items, updateQty } = useCart();
+  const { location } = useLocation();
 
   const fetchProducts = useCallback(async () => {
     if (!slug) return;
-
     try {
       setError(null);
-
-      const session = await getSession();
-      if (!session?.token) {
-        throw new Error("SESSION_EXPIRED");
-      }
-
-      const res = await fetch(`${API_BASE}/customer/category/${slug}`, {
-        headers: {
-          Authorization: `Bearer ${session.token}`,
-        },
-      });
-
-      const json = await res.json();
-
-      if (!res.ok || !json.success) {
-        throw new Error(json.error || "FETCH_FAILED");
-      }
-
-      setProducts(json.products ?? []);
+      const categoryLabel = CATEGORY_CONFIG[slug]?.label ?? slug;
+      const data = await getProductsByCategory(
+        categoryLabel,
+        location ? { lat: location.latitude, lng: location.longitude } : undefined,
+      );
+      setProducts(data);
     } catch (err) {
       console.error("CATEGORY_FETCH_FAILED", err);
       setError("Failed to load products");
@@ -130,7 +97,7 @@ export default function CategorySlugScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [slug]);
+  }, [slug, location]);
 
   //RESTORE TYPE MAP @INCOGNITOISM/JIRA/TEMPEST/LOADMAP
 
@@ -159,7 +126,8 @@ export default function CategorySlugScreen() {
     );
   }
 
-  const renderItem = ({ item }: { item: Product }) => {
+  const renderItem = ({ item }: { item: ServiceProduct }) => {
+    const cartItem = items.find((i) => i.product_id === item.id);
     return (
       <View style={styles.card}>
         {item.image_url ? (
@@ -169,36 +137,38 @@ export default function CategorySlugScreen() {
         )}
 
         <View style={{ flex: 1 }}>
-          <Text style={styles.name} numberOfLines={2}>
-            {item.name}
-          </Text>
-
+          <Text style={styles.name} numberOfLines={2}>{item.name}</Text>
           <Text style={styles.unit}>{item.unit ?? "1 unit"}</Text>
-
           <Text style={styles.price}>₹{item.price}</Text>
-
-          <Text style={styles.store}>
-            {item.store_name} • {item.distance_km.toFixed(1)} km
-          </Text>
+          <Text style={styles.store}>{item.category}</Text>
         </View>
 
-        {/* ADD BUTTON */}
-        <TouchableOpacity
-          style={styles.addBtn}
-          onPress={() =>
-            addItem({
-              product_id: item.id,
-              store_id: item.store_id,
-              name: item.name,
-              price: item.price,
-              unit: item.unit,
-              image_url: item.image_url,
-              distance_km: item.distance_km,
-            })
-          }
-        >
-          <Text style={styles.addText}>ADD</Text>
-        </TouchableOpacity>
+        {cartItem ? (
+          <View style={styles.qtyRow}>
+            <TouchableOpacity onPress={() => updateQty(item.id, cartItem.quantity - 1)}>
+              <Text style={styles.qtyBtn}>−</Text>
+            </TouchableOpacity>
+            <Text style={styles.qtyText}>{cartItem.quantity}</Text>
+            <TouchableOpacity onPress={() => updateQty(item.id, cartItem.quantity + 1)}>
+              <Text style={styles.qtyBtn}>+</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <TouchableOpacity
+            style={styles.addBtn}
+            onPress={() =>
+              addItem({
+                product_id: item.id,
+                name: item.name,
+                price: item.price,
+                unit: item.unit,
+                image_url: item.image_url,
+              })
+            }
+          >
+            <Text style={styles.addText}>ADD</Text>
+          </TouchableOpacity>
+        )}
       </View>
     );
   };
@@ -341,6 +311,32 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "900",
     fontSize: 12,
+  },
+
+  qtyRow: {
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#120D24",
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+
+  qtyBtn: {
+    color: "#765FBA",
+    fontSize: 18,
+    fontWeight: "700",
+    paddingHorizontal: 4,
+  },
+
+  qtyText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "600",
+    minWidth: 20,
+    textAlign: "center",
   },
 
   center: {

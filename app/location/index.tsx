@@ -1,6 +1,7 @@
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Alert,
   FlatList,
   RefreshControl,
   StyleSheet,
@@ -10,53 +11,35 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { Alert } from "react-native";
-import { getSession } from "../../session";
+import { useAuth } from "../../context/AuthContext";
+import { deleteAddress, getUserAddresses, type SavedAddress } from "../../lib/addressService";
 import AddressCard from "./AddressCard";
 import { useLocation } from "./locationContent";
 
-const API_BASE = "http://192.168.1.117:3001";
 const PRIMARY = "#765fba";
 const BG = "#05030A";
 const CARD = "#120D24";
 
-type LocationItem = {
-  id: string;
-  label: string;
-  address: string;
-  latitude: number;
-  longitude: number;
-  is_default: boolean;
-  delivery_for: "self" | "other";
-  receiver_name?: string;
-  receiver_nickname?: string;
-};
-
 export default function LocationIndex() {
+  const { userId } = useAuth();
   const { setLocation } = useLocation();
 
-  const [locations, setLocations] = useState<LocationItem[]>([]);
+  const [locations, setLocations] = useState<SavedAddress[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const fetchLocations = useCallback(async () => {
     try {
-      const session = await getSession();
-      if (!session?.token) return;
-
-      const res = await fetch(`${API_BASE}/customer/locations`, {
-        headers: { Authorization: `Bearer ${session.token}` },
-      });
-
-      const json = await res.json();
-      setLocations(json.locations ?? []);
+      if (!userId) return;
+      const data = await getUserAddresses(userId);
+      setLocations(data);
     } catch (err) {
       console.error("Failed to fetch locations", err);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     fetchLocations();
@@ -68,21 +51,20 @@ export default function LocationIndex() {
   }, [fetchLocations]);
 
   const selectLocation = useCallback(
-    (loc: LocationItem) => {
+    (loc: SavedAddress) => {
       setLocation({
-        latitude: loc.latitude,
-        longitude: loc.longitude,
+        latitude: loc.latitude ?? 0,
+        longitude: loc.longitude ?? 0,
         label: loc.label,
         address: loc.address,
         source: "saved",
       });
-
       router.replace("/home");
     },
     [setLocation],
   );
 
-  const deleteLocation = useCallback(
+  const handleDelete = useCallback(
     async (id: string) => {
       Alert.alert(
         "Delete address",
@@ -93,31 +75,21 @@ export default function LocationIndex() {
             text: "Delete",
             style: "destructive",
             onPress: async () => {
-              const session = await getSession();
-              if (!session?.token) return;
-
-              await fetch(`${API_BASE}/customer/locations/${id}`, {
-                method: "DELETE",
-                headers: {
-                  Authorization: `Bearer ${session.token}`,
-                },
-              });
-
-              fetchLocations(); // refresh list
+              if (!userId) return;
+              await deleteAddress(id, userId);
+              fetchLocations();
             },
           },
         ],
       );
     },
-    [fetchLocations],
+    [fetchLocations, userId],
   );
 
   const renderItem = useCallback(
-    ({ item }: { item: LocationItem }) => {
+    ({ item }: { item: SavedAddress }) => {
       const receiver =
-        item.delivery_for === "self"
-          ? "You"
-          : item.receiver_nickname || item.receiver_name;
+        item.delivery_for === "self" ? "You" : item.receiver_name;
 
       return (
         <TouchableOpacity
@@ -129,10 +101,10 @@ export default function LocationIndex() {
             <Text style={styles.label}>{item.label}</Text>
             {item.is_default && <Text style={styles.badge}>DEFAULT</Text>}
           </View>
-
           <Text style={styles.address}>{item.address}</Text>
-
-          <Text style={styles.meta}>Delivering to {receiver}</Text>
+          {receiver ? (
+            <Text style={styles.meta}>Delivering to {receiver}</Text>
+          ) : null}
         </TouchableOpacity>
       );
     },
@@ -177,7 +149,7 @@ export default function LocationIndex() {
         ListEmptyComponent={loading ? <SkeletonList /> : emptyComponent}
         renderItem={({ item }) => (
           <AddressCard
-            id={item.id} // ✅ REQUIRED for gestures
+            id={item.id}
             label={item.label}
             address={item.address}
             onSelect={() => selectLocation(item)}
@@ -188,7 +160,7 @@ export default function LocationIndex() {
                 params: { id: item.id },
               })
             }
-            onDelete={() => deleteLocation(item.id)}
+            onDelete={() => handleDelete(item.id)}
           />
         )}
       />

@@ -13,11 +13,10 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { getSession } from "../../session";
+import { getAllProducts, type Product } from "../../lib/productService";
 import { useCart } from "../cart/CartContext";
 import { useLocation } from "../location/locationContent";
 
-const API_BASE = "http://192.168.1.117:3001";
 const PRIMARY = "#765fba";
 const BG = "#05030A";
 
@@ -32,49 +31,30 @@ const CATEGORIES = [
 
 export default function HomeScreen() {
   const [loading, setLoading] = useState(true);
-  const [feed, setFeed] = useState<any[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [activeCategory, setActiveCategory] = useState("All");
   const [refreshing, setRefreshing] = useState(false);
-  const [ads, setAds] = useState<Record<string, any[]>>({});
 
   const { location } = useLocation();
   const { addItem, items, updateQty } = useCart();
 
   useEffect(() => {
-    console.log("🛒 CART ITEMS:", items);
-  }, [items]);
-
-  useEffect(() => {
-    if (!location) {
-      setLoading(false);
-      return;
-    }
-
-    fetchFeed();
-    const interval = setInterval(fetchFeed, 60000);
+    fetchProducts();
+    const interval = setInterval(fetchProducts, 60000);
     return () => clearInterval(interval);
   }, [location]);
 
-  const fetchFeed = async () => {
+  const fetchProducts = async () => {
     try {
       if (!refreshing) setLoading(true);
-
-      const session = await getSession();
-      if (!session?.token || !location) {
-        setLoading(false);
-        return;
-      }
-
-      const res = await fetch(
-        `${API_BASE}/customer/home-feed?lat=${location.latitude}&lng=${location.longitude}`,
-        { headers: { Authorization: `Bearer ${session.token}` } },
+      const data = await getAllProducts(
+        location
+          ? { lat: location.latitude, lng: location.longitude }
+          : undefined,
       );
-
-      const json = await res.json();
-      setFeed(json.stores || []);
-      setAds(json.ads || {});
+      setProducts(data);
     } catch {
-      setFeed([]);
+      setProducts([]);
     } finally {
       setLoading(false);
     }
@@ -82,44 +62,14 @@ export default function HomeScreen() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await fetchFeed();
+    await fetchProducts();
     setRefreshing(false);
   };
 
-  const filteredFeed = useMemo(() => {
-    if (activeCategory === "All") return feed;
-
-    return feed
-      .map((store) => ({
-        ...store,
-        products: store.products.filter(
-          (p: any) => p.category === activeCategory,
-        ),
-      }))
-      .filter((s) => s.products.length > 0);
-  }, [feed, activeCategory]);
-
-  const AD_FREQUENCY = 2;
-
-  const mixedFeed = useMemo(() => {
-    const result: any[] = [];
-    let adIndex = 0;
-
-    filteredFeed.forEach((store, i) => {
-      result.push({ type: "store", data: store });
-
-      if ((i + 1) % AD_FREQUENCY === 0) {
-        if (ads.mid_feed_1?.[adIndex]) {
-          result.push({ type: "ad", data: ads.mid_feed_1[adIndex] });
-          adIndex++;
-        } else {
-          result.push({ type: "ad-placeholder" });
-        }
-      }
-    });
-
-    return result;
-  }, [filteredFeed, ads]);
+  const filteredProducts = useMemo(() => {
+    if (activeCategory === "All") return products;
+    return products.filter((p) => p.category === activeCategory);
+  }, [products, activeCategory]);
 
   if (loading) {
     return (
@@ -128,15 +78,13 @@ export default function HomeScreen() {
       </SafeAreaView>
     );
   }
-  // icons get -> iconiq icon pack , i will change these later on as raj specified , [C-123B JIRA/tempest/synergy]
 
   return (
     <SafeAreaView style={styles.safe}>
       <FlatList
-        data={mixedFeed}
-        keyExtractor={(item, i) =>
-          item.type === "store" ? item.data.store_id : `${item.type}-${i}`
-        }
+        data={filteredProducts}
+        keyExtractor={(item) => item.id}
+        numColumns={2}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -147,6 +95,8 @@ export default function HomeScreen() {
         }
         removeClippedSubviews={false}
         keyboardShouldPersistTaps="handled"
+        columnWrapperStyle={styles.columnWrap}
+        contentContainerStyle={{ paddingBottom: 80, paddingHorizontal: 12 }}
         ListHeaderComponent={
           <>
             <View style={styles.headerRow}>
@@ -154,7 +104,7 @@ export default function HomeScreen() {
                 <Text style={styles.deliverLabel}>Delivering to</Text>
                 <TouchableOpacity onPress={() => router.push("/location")}>
                   <Text style={styles.address}>
-                    LIASON {location?.label ?? "Select location"} ▼
+                    {location?.label ?? "Select location"} ▼
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -169,7 +119,6 @@ export default function HomeScreen() {
                   size={24}
                   color="#fff"
                 />
-
                 {items.length > 0 && (
                   <View style={styles.cartBadge}>
                     <Text style={styles.cartBadgeText}>
@@ -185,22 +134,9 @@ export default function HomeScreen() {
               activeOpacity={0.8}
               onPress={() => router.push("../support/search")}
             >
-              <MaterialCommunityIcons
-                name="magnify"
-                size={20}
-                color="#9C94D7"
-              />
+              <MaterialCommunityIcons name="magnify" size={20} color="#9C94D7" />
               <Text style={styles.searchPlaceholder}>Search for products</Text>
             </TouchableOpacity>
-
-            {ads.top_banner?.[0] && (
-              <View style={styles.bannerAd}>
-                <Image
-                  source={{ uri: ads.top_banner[0].image_url }}
-                  style={styles.bannerImage}
-                />
-              </View>
-            )}
 
             <View style={styles.categorySticky}>
               <FlatList
@@ -220,7 +156,7 @@ export default function HomeScreen() {
                       ]}
                     >
                       <MaterialCommunityIcons
-                        name={item.icon}
+                        name={item.icon as any}
                         size={18}
                         color={active ? "#fff" : "#aaa"}
                       />
@@ -239,145 +175,69 @@ export default function HomeScreen() {
             </View>
           </>
         }
-        contentContainerStyle={{ paddingBottom: 60 }}
-        renderItem={({ item }) => {
-          if (item.type === "ad") {
-            return (
-              <View style={styles.adSlot}>
-                <Image
-                  source={{ uri: item.data.image_url }}
-                  style={styles.bannerImage}
-                />
-              </View>
-            );
-          }
-
-          if (item.type === "ad-placeholder") {
-            return (
-              <View style={styles.adSlot}>
-                <Text style={styles.adPlaceholderText}>Sponsored</Text>
-              </View>
-            );
-          }
-
-          const store = item.data;
+        ListEmptyComponent={
+          <View style={styles.empty}>
+            <Text style={styles.emptyText}>
+              {location ? "No products available nearby" : "Select a location to see products"}
+            </Text>
+          </View>
+        }
+        renderItem={({ item: p }) => {
+          const cartItem = items.find((i) => i.product_id === p.id);
 
           return (
-            <View style={{ marginBottom: 14 }}>
-              <View style={styles.storeHeader}>
-                <Text style={styles.storeName}>{store.store_name}</Text>
-                <View style={styles.distancePill}>
-                  <Text style={styles.distance}>
-                    {store.distance_km.toFixed(1)} km
-                  </Text>
-                </View>
+            <View style={styles.card}>
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={() => router.push(`../product/${p.id}`)}
+              >
+                {p.image_url ? (
+                  <Image source={{ uri: p.image_url }} style={styles.image} />
+                ) : (
+                  <View style={styles.imagePlaceholder} />
+                )}
+              </TouchableOpacity>
+
+              <Text style={styles.productName} numberOfLines={2} ellipsizeMode="tail">
+                {p.name}
+              </Text>
+
+              <View style={styles.priceRow}>
+                <MaterialCommunityIcons name="currency-inr" size={14} color="#7CFF6B" />
+                <Text style={styles.priceValue}>{p.price}</Text>
+                <Text style={styles.priceUnit}> / {p.unit}</Text>
               </View>
 
-              <FlatList
-                data={store.products}
-                keyExtractor={(p) => p.product_id}
-                numColumns={2}
-                scrollEnabled={false}
-                columnWrapperStyle={styles.columnWrap}
-                contentContainerStyle={styles.productList}
-                renderItem={({ item: p }) => {
-                  const storeIds = Array.from(
-                    new Set(items.map((i) => i.store_id)),
-                  );
-
-                  const isThirdStore =
-                    storeIds.length >= 2 && !storeIds.includes(store.store_id);
-
-                  const cartItem = items.find(
-                    (i) => i.product_id === p.product_id,
-                  );
-
-                  return (
-                    <View style={styles.card}>
-                      <TouchableOpacity
-                        activeOpacity={0.85}
-                        onPress={() =>
-                          router.push(`../product/${p.product_id}`)
-                        }
-                      >
-                        {p.image_url ? (
-                          <Image
-                            source={{ uri: p.image_url }}
-                            style={styles.image}
-                          />
-                        ) : (
-                          <View style={styles.imagePlaceholder} />
-                        )}
-                      </TouchableOpacity>
-                      <Text
-                        style={styles.productName}
-                        numberOfLines={2}
-                        ellipsizeMode="tail"
-                      >
-                        {p.name}
-                      </Text>
-
-                      <View style={styles.priceRow}>
-                        <MaterialCommunityIcons
-                          name="currency-inr"
-                          size={14}
-                          color="#7CFF6B"
-                        />
-                        <Text style={styles.priceValue}>{p.price}</Text>
-                        <Text style={styles.priceUnit}></Text>
-                      </View>
-
-                      {cartItem ? (
-                        <View style={styles.qtyBox}>
-                          <TouchableOpacity
-                            onPress={() =>
-                              updateQty(p.product_id, cartItem.quantity - 1)
-                            }
-                          >
-                            <Text style={styles.qtyBtn}>−</Text>
-                          </TouchableOpacity>
-
-                          <Text style={styles.qtyText}>
-                            {cartItem.quantity}
-                          </Text>
-
-                          <TouchableOpacity
-                            onPress={() =>
-                              updateQty(p.product_id, cartItem.quantity + 1)
-                            }
-                          >
-                            <Text style={styles.qtyBtn}>+</Text>
-                          </TouchableOpacity>
-                        </View>
-                      ) : (
-                        <TouchableOpacity
-                          disabled={isThirdStore}
-                          style={[
-                            styles.addBtn,
-                            { marginTop: "auto" },
-                            isThirdStore && { opacity: 0.4 },
-                          ]}
-                          onPress={() =>
-                            addItem({
-                              product_id: p.product_id,
-                              store_id: store.store_id,
-                              name: p.name,
-                              price: p.price,
-                              unit: p.unit,
-                              image_url: p.image_url,
-                              distance_km: store.distance_km,
-                            })
-                          }
-                        >
-                          <Text style={styles.addText}>
-                            {isThirdStore ? "LIMIT" : "ADD"}
-                          </Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  );
-                }}
-              />
+              {cartItem ? (
+                <View style={styles.qtyBox}>
+                  <TouchableOpacity
+                    onPress={() => updateQty(p.id, cartItem.quantity - 1)}
+                  >
+                    <Text style={styles.qtyBtn}>−</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.qtyText}>{cartItem.quantity}</Text>
+                  <TouchableOpacity
+                    onPress={() => updateQty(p.id, cartItem.quantity + 1)}
+                  >
+                    <Text style={styles.qtyBtn}>+</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  style={[styles.addBtn, { marginTop: "auto" }]}
+                  onPress={() =>
+                    addItem({
+                      product_id: p.id,
+                      name: p.name,
+                      price: p.price,
+                      unit: p.unit,
+                      image_url: p.image_url,
+                    })
+                  }
+                >
+                  <Text style={styles.addText}>ADD</Text>
+                </TouchableOpacity>
+              )}
             </View>
           );
         }}
@@ -394,80 +254,34 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-
-  header: {
-    paddingHorizontal: 16,
+  headerRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 4,
     paddingTop: 10,
     paddingBottom: 6,
   },
-
   deliverLabel: { fontSize: 11, color: "#9C94D7" },
   address: { fontSize: 15, color: "#fff", fontWeight: "600" },
-
   searchBar: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    marginHorizontal: 16,
     marginBottom: 12,
     paddingVertical: 12,
     paddingHorizontal: 14,
     borderRadius: 14,
     backgroundColor: "#120D24",
   },
-
-  searchPlaceholder: {
-    color: "#9C94D7",
-    fontSize: 14,
-  },
-
-  priceRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 2,
-  },
-
+  searchPlaceholder: { color: "#9C94D7", fontSize: 14 },
   categorySticky: {
     backgroundColor: BG,
     paddingVertical: 6,
-    zIndex: 10,
-    elevation: 10,
-  },
-
-  priceValue: {
-    color: "#7CFF6B",
-    fontSize: 14,
-    fontWeight: "700",
-    marginLeft: 2,
-  },
-
-  priceUnit: {
-    color: "#9C94D7",
-    fontSize: 11,
-  },
-
-  bannerAd: {
-    marginHorizontal: 16,
     marginBottom: 10,
-    height: 120,
-    borderRadius: 16,
-    overflow: "hidden",
-    backgroundColor: "#1c1636",
+    zIndex: 10,
   },
-
-  bannerImage: {
-    width: "100%",
-    height: "100%",
-    resizeMode: "contain",
-  },
-
-  stickyWrap: {
-    backgroundColor: BG,
-    paddingVertical: 6,
-  },
-
-  categoryRow: { paddingHorizontal: 16 },
-
+  categoryRow: { paddingHorizontal: 0 },
   categoryChip: {
     flexDirection: "row",
     alignItems: "center",
@@ -479,48 +293,17 @@ const styles = StyleSheet.create({
     minWidth: 90,
     marginRight: 8,
   },
-
   categoryActive: { backgroundColor: PRIMARY },
   categoryText: { fontSize: 10, color: "#aaa" },
-
-  storeHeader: {
-    paddingHorizontal: 16,
-    paddingTop: 20,
-    paddingBottom: 15,
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-
-  storeName: { fontSize: 20, fontWeight: "700", color: "#fff" },
-
-  distancePill: {
-    backgroundColor: "#1c1636",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 999,
-  },
-
-  distance: { fontSize: 12, color: "#aaa" },
-
-  productList: {
-    paddingHorizontal: 12,
-    paddingBottom: 16,
-  },
-
-  columnWrap: {
-    justifyContent: "space-between",
-    marginBottom: 8,
-  },
-
+  columnWrap: { justifyContent: "space-between", marginBottom: 8 },
   card: {
     width: "48%",
     backgroundColor: "#140F2D",
     borderRadius: 16,
     padding: 12,
-    height: 230,
+    minHeight: 220,
     marginBottom: 10,
   },
-
   image: { width: "100%", height: 90, borderRadius: 10 },
   imagePlaceholder: {
     width: "100%",
@@ -528,7 +311,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: "#1f1a3a",
   },
-
   productName: {
     fontSize: 13,
     color: "#fff",
@@ -536,8 +318,9 @@ const styles = StyleSheet.create({
     minHeight: 34,
     lineHeight: 17,
   },
-  price: { fontSize: 12, color: "#C4BDEA" },
-
+  priceRow: { flexDirection: "row", alignItems: "center", marginTop: 2 },
+  priceValue: { color: "#7CFF6B", fontSize: 14, fontWeight: "700", marginLeft: 2 },
+  priceUnit: { color: "#9C94D7", fontSize: 11 },
   addBtn: {
     marginTop: 8,
     borderRadius: 999,
@@ -545,9 +328,7 @@ const styles = StyleSheet.create({
     backgroundColor: PRIMARY,
     alignItems: "center",
   },
-
   addText: { fontSize: 12, color: "#fff", fontWeight: "600" },
-
   qtyBox: {
     marginTop: 8,
     flexDirection: "row",
@@ -558,40 +339,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
-
-  qtyBtn: {
-    color: PRIMARY,
-    fontSize: 18,
-    fontWeight: "700",
-    paddingHorizontal: 6,
-  },
-
-  qtyText: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "600",
-  },
-
-  adSlot: {
-    height: 90,
-    marginHorizontal: 16,
-    marginVertical: 10,
-    borderRadius: 16,
-    backgroundColor: "#1c1636",
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
-  },
-
-  headerRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 6,
-  },
-
+  qtyBtn: { color: PRIMARY, fontSize: 18, fontWeight: "700", paddingHorizontal: 6 },
+  qtyText: { color: "#fff", fontSize: 14, fontWeight: "600" },
   cartIconWrap: {
     width: 40,
     height: 40,
@@ -600,7 +349,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-
   cartBadge: {
     position: "absolute",
     top: -4,
@@ -613,16 +361,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 4,
   },
-
-  cartBadgeText: {
-    color: "#fff",
-    fontSize: 10,
-    fontWeight: "700",
-  },
-
-  adPlaceholderText: {
-    color: "#9C94D7",
-    fontSize: 13,
-    fontWeight: "600",
-  },
+  cartBadgeText: { color: "#fff", fontSize: 10, fontWeight: "700" },
+  empty: { marginTop: 80, alignItems: "center", paddingHorizontal: 12 },
+  emptyText: { color: "#9C94D7", fontSize: 14, textAlign: "center" },
 });

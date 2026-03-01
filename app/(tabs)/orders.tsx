@@ -11,9 +11,8 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { getSession } from "../../session";
-
-const API_BASE = "http://192.168.1.117:3001";
+import { useAuth } from "../../context/AuthContext";
+import { getUserOrders, type Order } from "../../lib/orderService";
 
 const BG = "#05030A";
 const CARD = "#140F2D";
@@ -24,38 +23,30 @@ const YELLOW = "#FFD166";
 const RED = "#E54848";
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
-  pending_store: { label: "Pending store", color: YELLOW },
-  accepted_store: { label: "Accepted", color: YELLOW },
-  awaiting_assignment: { label: "Finding rider", color: YELLOW },
+  pending_at_store: { label: "Pending store", color: YELLOW },
+  accepted_by_store: { label: "Accepted", color: YELLOW },
+  awaiting_rider: { label: "Finding rider", color: YELLOW },
   rider_assigned: { label: "Rider assigned", color: GREEN },
-  en_route_delivery: { label: "En route", color: GREEN },
-  completed: { label: "Delivered", color: GREEN },
-  rejected_store: { label: "Rejected", color: RED },
+  out_for_delivery: { label: "En route", color: GREEN },
+  delivered: { label: "Delivered", color: GREEN },
+  cancelled: { label: "Cancelled", color: RED },
+  rejected_by_store: { label: "Rejected", color: RED },
 };
 
 export default function OrdersScreen() {
-  const [orders, setOrders] = useState<any[]>([]);
+  const { userId } = useAuth();
+  const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchOrders();
-  }, []);
+    if (userId) fetchOrders();
+    else setLoading(false);
+  }, [userId]);
 
   const fetchOrders = async () => {
     try {
-      const session = await getSession();
-      if (!session?.token) return;
-
-      const res = await fetch(`${API_BASE}/customer/orders`, {
-        headers: {
-          Authorization: `Bearer ${session.token}`,
-        },
-      });
-
-      const json = await res.json();
-      if (json.success) {
-        setOrders(json.orders || []);
-      }
+      const data = await getUserOrders(userId!);
+      setOrders(data);
     } catch (err) {
       console.error("FETCH_ORDERS_FAILED", err);
     } finally {
@@ -63,9 +54,9 @@ export default function OrdersScreen() {
     }
   };
 
-  const renderOrder = ({ item }: { item: any }) => {
-    const meta = STATUS_META[item.status] || {
-      label: item.status,
+  const renderOrder = ({ item }: { item: Order }) => {
+    const meta = STATUS_META[item.order_status] || {
+      label: item.order_status,
       color: MUTED,
     };
 
@@ -73,7 +64,7 @@ export default function OrdersScreen() {
       <View style={styles.card}>
         <View style={styles.cardHeader}>
           <Text style={styles.orderCode}>
-            Order #{item.order_code || item.id.slice(0, 6)}
+            Order #{item.order_number || item.id.slice(0, 6)}
           </Text>
 
           <View style={[styles.statusPill, { borderColor: meta.color }]}>
@@ -83,15 +74,15 @@ export default function OrdersScreen() {
           </View>
         </View>
 
-        {item.order_items?.map((it: any, idx: number) => (
+        {item.items?.map((it, idx) => (
           <Text key={idx} style={styles.itemRow}>
-            {it.product_name} × {it.quantity}
+            {it.name} × {it.quantity}
           </Text>
         ))}
 
         <View style={styles.footer}>
           <Text style={styles.total}>
-            ₹{Number(item.total_amount).toFixed(2)}
+            ₹{Number(item.order_total).toFixed(2)}
           </Text>
 
           <TouchableOpacity

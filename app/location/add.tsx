@@ -17,18 +17,18 @@ import {
 import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { getSession } from "../../session";
+import { useAuth } from "../../context/AuthContext";
+import { createAddress } from "../../lib/addressService";
 import { useLocation } from "./locationContent";
-
-const API_BASE = "http://192.168.1.117:3001";
 
 const PRIMARY = "#765fba";
 const BG = "#05030A";
-const GOOGLE_MAPS_API_KEY = "AIzaSyAaEh8Qu-k6nT5BphpHcOUBOZ5RJ7F2QTQ";
+const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyAaEh8Qu-k6nT5BphpHcOUBOZ5RJ7F2QTQ";
 
 const LABELS = ["Home", "Work", "Other"] as const;
 
 export default function AddLocationScreen() {
+  const { userId, user } = useAuth();
   const { setLocation } = useLocation();
   const isGeocodingRef = useRef(false);
 
@@ -205,44 +205,40 @@ export default function AddLocationScreen() {
       return;
     }
 
+    if (!userId) {
+      Alert.alert("Error", "Session expired. Please login again.");
+      return;
+    }
+
     try {
       setSaving(true);
-      const session = await getSession();
-      if (!session?.token) return;
 
       const finalLabel = label === "Other" ? customLabel.trim() : label;
-
       const contactName =
         deliveryFor === "me"
-          ? (session.user?.name ?? null)
+          ? (user?.name ?? "")
           : receiverNickname.trim()
             ? `${receiverName.trim()} (${receiverNickname.trim()})`
             : receiverName.trim();
 
-      const res = await fetch(`${API_BASE}/customer/locations`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${session.token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          label: finalLabel || "Saved location",
-          address: formattedAddress,
-          latitude: coords.latitude,
-          longitude: coords.longitude,
-          contact_name: deliveryFor === "other" ? contactName : null,
-          contact_phone:
-            deliveryFor === "other" && receiverPhone.trim()
-              ? normalizeIndianPhone(receiverPhone)
-              : null,
-        }),
+      await createAddress(userId, {
+        label: finalLabel || "Saved location",
+        address: formattedAddress,
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        contact_name: contactName || undefined,
+        contact_phone:
+          deliveryFor === "other" && receiverPhone.trim()
+            ? normalizeIndianPhone(receiverPhone)
+            : undefined,
+        delivery_for: deliveryFor === "other" ? "others" : "self",
+        receiver_name: deliveryFor === "other" ? receiverName.trim() : undefined,
+        receiver_phone:
+          deliveryFor === "other" && receiverPhone.trim()
+            ? normalizeIndianPhone(receiverPhone)
+            : undefined,
+        is_default: false,
       });
-
-      const json = await res.json();
-      if (!res.ok || !json.success) {
-        Alert.alert("Error", "Could not save address.");
-        return;
-      }
 
       setLocation({
         latitude: coords.latitude,

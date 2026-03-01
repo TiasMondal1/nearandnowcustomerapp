@@ -10,7 +10,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { clearSession } from "../../session";
+import { useAuth } from "../../context/AuthContext";
 
 const BG = "#05030A";
 const CARD = "#140F2D";
@@ -21,16 +21,11 @@ const BORDER = "#2A2450";
 const DANGER = "#E54848";
 
 export default function SettingsScreen() {
-  const user = {
-    name: "Enigma", //statenote change later CONTEXT.CONMAN/JIRA-TEMPEST/SYNEGY
-    phone: "+91 9XXXX XXXXX", //statenote change later CONTEXT.CONMAN2/JIRA-TEMPEST/SYNERGY
-    email: "user@email.com", ////statenote change later CONTEXT.CONMAN3/JIRA-TEMPEST/SYNERGY
-    avatar_url: null,
-  };
+  const { user, logoutUser } = useAuth();
 
   const handleLogout = async () => {
-    await clearSession();
-    router.replace("/login-password");
+    await logoutUser();
+    router.replace("/phone");
   };
 
   return (
@@ -42,18 +37,16 @@ export default function SettingsScreen() {
         <Text style={styles.header}>Account</Text>
 
         <View style={styles.profileCard}>
-          {user.avatar_url ? (
-            <Image source={{ uri: user.avatar_url }} style={styles.avatar} />
-          ) : (
-            <View style={styles.avatarFallback}>
-              <Text style={styles.avatarText}>{user.name.charAt(0)}</Text>
-            </View>
-          )}
+          <View style={styles.avatarFallback}>
+            <Text style={styles.avatarText}>
+              {user?.name?.charAt(0)?.toUpperCase() ?? "?"}
+            </Text>
+          </View>
 
           <View style={{ flex: 1 }}>
-            <Text style={styles.name}>{user.name}</Text>
-            {user.phone && <Text style={styles.sub}>{user.phone}</Text>}
-            {user.email && <Text style={styles.sub}>{user.email}</Text>}
+            <Text style={styles.name}>{user?.name ?? "—"}</Text>
+            {user?.phone ? <Text style={styles.sub}>{user.phone}</Text> : null}
+            {user?.email ? <Text style={styles.sub}>{user.email}</Text> : null}
           </View>
 
           <TouchableOpacity onPress={() => router.push("/settings/profile")}>

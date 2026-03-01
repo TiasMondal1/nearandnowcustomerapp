@@ -13,17 +13,16 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useAuth } from "../context/AuthContext";
+import { sendOTP } from "../lib/authService";
 
 const PRIMARY = "#765fba";
-const API_BASE = "http://192.168.1.117:3001";
 
 export default function OtpScreen() {
   const params = useLocalSearchParams();
   const phone = typeof params.phone === "string" ? params.phone : "";
-  const sessionId =
-    typeof params.sessionId === "string" ? params.sessionId : "";
-  const existsParam = typeof params.exists === "string" ? params.exists : "";
-  const isExisting = existsParam === "true";
+
+  const { verifyOTPCode } = useAuth();
 
   const [digits, setDigits] = useState(["", "", "", "", "", ""]);
   const [secondsLeft, setSecondsLeft] = useState(60);
@@ -34,10 +33,7 @@ export default function OtpScreen() {
 
   useEffect(() => {
     const interval = setInterval(() => {
-      setSecondsLeft((prev) => {
-        if (prev <= 1) return 0;
-        return prev - 1;
-      });
+      setSecondsLeft((prev) => (prev <= 1 ? 0 : prev - 1));
     }, 1000);
     return () => clearInterval(interval);
   }, []);
@@ -61,9 +57,7 @@ export default function OtpScreen() {
     const updated = [...digits];
     updated[index] = char;
     setDigits(updated);
-    if (index < 5) {
-      inputsRef.current[index + 1]?.focus();
-    }
+    if (index < 5) inputsRef.current[index + 1]?.focus();
   };
 
   const handleKeyPress = (e: any, index: number) => {
@@ -75,81 +69,40 @@ export default function OtpScreen() {
   };
 
   const formatTimer = (s: number) => {
-    const mm = Math.floor(s / 60)
-      .toString()
-      .padStart(2, "0");
+    const mm = Math.floor(s / 60).toString().padStart(2, "0");
     const ss = (s % 60).toString().padStart(2, "0");
     return `${mm}:${ss}`;
   };
 
   const handleVerify = async (code: string) => {
     if (code.length !== 6 || loading) return;
-    if (!phone || !sessionId) {
-      Alert.alert("Error", "Missing phone or session.");
+    if (!phone) {
+      Alert.alert("Error", "Missing phone number.");
       return;
     }
     try {
       setLoading(true);
-      const res = await fetch(`${API_BASE}/auth/phone/verify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          phone,
-          sessionId,
-          otp: code,
-        }),
-      });
-      const json = await res.json();
-      if (!res.ok || !json.success) {
-        Alert.alert("Error", json.error || "Verification failed");
-        setDigits(["", "", "", "", "", ""]);
-        inputsRef.current[0]?.focus();
-        return;
-      }
-
-      if (json.mode === "login") {
-        const name = json.user?.name || "";
-        Alert.alert(
-          "Welcome back",
-          name ? `Welcome back, ${name}` : "Login successful.",
-        );
-      } else if (json.mode === "signup") {
-        router.replace({
-          pathname: "/profile-setup",
-          params: {
-            phone,
-          },
-        });
-      } else {
-        Alert.alert("Success", "Verification completed.");
-      }
-    } catch {
-      Alert.alert("Error", "Network error during verification.");
+      await verifyOTPCode(phone, code);
+      router.replace("/(tabs)/home");
+    } catch (err: any) {
+      Alert.alert("Error", err?.message || "Verification failed");
+      setDigits(["", "", "", "", "", ""]);
+      inputsRef.current[0]?.focus();
     } finally {
       setLoading(false);
     }
   };
 
   const handleResend = async () => {
-    if (secondsLeft > 0 || resending) return;
-    if (!phone) return;
+    if (secondsLeft > 0 || resending || !phone) return;
     try {
       setResending(true);
-      const res = await fetch(`${API_BASE}/auth/phone/start`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone }),
-      });
-      const json = await res.json();
-      if (!res.ok || !json.success) {
-        Alert.alert("Error", json.error || "Could not resend code");
-        return;
-      }
+      await sendOTP(phone);
       setDigits(["", "", "", "", "", ""]);
       inputsRef.current[0]?.focus();
       setSecondsLeft(60);
-    } catch {
-      Alert.alert("Error", "Network error while resending.");
+    } catch (err: any) {
+      Alert.alert("Error", err?.message || "Could not resend code");
     } finally {
       setResending(false);
     }
@@ -171,9 +124,6 @@ export default function OtpScreen() {
             <Text style={styles.subtitle}>
               We sent a 6-digit code to {phone || "your number"}.
             </Text>
-            {isExisting && (
-              <Text style={styles.subtitleHint}>Welcome back.</Text>
-            )}
           </View>
 
           <View style={styles.otpSection}>
@@ -252,13 +202,8 @@ export default function OtpScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: "#05030A",
-  },
-  flex: {
-    flex: 1,
-  },
+  safeArea: { flex: 1, backgroundColor: "#05030A" },
+  flex: { flex: 1 },
   container: {
     flex: 1,
     paddingHorizontal: 24,
@@ -266,33 +211,16 @@ const styles = StyleSheet.create({
     paddingBottom: 32,
     justifyContent: "space-between",
   },
-  header: {
-    paddingTop: 32,
-    gap: 6,
-  },
+  header: { paddingTop: 32, gap: 6 },
   pageName: {
     fontSize: 11,
     color: "#9C94D7",
     textTransform: "uppercase",
     letterSpacing: 1.4,
   },
-  title: {
-    fontSize: 28,
-    fontWeight: "700",
-    color: "#FFFFFF",
-    letterSpacing: 0.5,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: "#C4BDEA",
-  },
-  subtitleHint: {
-    fontSize: 12,
-    color: "#9C94D7",
-  },
-  otpSection: {
-    alignItems: "center",
-  },
+  title: { fontSize: 28, fontWeight: "700", color: "#FFFFFF", letterSpacing: 0.5 },
+  subtitle: { fontSize: 14, color: "#C4BDEA" },
+  otpSection: { alignItems: "center" },
   otpBoxesWrapper: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -320,25 +248,11 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     elevation: 6,
   },
-  otpBoxFilled: {
-    borderColor: "#BCA7FF",
-    backgroundColor: "#1A1234",
-  },
-  infoRow: {
-    marginTop: 8,
-  },
-  timerText: {
-    fontSize: 12,
-    color: "#9C94D7",
-  },
-  resendText: {
-    fontSize: 13,
-    color: PRIMARY,
-    fontWeight: "600",
-  },
-  bottomSection: {
-    gap: 12,
-  },
+  otpBoxFilled: { borderColor: "#BCA7FF", backgroundColor: "#1A1234" },
+  infoRow: { marginTop: 8 },
+  timerText: { fontSize: 12, color: "#9C94D7" },
+  resendText: { fontSize: 13, color: PRIMARY, fontWeight: "600" },
+  bottomSection: { gap: 12 },
   button: {
     borderRadius: 999,
     paddingVertical: 14,
@@ -346,20 +260,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: PRIMARY,
   },
-  buttonDisabled: {
-    backgroundColor: "rgba(118, 95, 186, 0.45)",
-  },
-  buttonText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#FFFFFF",
-  },
-  backRow: {
-    alignItems: "center",
-    marginTop: 4,
-  },
-  backText: {
-    fontSize: 12,
-    color: "#C4BDEA",
-  },
+  buttonDisabled: { backgroundColor: "rgba(118, 95, 186, 0.45)" },
+  buttonText: { fontSize: 16, fontWeight: "600", color: "#FFFFFF" },
+  backRow: { alignItems: "center", marginTop: 4 },
+  backText: { fontSize: 12, color: "#C4BDEA" },
 });

@@ -1,21 +1,12 @@
-import React, {
-  createContext,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
-import { Alert } from "react-native";
+import React, { createContext, useContext, useMemo, useState } from "react";
 
 export type CartItem = {
   product_id: string;
-  store_id: string;
   name: string;
   price: number;
   unit?: string;
   image_url?: string;
   quantity: number;
-  distance_km: number;
 };
 
 export type Coupon = {
@@ -28,7 +19,6 @@ export type Coupon = {
 
 type CartContextType = {
   items: CartItem[];
-  storeId: string | null;
   addItem: (item: Omit<CartItem, "quantity">) => void;
   removeItem: (productId: string) => void;
   updateQty: (productId: string, qty: number) => void;
@@ -44,32 +34,12 @@ type CartContextType = {
 const CartContext = createContext<CartContextType | null>(null);
 
 export function CartProvider({ children }: { children: React.ReactNode }) {
-  console.log("hex1");
-
   const [items, setItems] = useState<CartItem[]>([]);
-  const [storeId, setStoreId] = useState<string | null>(null);
   const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
 
-  useEffect(() => {
-    console.log("hex2:", items);
-  }, [items]);
-
   const addItem = (product: Omit<CartItem, "quantity">) => {
-    const storeIds = Array.from(new Set(items.map((i) => i.store_id)));
-
-    const isNewStore = !storeIds.includes(product.store_id);
-
-    if (isNewStore && storeIds.length >= 2) {
-      Alert.alert(
-        "hex4",
-        "hex3.", //[check hex node mapping @ incognitosim/jira/tempest@subtask-1 ]
-      );
-      return;
-    }
-
     setItems((prev) => {
       const existing = prev.find((p) => p.product_id === product.product_id);
-
       if (existing) {
         return prev.map((p) =>
           p.product_id === product.product_id
@@ -77,7 +47,6 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
             : p,
         );
       }
-
       return [...prev, { ...product, quantity: 1 }];
     });
   };
@@ -101,7 +70,6 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   const clearCart = () => {
     setItems([]);
-    setStoreId(null);
     setAppliedCoupon(null);
   };
 
@@ -139,13 +107,11 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     <CartContext.Provider
       value={{
         items,
-        storeId,
         addItem,
         removeItem,
         updateQty,
         clearCart,
         subtotal,
-
         appliedCoupon,
         applyCoupon,
         removeCoupon,

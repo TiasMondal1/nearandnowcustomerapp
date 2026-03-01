@@ -11,7 +11,8 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { getSession } from "../../session";
+import { useAuth } from "../../context/AuthContext";
+import { getUserOrders } from "../../lib/orderService";
 
 const BG = "#05030A";
 const CARD = "#140F2D";
@@ -21,8 +22,6 @@ const MUTED = "#9C94D7";
 const BORDER = "#2A2450";
 const GREEN = "#3CFF8F";
 const YELLOW = "#FFD166";
-
-const API_BASE = "http://192.168.1.117:3001";
 
 type Payment = {
   id: string;
@@ -34,34 +33,23 @@ type Payment = {
 };
 
 export default function PaymentsScreen() {
+  const { userId } = useAuth();
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const fetchPayments = async () => {
     try {
-      const session = await getSession();
-      if (!session?.token) return;
-
-      const res = await fetch(`${API_BASE}/customer/orders`, {
-        headers: {
-          Authorization: `Bearer ${session.token}`,
-        },
-      });
-
-      const json = await res.json();
-      if (!res.ok || !json.success) return;
-
-      // map orders → payments view
-      const mapped = (json.orders || []).map((o: any) => ({
+      if (!userId) return;
+      const orders = await getUserOrders(userId);
+      const mapped = orders.map((o) => ({
         id: o.id,
-        order_code: o.order_code,
-        total_amount: Number(o.total_amount),
+        order_code: o.order_number ?? o.id,
+        total_amount: o.order_total,
         payment_method: o.payment_method ?? "upi",
         payment_status: o.payment_status ?? "paid",
-        placed_at: o.placed_at,
+        placed_at: o.created_at,
       }));
-
       setPayments(mapped);
     } finally {
       setLoading(false);
@@ -71,7 +59,7 @@ export default function PaymentsScreen() {
 
   useEffect(() => {
     fetchPayments();
-  }, []);
+  }, [userId]);
 
   if (loading) {
     return (

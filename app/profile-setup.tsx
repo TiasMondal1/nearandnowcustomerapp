@@ -15,17 +15,16 @@ import {
 } from "react-native";
 import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { saveSession } from "../session";
-
-///// api contexts fixed with gtp 5 < recheck later || 5+ redundant info >
+import { useAuth } from "../context/AuthContext";
+import { updateCustomerProfile } from "../lib/authService";
 
 const PRIMARY = "#765fba";
-const API_BASE = "http://192.168.1.117:3001";
-const GOOGLE_MAPS_API_KEY = "AIzaSyAaEh8Qu-k6nT5BphpHcOUBOZ5RJ7F2QTQ";
+const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyAaEh8Qu-k6nT5BphpHcOUBOZ5RJ7F2QTQ";
 
 export default function ProfileSetupScreen() {
   const params = useLocalSearchParams();
   const phone = typeof params.phone === "string" ? params.phone : "";
+  const { user } = useAuth();
 
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -188,50 +187,25 @@ export default function ProfileSetupScreen() {
 
   const handleNext = async () => {
     if (!isValid || loading) return;
-    if (!phone) {
-      Alert.alert("Error", "Missing phone.");
-      return;
-    }
     try {
       setLoading(true);
       const addressString = buildAddressString() || formattedAddress;
-      const res = await fetch(`${API_BASE}/auth/signup/complete`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          phone,
-          name: `${firstName.trim()} ${lastName.trim()}`,
-          address: addressString,
-          latitude: coords.latitude,
-          longitude: coords.longitude,
-          email: emailTrimmed,
-          password: password.trim(),
-        }),
-      });
-      const json = await res.json();
+      const name = `${firstName.trim()} ${lastName.trim()}`.trim();
 
-      if (!res.ok || !json.success) {
-        Alert.alert("Error", json.error || "Could not complete signup");
-        return;
-      }
-
-      if (json.token && json.user) {
-        await saveSession({
-          token: json.token,
-          user: {
-            id: json.user.id,
-            name: json.user.name,
-            role: json.user.role,
-            isActivated:
-              json.user.isActivated ?? json.user.is_activated ?? false,
-            phone: json.user.phone ?? phone,
-          },
+      if (user?.id) {
+        await updateCustomerProfile(user.id, {
+          name,
+          email: emailTrimmed || undefined,
+          address: addressString || undefined,
+          city: city.trim() || undefined,
+          state: stateName.trim() || undefined,
+          pincode: postalCode.trim() || undefined,
         });
       }
 
-      router.replace("/home");
-    } catch {
-      Alert.alert("Error", "Network error, please try again.");
+      router.replace("/(tabs)/home");
+    } catch (err: any) {
+      Alert.alert("Error", err?.message || "Could not save profile.");
     } finally {
       setLoading(false);
     }
