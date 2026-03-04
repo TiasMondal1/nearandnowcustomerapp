@@ -13,14 +13,15 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { useCart } from "../cart/CartContext";
+import { useCart } from "../../context/CartContext";
 
-const BG = "#05030A";
-const CARD = "#140F2D";
-const PRIMARY = "#765fba";
-const GREEN = "#3CFF8F";
-const MUTED = "#9C94D7";
-const BORDER = "#2A2450";
+const BG = "#f9fafb";
+const CARD = "#ffffff";
+const PRIMARY = "#059669";
+const SECONDARY = "#047857";
+const GREEN = "#10b981";
+const MUTED = "#6b7280";
+const BORDER = "#e5e7eb";
 
 export default function CartScreen() {
   const { items, updateQty, removeItem, clearCart } = useCart();
@@ -57,7 +58,7 @@ export default function CartScreen() {
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
-          <MaterialCommunityIcons name="arrow-left" size={24} color="#fff" />
+          <MaterialCommunityIcons name="arrow-left" size={24} color="#1f2937" />
         </TouchableOpacity>
 
         <Text style={styles.headerTitle}>Your Cart</Text>
@@ -141,7 +142,7 @@ export default function CartScreen() {
                     <MaterialCommunityIcons
                       name="trash-can-outline"
                       size={20}
-                      color="#B4ACFF"
+                      color="#ef4444"
                     />
                   </TouchableOpacity>
                 </View>
@@ -186,7 +187,7 @@ export default function CartScreen() {
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Charges Breakdown</Text>
               <TouchableOpacity onPress={() => setShowInfo(false)}>
-                <MaterialCommunityIcons name="close" size={22} color="#fff" />
+                <MaterialCommunityIcons name="close" size={22} color="#1f2937" />
               </TouchableOpacity>
             </View>
 
@@ -240,35 +241,43 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingVertical: 14,
+    backgroundColor: "#fff",
+    borderBottomWidth: 1,
+    borderBottomColor: BORDER,
   },
 
-  headerTitle: { fontSize: 18, fontWeight: "700", color: "#fff" },
-  clearText: { color: MUTED, fontSize: 13 },
+  headerTitle: { fontSize: 18, fontWeight: "700", color: "#1f2937" },
+  clearText: { color: PRIMARY, fontSize: 14, fontWeight: "600" },
 
   empty: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12 },
-  emptyText: { color: MUTED, fontSize: 14 },
+  emptyText: { color: MUTED, fontSize: 15 },
 
   itemCard: {
     flexDirection: "row",
     backgroundColor: CARD,
     marginHorizontal: 16,
-    marginBottom: 14,
-    padding: 14,
-    borderRadius: 22,
+    marginBottom: 12,
+    padding: 16,
+    borderRadius: 12,
     alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 3,
   },
 
-  image: { width: 64, height: 64, borderRadius: 14 },
+  image: { width: 72, height: 72, borderRadius: 8 },
   imagePlaceholder: {
-    width: 64,
-    height: 64,
-    borderRadius: 14,
-    backgroundColor: "#1f1a3a",
+    width: 72,
+    height: 72,
+    borderRadius: 8,
+    backgroundColor: "#f3f4f6",
   },
 
-  itemInfo: { flex: 1, marginLeft: 10 },
-  name: { color: "#fff", fontSize: 14.5, fontWeight: "700" },
-  unitPrice: { color: "#B6AFFF", fontSize: 12, marginTop: 4 },
+  itemInfo: { flex: 1, marginLeft: 12 },
+  name: { color: "#1f2937", fontSize: 15, fontWeight: "600" },
+  unitPrice: { color: MUTED, fontSize: 13, marginTop: 4 },
 
   bottomRow: {
     marginTop: 10,
@@ -277,19 +286,19 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
 
-  qtyRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  qtyRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   qtyBtn: {
     width: 32,
     height: 32,
-    borderRadius: 16,
-    backgroundColor: "#1E1840",
+    borderRadius: 8,
+    backgroundColor: "#f3f4f6",
     alignItems: "center",
     justifyContent: "center",
   },
 
-  qtyText: { color: "#fff", fontSize: 18, fontWeight: "700" },
-  qty: { color: "#fff", fontSize: 14, fontWeight: "700" },
-  itemTotal: { color: "#fff", fontSize: 15, fontWeight: "800" },
+  qtyText: { color: PRIMARY, fontSize: 18, fontWeight: "700" },
+  qty: { color: "#1f2937", fontSize: 15, fontWeight: "600", minWidth: 24, textAlign: "center" },
+  itemTotal: { color: PRIMARY, fontSize: 16, fontWeight: "700" },
   deleteBtn: { paddingLeft: 8 },
 
   checkoutBar: {
@@ -303,15 +312,20 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    borderTopLeftRadius: 26,
-    borderTopRightRadius: 26,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
     borderTopWidth: 1,
     borderColor: BORDER,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 8,
   },
 
   projectedRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  projectedLabel: { color: GREEN, fontSize: 12, fontWeight: "700" },
-  projectedAmount: { color: GREEN, fontSize: 20, fontWeight: "900" },
+  projectedLabel: { color: MUTED, fontSize: 13, fontWeight: "600" },
+  projectedAmount: { color: "#1f2937", fontSize: 22, fontWeight: "800", marginTop: 2 },
 
   inlineFees: {
     flexDirection: "row",
@@ -326,38 +340,48 @@ const styles = StyleSheet.create({
 
   checkoutBtn: {
     backgroundColor: PRIMARY,
-    paddingHorizontal: 28,
-    height: 48,
-    borderRadius: 999,
+    paddingHorizontal: 32,
+    height: 52,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
   },
 
-  checkoutText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+  checkoutText: { color: "#fff", fontSize: 15, fontWeight: "700" },
 
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.6)",
+    backgroundColor: "rgba(0,0,0,0.5)",
     justifyContent: "center",
     padding: 20,
   },
 
-  modalCard: { backgroundColor: CARD, borderRadius: 20, padding: 16 },
+  modalCard: { 
+    backgroundColor: CARD, 
+    borderRadius: 16, 
+    padding: 20,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 8,
+  },
   modalHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    marginBottom: 16,
   },
 
-  modalTitle: { color: "#fff", fontSize: 16, fontWeight: "800" },
-  modalBody: { marginTop: 14, gap: 6 },
-  modalItem: { color: "#fff", fontSize: 14, fontWeight: "700" },
-  modalDesc: { color: "#C4BDEA", fontSize: 13 },
-  modalNote: { color: MUTED, fontSize: 12, marginTop: 8 },
+  modalTitle: { color: "#1f2937", fontSize: 18, fontWeight: "800" },
+  modalBody: { gap: 8 },
+  modalItem: { color: "#1f2937", fontSize: 15, fontWeight: "700", marginTop: 8 },
+  modalDesc: { color: MUTED, fontSize: 14 },
+  modalNote: { color: MUTED, fontSize: 13, marginTop: 12, fontStyle: "italic" },
 
   divider: {
     height: 1,
     backgroundColor: BORDER,
-    marginVertical: 10,
+    marginVertical: 12,
   },
 });

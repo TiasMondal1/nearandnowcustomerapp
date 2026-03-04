@@ -12,13 +12,13 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../../context/AuthContext";
 
-const BG = "#05030A";
-const CARD = "#140F2D";
-const CARD_SOFT = "#1A1440";
-const PRIMARY = "#765fba";
-const MUTED = "#9C94D7";
-const BORDER = "#2A2450";
-const DANGER = "#E54848";
+const BG = "#f9fafb";
+const CARD = "#ffffff";
+const CARD_SOFT = "#f3f4f6";
+const PRIMARY = "#059669";
+const MUTED = "#6b7280";
+const BORDER = "#e5e7eb";
+const DANGER = "#ef4444";
 
 export default function SettingsScreen() {
   const { user, logoutUser } = useAuth();
@@ -50,7 +50,7 @@ export default function SettingsScreen() {
           </View>
 
           <TouchableOpacity onPress={() => router.push("/settings/profile")}>
-            <MaterialCommunityIcons name="pencil" size={20} color="#fff" />
+            <MaterialCommunityIcons name="pencil" size={20} color={PRIMARY} />
           </TouchableOpacity>
         </View>
 
@@ -130,7 +130,7 @@ function Item({
 }) {
   return (
     <TouchableOpacity style={styles.item} onPress={onPress}>
-      <MaterialCommunityIcons name={icon} size={22} color="#fff" />
+      <MaterialCommunityIcons name={icon} size={22} color={PRIMARY} />
       <View style={{ flex: 1 }}>
         <Text style={styles.itemTitle}>{title}</Text>
         <Text style={styles.itemSub}>{subtitle}</Text>
@@ -148,7 +148,7 @@ const styles = StyleSheet.create({
   },
 
   header: {
-    color: "#fff",
+    color: "#1f2937",
     fontSize: 26,
     fontWeight: "900",
     marginTop: 12,
@@ -156,14 +156,19 @@ const styles = StyleSheet.create({
 
   profileCard: {
     marginTop: 20,
-    backgroundColor: CARD_SOFT,
-    borderRadius: 22,
+    backgroundColor: CARD,
+    borderRadius: 16,
     padding: 16,
     flexDirection: "row",
     gap: 14,
     alignItems: "center",
     borderWidth: 1,
     borderColor: BORDER,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 3,
   },
 
   avatar: {
@@ -188,7 +193,7 @@ const styles = StyleSheet.create({
   },
 
   name: {
-    color: "#fff",
+    color: "#1f2937",
     fontSize: 16,
     fontWeight: "800",
   },
@@ -201,17 +206,23 @@ const styles = StyleSheet.create({
 
   sectionTitle: {
     color: MUTED,
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: "700",
     marginBottom: 10,
+    textTransform: "uppercase",
   },
 
   sectionCard: {
     backgroundColor: CARD,
-    borderRadius: 18,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: BORDER,
     overflow: "hidden",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 3,
   },
 
   item: {
@@ -224,14 +235,14 @@ const styles = StyleSheet.create({
   },
 
   itemTitle: {
-    color: "#fff",
+    color: "#1f2937",
     fontSize: 14,
     fontWeight: "700",
   },
 
   itemSub: {
     color: MUTED,
-    fontSize: 11,
+    fontSize: 12,
     marginTop: 2,
   },
 
@@ -246,7 +257,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 28,
     backgroundColor: DANGER,
-    borderRadius: 999,
+    borderRadius: 12,
     alignItems: "center",
   },
 

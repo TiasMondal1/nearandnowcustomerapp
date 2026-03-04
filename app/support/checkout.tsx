@@ -15,16 +15,17 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAuth } from "../../context/AuthContext";
 import { createOrder } from "../../lib/orderService";
-import { useCart } from "../cart/CartContext";
-import { useLocation } from "../location/locationContent";
+import { useCart } from "../../context/CartContext";
+import { useLocation } from "../../context/LocationContext";
 
-const BG = "#05030A";
-const CARD = "#140F2D";
-const CARD_SOFT = "#1A1440";
-const PRIMARY = "#765fba";
-const GREEN = "#3CFF8F";
-const MUTED = "#9C94D7";
-const BORDER = "#2A2450";
+const BG = "#f9fafb";
+const CARD = "#ffffff";
+const CARD_SOFT = "#f3f4f6";
+const PRIMARY = "#059669";
+const SECONDARY = "#047857";
+const GREEN = "#10b981";
+const MUTED = "#6b7280";
+const BORDER = "#e5e7eb";
 
 type PaymentMode = "upi" | "cod";
 
@@ -148,7 +149,7 @@ export default function CheckoutScreen() {
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
-          <MaterialCommunityIcons name="arrow-left" size={24} color="#fff" />
+          <MaterialCommunityIcons name="arrow-left" size={24} color="#1f2937" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Checkout</Text>
         <View style={{ width: 40 }} />
@@ -197,7 +198,7 @@ export default function CheckoutScreen() {
             <MaterialCommunityIcons
               name="ticket-percent-outline"
               size={20}
-              color="#fff"
+              color={PRIMARY}
             />
             <Text style={styles.couponText}>
               {appliedCoupon
@@ -214,7 +215,7 @@ export default function CheckoutScreen() {
             <MaterialCommunityIcons
               name="chevron-right"
               size={20}
-              color="#fff"
+              color="#1f2937"
             />
           )}
         </TouchableOpacity>
@@ -312,7 +313,7 @@ export default function CheckoutScreen() {
 
             <Text
               style={{
-                color: "#fff",
+                color: "#1f2937",
                 fontSize: 18,
                 fontWeight: "900",
                 marginTop: 16,
@@ -338,7 +339,7 @@ export default function CheckoutScreen() {
                 backgroundColor: PRIMARY,
                 paddingVertical: 12,
                 paddingHorizontal: 28,
-                borderRadius: 999,
+                borderRadius: 12,
               }}
               onPress={() => {
                 setShowSuccess(false);
@@ -395,7 +396,7 @@ function PaymentOption({
       onPress={onPress}
     >
       <View style={styles.paymentLeft}>
-        <MaterialCommunityIcons name={icon} size={20} color="#fff" />
+        <MaterialCommunityIcons name={icon} size={20} color="#1f2937" />
         <Text style={styles.paymentText}>{label}</Text>
       </View>
       {selected && (
@@ -415,14 +416,17 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     padding: 16,
+    backgroundColor: "#fff",
+    borderBottomWidth: 1,
+    borderBottomColor: BORDER,
   },
 
-  headerTitle: { color: "#fff", fontSize: 18, fontWeight: "700" },
+  headerTitle: { color: "#1f2937", fontSize: 18, fontWeight: "700" },
 
   section: { paddingHorizontal: 16, marginTop: 16 },
   sectionTitle: {
-    color: "#fff",
-    fontSize: 15,
+    color: "#1f2937",
+    fontSize: 16,
     fontWeight: "800",
     marginBottom: 10,
   },
@@ -431,44 +435,48 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: CARD,
-    borderRadius: 16,
+    borderRadius: 12,
     padding: 12,
     marginBottom: 8,
+    borderWidth: 1,
+    borderColor: BORDER,
   },
 
-  itemImage: { width: 48, height: 48, borderRadius: 10, marginRight: 10 },
+  itemImage: { width: 48, height: 48, borderRadius: 8, marginRight: 10 },
   imagePlaceholder: {
     width: 48,
     height: 48,
-    borderRadius: 10,
-    backgroundColor: "#1f1a3a",
+    borderRadius: 8,
+    backgroundColor: "#f3f4f6",
     marginRight: 10,
   },
 
-  itemName: { color: "#fff", fontSize: 13, fontWeight: "600" },
-  itemMeta: { color: MUTED, fontSize: 11 },
-  itemTotal: { color: "#fff", fontWeight: "700" },
+  itemName: { color: "#1f2937", fontSize: 14, fontWeight: "600" },
+  itemMeta: { color: MUTED, fontSize: 12 },
+  itemTotal: { color: PRIMARY, fontWeight: "700" },
 
   couponCard: {
     marginHorizontal: 16,
     marginTop: 20,
-    backgroundColor: PRIMARY,
-    borderRadius: 16,
+    backgroundColor: "#dcfce7",
+    borderRadius: 12,
     padding: 16,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#bbf7d0",
   },
 
   couponLeft: { flexDirection: "row", alignItems: "center", gap: 8 },
-  couponText: { color: "#fff", fontWeight: "800" },
-  removeCoupon: { color: "#FFDADA", fontSize: 12, fontWeight: "700" },
+  couponText: { color: PRIMARY, fontWeight: "800" },
+  removeCoupon: { color: "#ef4444", fontSize: 12, fontWeight: "700" },
 
   billCard: {
     marginHorizontal: 16,
     marginTop: 20,
-    backgroundColor: CARD_SOFT,
-    borderRadius: 18,
+    backgroundColor: CARD,
+    borderRadius: 12,
     padding: 16,
     borderWidth: 1,
     borderColor: BORDER,
@@ -480,8 +488,8 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
 
-  billLabel: { color: MUTED, fontSize: 13 },
-  billValue: { color: "#fff", fontSize: 13 },
+  billLabel: { color: MUTED, fontSize: 14 },
+  billValue: { color: "#1f2937", fontSize: 14 },
 
   divider: {
     height: 1,
@@ -495,24 +503,24 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
 
-  totalLabel: { color: "#fff", fontSize: 15, fontWeight: "800" },
-  totalValue: { color: GREEN, fontSize: 20, fontWeight: "900" },
+  totalLabel: { color: "#1f2937", fontSize: 16, fontWeight: "800" },
+  totalValue: { color: PRIMARY, fontSize: 22, fontWeight: "900" },
 
   paymentRow: {
     backgroundColor: CARD,
     padding: 14,
-    borderRadius: 14,
+    borderRadius: 12,
     marginBottom: 10,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    borderWidth: 1,
+    borderWidth: 2,
     borderColor: BORDER,
   },
 
-  paymentActive: { borderColor: GREEN },
+  paymentActive: { borderColor: PRIMARY, backgroundColor: "#dcfce7" },
   paymentLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
-  paymentText: { color: "#fff", fontSize: 14 },
+  paymentText: { color: "#1f2937", fontSize: 15, fontWeight: "600" },
 
   slideDock: {
     position: "absolute",
@@ -524,15 +532,16 @@ const styles = StyleSheet.create({
 
   slideHint: {
     color: MUTED,
-    fontSize: 12,
-    marginBottom: 6,
+    fontSize: 13,
+    marginBottom: 8,
     textAlign: "center",
+    fontWeight: "600",
   },
 
   slider: {
     height: 64,
     backgroundColor: PRIMARY,
-    borderRadius: 999,
+    borderRadius: 16,
     justifyContent: "center",
     overflow: "hidden",
   },
@@ -540,8 +549,8 @@ const styles = StyleSheet.create({
   sliderThumb: {
     width: 64,
     height: 64,
-    borderRadius: 32,
-    backgroundColor: "#9D89FF",
+    borderRadius: 12,
+    backgroundColor: SECONDARY,
     justifyContent: "center",
     alignItems: "center",
   },

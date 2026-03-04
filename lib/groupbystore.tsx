@@ -1,4 +1,4 @@
-import { CartItem } from "../cart/CartContext";
+import { CartItem } from "../context/CartContext";
 
 export function groupCartByStore(items: CartItem[]) {
   const map: Record<string, CartItem[]> = {};

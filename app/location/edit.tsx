@@ -18,7 +18,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../../context/AuthContext";
 import { getUserAddresses } from "../../lib/addressService";
 import { supabaseAdmin } from "../../lib/supabase";
-import { useLocation } from "./locationContent";
+import { useLocation } from "../../context/LocationContext";
 
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyAaEh8Qu-k6nT5BphpHcOUBOZ5RJ7F2QTQ";
 

@@ -11,11 +11,11 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { CATEGORY_CONFIG } from "../category/categoryConfig";
+import { CATEGORY_CONFIG } from "../../constants/categoryConfig";
 
-const BG = "#05030A";
-const TEXT = "#FFFFFF";
-const SUBTLE = "#9C94D7";
+const BG = "#f9fafb";
+const TEXT = "#1f2937";
+const SUBTLE = "#6b7280";
 
 export default function CategoriesScreen() {
   const categories = useMemo(
@@ -124,11 +124,13 @@ const styles = StyleSheet.create({
   },
 
   tile: {
-    borderRadius: 22,
+    borderRadius: 16,
     padding: 16,
     minHeight: 140,
     justifyContent: "space-between",
-    backgroundColor: "#140F2D",
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
   },
 
   iconBubble: {

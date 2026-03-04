@@ -18,7 +18,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../context/AuthContext";
 import { updateCustomerProfile } from "../lib/authService";
 
-const PRIMARY = "#765fba";
+const PRIMARY = "#059669";
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyAaEh8Qu-k6nT5BphpHcOUBOZ5RJ7F2QTQ";
 
 export default function ProfileSetupScreen() {
@@ -446,7 +446,7 @@ export default function ProfileSetupScreen() {
   );
 }
 
-const BG = "#05030A";
+const BG = "#f9fafb";
 
 const styles = StyleSheet.create({
   safeArea: {
@@ -475,19 +475,20 @@ const styles = StyleSheet.create({
   },
   pageName: {
     fontSize: 11,
-    color: "#9C94D7",
+    color: "#6b7280",
     textTransform: "uppercase",
     letterSpacing: 1.4,
+    fontWeight: "600",
   },
   title: {
     fontSize: 26,
     fontWeight: "700",
-    color: "#FFFFFF",
+    color: "#1f2937",
     letterSpacing: 0.5,
   },
   subtitle: {
     fontSize: 13,
-    color: "#C4BDEA",
+    color: "#6b7280",
   },
   form: {
     gap: 18,
@@ -508,68 +509,70 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 13,
-    color: "#B3A9E6",
+    color: "#4b5563",
     marginBottom: 6,
+    fontWeight: "600",
   },
   textInput: {
-    borderRadius: 14,
-    backgroundColor: "#120D24",
-    borderWidth: 1,
-    borderColor: "#392B6A",
+    borderRadius: 12,
+    backgroundColor: "#ffffff",
+    borderWidth: 2,
+    borderColor: "#e5e7eb",
     paddingHorizontal: 14,
     paddingVertical: 10,
-    color: "#FFFFFF",
+    color: "#1f2937",
     fontSize: 15,
   },
   phoneRow: {
-    borderRadius: 14,
-    backgroundColor: "#120D24",
-    borderWidth: 1,
-    borderColor: "#392B6A",
+    borderRadius: 12,
+    backgroundColor: "#f3f4f6",
+    borderWidth: 2,
+    borderColor: "#e5e7eb",
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
   phoneText: {
-    color: "#FFFFFF",
+    color: "#1f2937",
     fontSize: 15,
+    fontWeight: "600",
   },
   mapContainer: {
     marginTop: 8,
-    borderRadius: 18,
+    borderRadius: 16,
     overflow: "hidden",
     height: 180,
-    borderWidth: 1,
-    borderColor: "#3A2D68",
+    borderWidth: 2,
+    borderColor: "#e5e7eb",
   },
   map: {
     flex: 1,
   },
   addressPreview: {
     fontSize: 12,
-    color: "#C4BDEA",
+    color: "#4b5563",
   },
   addressPreviewMuted: {
     fontSize: 12,
-    color: "#7A6FB3",
+    color: "#9ca3af",
   },
   errorText: {
     marginTop: 4,
     fontSize: 11,
-    color: "#FF7A7A",
+    color: "#ef4444",
   },
   bottomSection: {
     marginTop: 12,
     gap: 10,
   },
   button: {
-    borderRadius: 999,
+    borderRadius: 12,
     paddingVertical: 14,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: PRIMARY,
   },
   buttonDisabled: {
-    backgroundColor: "rgba(118, 95, 186, 0.45)",
+    backgroundColor: "rgba(5, 150, 105, 0.45)",
   },
   buttonText: {
     fontSize: 16,
@@ -581,7 +584,7 @@ const styles = StyleSheet.create({
   },
   backText: {
     fontSize: 12,
-    color: "#C4BDEA",
+    color: "#6b7280",
   },
 
   locationBtn: {
@@ -591,14 +594,19 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor: "#120D24",
-    borderWidth: 1,
-    borderColor: "#392B6A",
+    backgroundColor: "#ffffff",
+    borderWidth: 2,
+    borderColor: "#e5e7eb",
     alignItems: "center",
     justifyContent: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 4,
   },
   locationBtnText: {
-    color: "#FFFFFF",
+    color: PRIMARY,
     fontSize: 20,
   },
 

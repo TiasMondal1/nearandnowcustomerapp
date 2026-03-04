@@ -16,8 +16,8 @@ import { router, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { getProductsByCategory, type Product as ServiceProduct } from "../../lib/productService";
-import { useCart } from "../cart/CartContext";
-import { useLocation } from "../location/locationContent";
+import { useCart } from "../../context/CartContext";
+import { useLocation } from "../../context/LocationContext";
 
 
 export const CATEGORY_CONFIG = {

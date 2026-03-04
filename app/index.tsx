@@ -2,6 +2,9 @@ import { router } from "expo-router";
 import React, { useEffect } from "react";
 import { StyleSheet, Text, View } from "react-native";
 
+const PRIMARY = "#059669";
+const BG = "#f9fafb";
+
 export default function SplashScreen() {
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -13,7 +16,8 @@ export default function SplashScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.logo}>Near&Now</Text>
+      <Text style={styles.logo}>Near & Now</Text>
+      <Text style={styles.tagline}>Digital Dukan, Local Dil Se</Text>
     </View>
   );
 }
@@ -21,14 +25,21 @@ export default function SplashScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#765fba",
+    backgroundColor: BG,
     justifyContent: "center",
     alignItems: "center",
   },
   logo: {
-    fontSize: 42,
+    fontSize: 36,
     fontWeight: "800",
-    color: "#FFFFFF",
-    letterSpacing: 1,
+    color: PRIMARY,
+    letterSpacing: 0.5,
+  },
+  tagline: {
+    marginTop: 8,
+    fontSize: 14,
+    color: "#6b7280",
+    fontWeight: "600",
+    letterSpacing: 0.3,
   },
 });

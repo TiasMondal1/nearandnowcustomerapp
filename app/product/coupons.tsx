@@ -12,7 +12,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { supabaseAdmin } from "../../lib/supabase";
-import { useCart } from "../cart/CartContext";
+import { useCart } from "../../context/CartContext";
 
 const BG = "#05030A";
 const CARD = "#140F2D";

@@ -14,11 +14,11 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../../context/AuthContext";
 import { deleteAddress, getUserAddresses, type SavedAddress } from "../../lib/addressService";
 import AddressCard from "./AddressCard";
-import { useLocation } from "./locationContent";
+import { useLocation } from "../../context/LocationContext";
 
-const PRIMARY = "#765fba";
-const BG = "#05030A";
-const CARD = "#120D24";
+const PRIMARY = "#059669";
+const BG = "#f9fafb";
+const CARD = "#ffffff";
 
 export default function LocationIndex() {
   const { userId } = useAuth();

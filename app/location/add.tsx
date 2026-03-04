@@ -19,7 +19,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAuth } from "../../context/AuthContext";
 import { createAddress } from "../../lib/addressService";
-import { useLocation } from "./locationContent";
+import { useLocation } from "../../context/LocationContext";
 
 const PRIMARY = "#765fba";
 const BG = "#05030A";

@@ -3,8 +3,8 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { AuthProvider } from "../context/AuthContext";
-import { CartProvider } from "./cart/CartContext";
-import { LocationProvider } from "./location/locationContent";
+import { CartProvider } from "../context/CartContext";
+import { LocationProvider } from "../context/LocationContext";
 
 export default function RootLayout() {
   return (

@@ -14,13 +14,13 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../../context/AuthContext";
 import { getUserOrders, type Order } from "../../lib/orderService";
 
-const BG = "#05030A";
-const CARD = "#140F2D";
-const BORDER = "#2A2450";
-const MUTED = "#9C94D7";
-const GREEN = "#3CFF8F";
-const YELLOW = "#FFD166";
-const RED = "#E54848";
+const BG = "#f9fafb";
+const CARD = "#ffffff";
+const BORDER = "#e5e7eb";
+const MUTED = "#6b7280";
+const GREEN = "#10b981";
+const YELLOW = "#f59e0b";
+const RED = "#ef4444";
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
   pending_at_store: { label: "Pending store", color: YELLOW },
@@ -168,7 +168,7 @@ const styles = StyleSheet.create({
   },
 
   title: {
-    color: "#fff",
+    color: "#1f2937",
     fontSize: 20,
     fontWeight: "900",
   },
@@ -177,10 +177,15 @@ const styles = StyleSheet.create({
     backgroundColor: CARD,
     marginHorizontal: 16,
     marginBottom: 12,
-    borderRadius: 18,
+    borderRadius: 12,
     padding: 14,
     borderWidth: 1,
     borderColor: BORDER,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 3,
   },
 
   cardHeader: {
@@ -191,7 +196,7 @@ const styles = StyleSheet.create({
   },
 
   orderCode: {
-    color: "#fff",
+    color: "#1f2937",
     fontWeight: "800",
     fontSize: 14,
   },
@@ -201,6 +206,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 999,
     borderWidth: 1,
+    backgroundColor: "#f3f4f6",
   },
 
   statusText: {
@@ -222,13 +228,13 @@ const styles = StyleSheet.create({
   },
 
   total: {
-    color: "#fff",
+    color: "#1f2937",
     fontSize: 15,
     fontWeight: "900",
   },
 
   track: {
-    color: "#765fba",
+    color: "#059669",
     fontWeight: "800",
   },
 

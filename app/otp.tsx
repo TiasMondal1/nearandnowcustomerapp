@@ -16,7 +16,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../context/AuthContext";
 import { sendOTP } from "../lib/authService";
 
-const PRIMARY = "#765fba";
+const PRIMARY = "#059669";
 
 export default function OtpScreen() {
   const params = useLocalSearchParams();
@@ -202,7 +202,7 @@ export default function OtpScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: "#05030A" },
+  safeArea: { flex: 1, backgroundColor: "#f9fafb" },
   flex: { flex: 1 },
   container: {
     flex: 1,
@@ -214,12 +214,13 @@ const styles = StyleSheet.create({
   header: { paddingTop: 32, gap: 6 },
   pageName: {
     fontSize: 11,
-    color: "#9C94D7",
+    color: "#6b7280",
     textTransform: "uppercase",
     letterSpacing: 1.4,
+    fontWeight: "600",
   },
-  title: { fontSize: 28, fontWeight: "700", color: "#FFFFFF", letterSpacing: 0.5 },
-  subtitle: { fontSize: 14, color: "#C4BDEA" },
+  title: { fontSize: 28, fontWeight: "700", color: "#1f2937", letterSpacing: 0.5 },
+  subtitle: { fontSize: 14, color: "#6b7280" },
   otpSection: { alignItems: "center" },
   otpBoxesWrapper: {
     flexDirection: "row",
@@ -231,37 +232,37 @@ const styles = StyleSheet.create({
   otpBox: {
     width: 48,
     height: 56,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#392B6A",
-    backgroundColor: "#120D24",
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: "#e5e7eb",
+    backgroundColor: "#ffffff",
     textAlign: "center",
     fontSize: 20,
     fontWeight: "600",
-    color: "#FFFFFF",
+    color: "#1f2937",
   },
   otpBoxFocused: {
     borderColor: PRIMARY,
     shadowColor: PRIMARY,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.6,
-    shadowRadius: 12,
-    elevation: 6,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
   },
-  otpBoxFilled: { borderColor: "#BCA7FF", backgroundColor: "#1A1234" },
+  otpBoxFilled: { borderColor: PRIMARY, backgroundColor: "#f0fdf4" },
   infoRow: { marginTop: 8 },
-  timerText: { fontSize: 12, color: "#9C94D7" },
+  timerText: { fontSize: 12, color: "#6b7280" },
   resendText: { fontSize: 13, color: PRIMARY, fontWeight: "600" },
   bottomSection: { gap: 12 },
   button: {
-    borderRadius: 999,
+    borderRadius: 12,
     paddingVertical: 14,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: PRIMARY,
   },
-  buttonDisabled: { backgroundColor: "rgba(118, 95, 186, 0.45)" },
+  buttonDisabled: { backgroundColor: "rgba(5, 150, 105, 0.45)" },
   buttonText: { fontSize: 16, fontWeight: "600", color: "#FFFFFF" },
   backRow: { alignItems: "center", marginTop: 4 },
-  backText: { fontSize: 12, color: "#C4BDEA" },
+  backText: { fontSize: 12, color: "#6b7280" },
 });

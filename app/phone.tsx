@@ -14,7 +14,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { sendOTP } from "../lib/authService";
 
-const PRIMARY = "#765fba";
+const PRIMARY = "#059669";
 
 export default function PhoneScreen() {
   const [phone, setPhone] = useState("");
@@ -78,7 +78,7 @@ export default function PhoneScreen() {
                 value={phone}
                 onChangeText={handleChange}
                 placeholder="XXXXXXXXXX"
-                placeholderTextColor="#8278A6"
+                placeholderTextColor="#9ca3af"
                 keyboardType="number-pad"
                 maxLength={10}
               />
@@ -135,7 +135,7 @@ export default function PhoneScreen() {
   );
 }
 
-const PRIMARY_BG = "#05030A";
+const PRIMARY_BG = "#f9fafb";
 
 const styles = StyleSheet.create({
   safeArea: {
@@ -158,43 +158,44 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 32,
     fontWeight: "700",
-    color: "#FFFFFF",
+    color: "#1f2937",
     letterSpacing: 0.5,
   },
   subtitle: {
     marginTop: 8,
     fontSize: 14,
-    color: "#C4BDEA",
+    color: "#6b7280",
   },
   inputBlock: {
     marginTop: 32,
   },
   label: {
     fontSize: 13,
-    color: "#B3A9E6",
+    color: "#4b5563",
     marginBottom: 8,
+    fontWeight: "600",
   },
   phoneRow: {
     flexDirection: "row",
     alignItems: "center",
-    borderRadius: 16,
-    backgroundColor: "#120D24",
-    borderWidth: 1,
-    borderColor: "#392B6A",
+    borderRadius: 12,
+    backgroundColor: "#ffffff",
+    borderWidth: 2,
+    borderColor: "#e5e7eb",
     paddingHorizontal: 12,
     paddingVertical: 6,
   },
   countryCodeContainer: {
     paddingHorizontal: 12,
     paddingVertical: 10,
-    borderRadius: 999,
-    backgroundColor: "#1A1234",
+    borderRadius: 8,
+    backgroundColor: "#f3f4f6",
     borderWidth: 1,
-    borderColor: "#4A3A80",
+    borderColor: "#d1d5db",
     marginRight: 8,
   },
   countryCodeText: {
-    color: "#FFFFFF",
+    color: "#1f2937",
     fontSize: 14,
     fontWeight: "600",
   },
@@ -202,19 +203,19 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 10,
     fontSize: 16,
-    color: "#FFFFFF",
+    color: "#1f2937",
     letterSpacing: 1,
   },
   helperText: {
     marginTop: 8,
     fontSize: 12,
-    color: "#8278A6",
+    color: "#6b7280",
   },
   bottomSection: {
     gap: 14,
   },
   primaryButton: {
-    borderRadius: 999,
+    borderRadius: 12,
     paddingVertical: 14,
     alignItems: "center",
     justifyContent: "center",
@@ -226,7 +227,7 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
   },
   buttonDisabled: {
-    backgroundColor: "rgba(118, 95, 186, 0.45)",
+    backgroundColor: "rgba(5, 150, 105, 0.45)",
   },
   separatorRow: {
     flexDirection: "row",
@@ -237,39 +238,39 @@ const styles = StyleSheet.create({
   separatorLine: {
     flex: 1,
     height: 1,
-    backgroundColor: "#2C2346",
+    backgroundColor: "#e5e7eb",
   },
   separatorText: {
     fontSize: 11,
-    color: "#7E74B0",
+    color: "#6b7280",
   },
   secondaryButton: {
-    borderRadius: 999,
+    borderRadius: 12,
     paddingVertical: 14,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#1A1234",
-    borderWidth: 1,
-    borderColor: "#4A3A80",
+    backgroundColor: "#ffffff",
+    borderWidth: 2,
+    borderColor: "#e5e7eb",
   },
   secondaryButtonDisabled: {
-    backgroundColor: "#100B21",
-    borderColor: "#2D244C",
+    backgroundColor: "#f9fafb",
+    borderColor: "#e5e7eb",
   },
   secondaryButtonText: {
     fontSize: 15,
     fontWeight: "500",
-    color: "#E0DAFF",
+    color: "#1f2937",
   },
   termsText: {
     fontSize: 11,
-    color: "#9C94D7",
+    color: "#6b7280",
     textAlign: "center",
     lineHeight: 16,
     marginTop: 4,
   },
   termsLink: {
-    color: "#DAD1FF",
+    color: PRIMARY,
     fontWeight: "600",
   },
 });

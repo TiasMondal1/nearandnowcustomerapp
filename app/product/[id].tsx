@@ -14,7 +14,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { getProductById, type Product } from "../../lib/productService";
-import { useCart } from "../cart/CartContext";
+import { useCart } from "../../context/CartContext";
 
 const { width } = Dimensions.get("window");
 

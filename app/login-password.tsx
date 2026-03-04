@@ -12,8 +12,8 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-const PRIMARY = "#765fba";
-const BG = "#05030A";
+const PRIMARY = "#059669";
+const BG = "#f9fafb";
 
 export default function LoginPasswordScreen() {
   const params = useLocalSearchParams();
@@ -77,7 +77,7 @@ export default function LoginPasswordScreen() {
                 value={email}
                 onChangeText={setEmail}
                 placeholder="Enter your email"
-                placeholderTextColor="#8278A6"
+                placeholderTextColor="#9ca3af"
                 autoCapitalize="none"
                 autoCorrect={false}
                 keyboardType="email-address"
@@ -91,7 +91,7 @@ export default function LoginPasswordScreen() {
                 value={password}
                 onChangeText={setPassword}
                 placeholder="Enter your password"
-                placeholderTextColor="#8278A6"
+                placeholderTextColor="#9ca3af"
                 secureTextEntry
               />
             </View>
@@ -153,19 +153,20 @@ const styles = StyleSheet.create({
   },
   pageName: {
     fontSize: 11,
-    color: "#9C94D7",
+    color: "#6b7280",
     textTransform: "uppercase",
     letterSpacing: 1.4,
+    fontWeight: "600",
   },
   title: {
     fontSize: 26,
     fontWeight: "700",
-    color: "#FFFFFF",
+    color: "#1f2937",
     letterSpacing: 0.5,
   },
   subtitle: {
     fontSize: 13,
-    color: "#C4BDEA",
+    color: "#6b7280",
   },
   phoneChip: {
     marginTop: 16,
@@ -173,20 +174,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 999,
-    backgroundColor: "#120D24",
+    backgroundColor: "#ffffff",
     borderWidth: 1,
-    borderColor: "#392B6A",
+    borderColor: "#e5e7eb",
   },
   phoneChipLabel: {
     fontSize: 10,
-    color: "#9C94D7",
+    color: "#6b7280",
     textTransform: "uppercase",
     letterSpacing: 1,
   },
   phoneChipValue: {
     fontSize: 14,
-    color: "#FFFFFF",
+    color: "#1f2937",
     marginTop: 2,
+    fontWeight: "600",
   },
   form: {
     marginTop: 32,
@@ -197,17 +199,18 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 13,
-    color: "#B3A9E6",
+    color: "#4b5563",
     marginBottom: 6,
+    fontWeight: "600",
   },
   textInput: {
-    borderRadius: 14,
-    backgroundColor: "#120D24",
-    borderWidth: 1,
-    borderColor: "#392B6A",
+    borderRadius: 12,
+    backgroundColor: "#ffffff",
+    borderWidth: 2,
+    borderColor: "#e5e7eb",
     paddingHorizontal: 14,
     paddingVertical: 10,
-    color: "#FFFFFF",
+    color: "#1f2937",
     fontSize: 15,
   },
   linkRow: {
@@ -217,20 +220,20 @@ const styles = StyleSheet.create({
   linkText: {
     fontSize: 12,
     color: PRIMARY,
-    fontWeight: "500",
+    fontWeight: "600",
   },
   bottomSection: {
     gap: 10,
   },
   button: {
-    borderRadius: 999,
+    borderRadius: 12,
     paddingVertical: 14,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: PRIMARY,
   },
   buttonDisabled: {
-    backgroundColor: "rgba(118, 95, 186, 0.45)",
+    backgroundColor: "rgba(5, 150, 105, 0.45)",
   },
   buttonText: {
     fontSize: 16,
@@ -242,6 +245,6 @@ const styles = StyleSheet.create({
   },
   backText: {
     fontSize: 12,
-    color: "#C4BDEA",
+    color: "#6b7280",
   },
 });

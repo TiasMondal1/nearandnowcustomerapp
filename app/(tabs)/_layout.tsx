@@ -1,8 +1,8 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 
-const PRIMARY = "#b039c2ff";
-const BG = "#05030A";
+const PRIMARY = "#059669";
+const BG = "#ffffff";
 
 export default function TabLayout() {
   return (
@@ -12,29 +12,36 @@ export default function TabLayout() {
 
         tabBarStyle: {
           backgroundColor: BG,
-          borderTopWidth: 0,
-          height: 5,
-          paddingBottom: 90,
-          paddingTop: 0,
+          borderTopWidth: 1,
+          borderTopColor: "#e5e7eb",
+          height: 60,
+          paddingBottom: 8,
+          paddingTop: 8,
           position: "absolute",
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: -2 },
+          shadowOpacity: 0.1,
+          shadowRadius: 4,
+          elevation: 8,
         },
 
         tabBarItemStyle: {
-          paddingVertical: 0,
+          paddingVertical: 4,
         },
 
         tabBarLabelStyle: {
-          fontSize: 10,
-          marginTop: 0,
-          marginBottom: 2,
+          fontSize: 11,
+          marginTop: 2,
+          marginBottom: 0,
+          fontWeight: "600",
         },
 
         tabBarIconStyle: {
-          marginTop: 2,
+          marginTop: 0,
         },
 
         tabBarActiveTintColor: PRIMARY,
-        tabBarInactiveTintColor: "#9C94D7",
+        tabBarInactiveTintColor: "#6b7280",
       }}
     >
       <Tabs.Screen

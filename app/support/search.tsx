@@ -14,8 +14,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { searchProducts, type Product } from "../../lib/productService";
-import { useCart } from "../cart/CartContext";
-import { useLocation } from "../location/locationContent";
+import { useCart } from "../../context/CartContext";
+import { useLocation } from "../../context/LocationContext";
 
 const BG = "#05030A";
 const PRIMARY = "#765fba";
