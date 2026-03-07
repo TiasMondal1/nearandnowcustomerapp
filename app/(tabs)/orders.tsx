@@ -1,251 +1,270 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
-  ActivityIndicator,
-  FlatList,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    FlatList,
+    InteractionManager,
+    RefreshControl,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { C } from "../../constants/colors";
 import { useAuth } from "../../context/AuthContext";
 import { getUserOrders, type Order } from "../../lib/orderService";
 
-const BG = "#f9fafb";
-const CARD = "#ffffff";
-const BORDER = "#e5e7eb";
-const MUTED = "#6b7280";
-const GREEN = "#10b981";
-const YELLOW = "#f59e0b";
-const RED = "#ef4444";
-
-const STATUS_META: Record<string, { label: string; color: string }> = {
-  pending_at_store: { label: "Pending store", color: YELLOW },
-  accepted_by_store: { label: "Accepted", color: YELLOW },
-  awaiting_rider: { label: "Finding rider", color: YELLOW },
-  rider_assigned: { label: "Rider assigned", color: GREEN },
-  out_for_delivery: { label: "En route", color: GREEN },
-  delivered: { label: "Delivered", color: GREEN },
-  cancelled: { label: "Cancelled", color: RED },
-  rejected_by_store: { label: "Rejected", color: RED },
+const STATUS_META: Record<string, { label: string; color: string; bg: string }> = {
+  pending_at_store:   { label: "Pending",        color: C.warning, bg: C.warningLight },
+  accepted_by_store:  { label: "Accepted",        color: C.primary, bg: C.primaryXLight },
+  awaiting_rider:     { label: "Finding rider",   color: C.warning, bg: C.warningLight },
+  rider_assigned:     { label: "Rider assigned",  color: C.info,    bg: C.infoLight },
+  out_for_delivery:   { label: "On the way",      color: C.info,    bg: C.infoLight },
+  delivered:          { label: "Delivered",       color: C.success, bg: C.successLight },
+  cancelled:          { label: "Cancelled",       color: C.danger,  bg: C.dangerLight },
+  rejected_by_store:  { label: "Rejected",        color: C.danger,  bg: C.dangerLight },
 };
+
+function formatDate(iso: string) {
+  const d = new Date(iso);
+  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) +
+    " · " +
+    d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+}
 
 export default function OrdersScreen() {
   const { userId } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    if (userId) fetchOrders();
-    else setLoading(false);
-  }, [userId]);
-
-  const fetchOrders = async () => {
+  const fetchOrders = useCallback(async (isRefresh = false) => {
     try {
-      const data = await getUserOrders(userId!);
+      if (!userId) return;
+      if (!isRefresh) setLoading(true);
+      const data = await getUserOrders(userId);
       setOrders(data);
-    } catch (err) {
-      console.error("FETCH_ORDERS_FAILED", err);
+    } catch {
+      setOrders([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [userId]);
+
+  useEffect(() => {
+    if (!userId) { setLoading(false); return; }
+    const task = InteractionManager.runAfterInteractions(() => {
+      fetchOrders();
+    });
+    return () => task.cancel();
+  }, [fetchOrders, userId]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchOrders(true);
+    setRefreshing(false);
+  }, [fetchOrders]);
 
   const renderOrder = ({ item }: { item: Order }) => {
-    const meta = STATUS_META[item.order_status] || {
-      label: item.order_status,
-      color: MUTED,
+    const status = item.order_status ?? "";
+    const meta = STATUS_META[status] || {
+      label: status,
+      color: C.textSub,
+      bg: C.bgSoft,
     };
 
     return (
       <View style={styles.card}>
         <View style={styles.cardHeader}>
-          <Text style={styles.orderCode}>
-            Order #{item.order_number || item.id.slice(0, 6)}
-          </Text>
-
-          <View style={[styles.statusPill, { borderColor: meta.color }]}>
-            <Text style={[styles.statusText, { color: meta.color }]}>
-              {meta.label}
-            </Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.orderNum}>#{item.order_number || item.id.slice(0, 8).toUpperCase()}</Text>
+            <Text style={styles.orderDate}>{formatDate(item.created_at)}</Text>
+          </View>
+          <View style={[styles.statusBadge, { backgroundColor: meta.bg }]}>
+            <Text style={[styles.statusText, { color: meta.color }]}>{meta.label}</Text>
           </View>
         </View>
 
-        {item.items?.map((it, idx) => (
-          <Text key={idx} style={styles.itemRow}>
-            {it.name} × {it.quantity}
-          </Text>
-        ))}
+        <View style={styles.itemsWrap}>
+          {item.items?.slice(0, 3).map((it, idx) => (
+            <Text key={idx} style={styles.itemLine} numberOfLines={1}>
+              • {it.name} ×{it.quantity}
+            </Text>
+          ))}
+          {(item.items?.length ?? 0) > 3 && (
+            <Text style={styles.moreItems}>+{item.items!.length - 3} more items</Text>
+          )}
+        </View>
 
-        <View style={styles.footer}>
-          <Text style={styles.total}>
-            ₹{Number(item.order_total).toFixed(2)}
-          </Text>
-
-          <TouchableOpacity
-            onPress={() =>
-              router.push({
-                pathname: "/product/[id]",
-                params: { id: item.id },
-              })
-            }
-          >
-            <Text style={styles.track}>Track</Text>
-          </TouchableOpacity>
+        <View style={styles.cardFooter}>
+          <View>
+            <Text style={styles.totalLabel}>Total paid</Text>
+            <Text style={styles.total}>₹{Number(item.order_total).toFixed(2)}</Text>
+          </View>
+          {status === "delivered" ? (
+            <TouchableOpacity
+              style={[styles.trackBtn, styles.invoiceBtn]}
+              onPress={() => router.push(`/order/${item.id}` as any)}
+            >
+              <MaterialCommunityIcons name="file-document-outline" size={14} color="#fff" />
+              <Text style={styles.trackText}>View Invoice</Text>
+            </TouchableOpacity>
+          ) : ["cancelled", "rejected_by_store"].includes(status) ? (
+            <TouchableOpacity
+              style={[styles.trackBtn, styles.detailsBtn]}
+              onPress={() => router.push(`/order/${item.id}` as any)}
+            >
+              <MaterialCommunityIcons name="information-outline" size={14} color="#fff" />
+              <Text style={styles.trackText}>View Details</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={styles.trackBtn}
+              onPress={() => router.push(`/order/${item.id}` as any)}
+            >
+              <MaterialCommunityIcons name="map-marker-path" size={14} color="#fff" />
+              <Text style={styles.trackText}>Track Order</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
     );
   };
 
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>My Orders</Text>
+        </View>
+        <ActivityIndicator size="large" color={C.primary} style={{ marginTop: 40 }} />
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <Text style={styles.title}>Your Orders</Text>
+        <Text style={styles.headerTitle}>My Orders</Text>
+        {orders.length > 0 && (
+          <Text style={styles.orderCount}>{orders.length} order{orders.length !== 1 ? "s" : ""}</Text>
+        )}
       </View>
 
-      {loading ? (
-        <ActivityIndicator
-          size="large"
-          color={GREEN}
-          style={{ marginTop: 40 }}
-        />
-      ) : orders.length === 0 ? (
-        <View style={styles.empty}>
-          <MaterialCommunityIcons
-            name="receipt-text-outline"
-            size={48}
-            color={MUTED}
+      <FlatList
+        data={orders}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.list}
+        showsVerticalScrollIndicator={false}
+        removeClippedSubviews={true}
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        windowSize={5}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={C.primary}
+            colors={[C.primary]}
           />
-          <Text style={styles.emptyText}>No orders yet</Text>
-        </View>
-      ) : (
-        <FlatList
-          data={orders}
-          keyExtractor={(o) => o.id}
-          contentContainerStyle={{ paddingBottom: 40 }}
-          renderItem={renderOrder}
-        />
-      )}
+        }
+        ListEmptyComponent={
+          <View style={styles.empty}>
+            <MaterialCommunityIcons name="package-variant-closed" size={56} color={C.textLight} />
+            <Text style={styles.emptyTitle}>No orders yet</Text>
+            <Text style={styles.emptyText}>Your order history will appear here</Text>
+          </View>
+        }
+        renderItem={renderOrder}
+      />
     </SafeAreaView>
   );
 }
 
-//CHANGE RECONST FORM ALPHA -> [BCAR-122sBALMA JIRA/tempest/synergy]
-//CHANGE RECONST FORM ALPHA -> [BCAR-122BsALMA JIRA/tempest/synergy]
-//CHANGE RECONST FORM ALPHA -> [BCAR-122BxALMA JIRA/tempest/synergy]
-//CHANGE RECONST FORM ALPHA -> [BCAR-1x22BALMA JIRA/tempest/synergy]
-//CHANGE RECONST FORM ALPHA -> [BCAR-122dBALMA JIRA/tempest/synergy]
-//CHANGE RECONST FORM ALPHA -> [BCAR-122BALMA JIRA/tempest/synergy]
-//CHANGE RECONST FORM ALPHA -> [BCAR-122BwALMA JIRA/tempest/synergy]
-//CHANGE RECONST FORM ALPHA -> [BCAR-123BALMA JIRA/tempest/synergy]
-//CHANGE RECONST FORM ALPHA -> [BCAR-132dBALMA JIRA/tempest/synergy]
-//CHANGE RECONST FORM ALPHA -> [BCAR-132BALMA JIRA/tempest/synergy]
-//CHANGE RECONST FORM ALPHA -> [BCAR-133 22BAcLMA JIRA/tempest/synergy]
-//CHANGE RECONST FORM ALPHA -> [BCAR-123d2BALMA JIRA/tempest/synergy]
-//CHANGE RECONST FORM ALPHA -> [BCAR-122xBALMA JIRA/tempest/synergy]
-//CHANGE RECONST FORM ALPHA -> [BCAR-12d3d2BALMA JIRA/tempest/synergy]
-//CHANGE RECONST FORM ALPHA -> [BCAR-12acc2BALMA JIRA/tempest/synergy]
-//CHANGE RECONST FORM ALPHA -> [BCAR-1232s2BALMA JIRA/tempest/synergy]
-//CHANGE RECONST FORM ALPHA -> [BCAR-1x122cBdALMA JIRA/tempest/synergy]
-//CHANGE RECONST FORM ALPHA -> [BCAR-122BqALMA JIRA/tempest/synergy]
-//CHANGE RECONST FORM ALPHA -> [BCAR-12cBdALMA JIRA/tempest/synergy]
-//CHANGE RECONST FORM ALPHA -> [BCAR-1222BALMA JIRA/tempest/synergy]
-//CHANGE RECONST FORM ALPHA -> [BCAR-12cw2BALMA JIRA/tempest/synergy]
-//CHANGE RECONST FORM ALPHA -> [BCAR-122ssBALMA JIRA/tempest/synergy]
-//CHANGE RECONST FORM ALPHA -> [BCAR-1222cBALMA JIRA/tempest/synergy]
-
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: BG,
-  },
+  safe: { flex: 1, backgroundColor: C.bg },
 
   header: {
-    padding: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 14,
+    backgroundColor: C.card,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
   },
+  headerTitle: { color: C.text, fontSize: 22, fontWeight: "900" },
+  orderCount: { color: C.textSub, fontSize: 13, fontWeight: "600" },
 
-  title: {
-    color: "#1f2937",
-    fontSize: 20,
-    fontWeight: "900",
-  },
+  list: { paddingTop: 14, paddingBottom: 110 },
 
   card: {
-    backgroundColor: CARD,
+    backgroundColor: C.card,
     marginHorizontal: 16,
     marginBottom: 12,
-    borderRadius: 12,
-    padding: 14,
+    borderRadius: 16,
+    padding: 16,
     borderWidth: 1,
-    borderColor: BORDER,
-    shadowColor: "#000",
+    borderColor: C.border,
+    shadowColor: C.shadow,
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
     elevation: 3,
   },
-
   cardHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
+    alignItems: "flex-start",
+    marginBottom: 12,
+    gap: 10,
   },
-
-  orderCode: {
-    color: "#1f2937",
-    fontWeight: "800",
-    fontSize: 14,
-  },
-
-  statusPill: {
+  orderNum: { color: C.text, fontWeight: "800", fontSize: 15 },
+  orderDate: { color: C.textSub, fontSize: 12, marginTop: 3 },
+  statusBadge: {
     paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-    borderWidth: 1,
-    backgroundColor: "#f3f4f6",
+    paddingVertical: 5,
+    borderRadius: 8,
   },
+  statusText: { fontSize: 12, fontWeight: "700" },
 
-  statusText: {
-    fontSize: 11,
-    fontWeight: "700",
-  },
+  itemsWrap: { gap: 4, marginBottom: 14 },
+  itemLine: { color: C.textSub, fontSize: 13 },
+  moreItems: { color: C.textLight, fontSize: 12, fontStyle: "italic" },
 
-  itemRow: {
-    color: MUTED,
-    fontSize: 12,
-    marginTop: 2,
-  },
-
-  footer: {
-    marginTop: 10,
+  cardFooter: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: C.border,
   },
-
-  total: {
-    color: "#1f2937",
-    fontSize: 15,
-    fontWeight: "900",
-  },
-
-  track: {
-    color: "#059669",
-    fontWeight: "800",
-  },
-
-  empty: {
-    marginTop: 80,
+  totalLabel: { color: C.textSub, fontSize: 11, fontWeight: "600", marginBottom: 2 },
+  total: { color: C.text, fontSize: 18, fontWeight: "900" },
+  trackBtn: {
+    flexDirection: "row",
     alignItems: "center",
+    gap: 6,
+    backgroundColor: C.primary,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
   },
+  invoiceBtn: {
+    backgroundColor: C.success,
+  },
+  detailsBtn: {
+    backgroundColor: C.textSub,
+  },
+  trackText: { color: "#fff", fontSize: 13, fontWeight: "700" },
 
-  emptyText: {
-    marginTop: 10,
-    color: MUTED,
-    fontSize: 13,
-  },
+  empty: { marginTop: 80, alignItems: "center", gap: 10, padding: 32 },
+  emptyTitle: { color: C.text, fontSize: 16, fontWeight: "800" },
+  emptyText: { color: C.textSub, fontSize: 14, textAlign: "center" },
 });

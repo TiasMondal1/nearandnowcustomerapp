@@ -1,24 +1,22 @@
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Alert,
-  FlatList,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    Alert,
+    FlatList,
+    RefreshControl,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { C } from "../../constants/colors";
 import { useAuth } from "../../context/AuthContext";
+import { useLocation } from "../../context/LocationContext";
 import { deleteAddress, getUserAddresses, type SavedAddress } from "../../lib/addressService";
 import AddressCard from "./AddressCard";
-import { useLocation } from "../../context/LocationContext";
-
-const PRIMARY = "#059669";
-const BG = "#f9fafb";
-const CARD = "#ffffff";
 
 export default function LocationIndex() {
   const { userId } = useAuth();
@@ -86,31 +84,6 @@ export default function LocationIndex() {
     [fetchLocations, userId],
   );
 
-  const renderItem = useCallback(
-    ({ item }: { item: SavedAddress }) => {
-      const receiver =
-        item.delivery_for === "self" ? "You" : item.receiver_name;
-
-      return (
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => selectLocation(item)}
-          style={[styles.card, item.is_default && styles.defaultCard]}
-        >
-          <View style={styles.row}>
-            <Text style={styles.label}>{item.label}</Text>
-            {item.is_default && <Text style={styles.badge}>DEFAULT</Text>}
-          </View>
-          <Text style={styles.address}>{item.address}</Text>
-          {receiver ? (
-            <Text style={styles.meta}>Delivering to {receiver}</Text>
-          ) : null}
-        </TouchableOpacity>
-      );
-    },
-    [selectLocation],
-  );
-
   const emptyComponent = useMemo(
     () => (
       <View style={styles.emptyWrap}>
@@ -130,19 +103,31 @@ export default function LocationIndex() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <Text style={styles.title}>Choose delivery address</Text>
+      <View style={styles.header}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+          <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Delivery Addresses</Text>
+        <TouchableOpacity
+          style={styles.addIconBtn}
+          onPress={() => router.push("/location/add")}
+        >
+          <MaterialCommunityIcons name="plus" size={22} color="#fff" />
+        </TouchableOpacity>
+      </View>
 
       <FlatList
         data={locations}
         keyExtractor={(i) => i.id}
         contentContainerStyle={
-          !locations.length && !loading ? { flex: 1 } : undefined
+          !locations.length && !loading ? { flex: 1 } : styles.listContent
         }
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            tintColor={PRIMARY}
+            tintColor={C.primary}
+            colors={[C.primary]}
           />
         }
         showsVerticalScrollIndicator={false}
@@ -154,12 +139,7 @@ export default function LocationIndex() {
             address={item.address}
             onSelect={() => selectLocation(item)}
             isDefault={item.is_default}
-            onEdit={() =>
-              router.push({
-                pathname: "/location/edit",
-                params: { id: item.id },
-              })
-            }
+            onEdit={() => router.push({ pathname: "/location/edit", params: { id: item.id } })}
             onDelete={() => handleDelete(item.id)}
           />
         )}
@@ -170,7 +150,8 @@ export default function LocationIndex() {
           style={styles.addBtn}
           onPress={() => router.push("/location/add")}
         >
-          <Text style={styles.addText}>＋ Add new address</Text>
+          <MaterialCommunityIcons name="plus" size={18} color="#fff" />
+          <Text style={styles.addText}>Add new address</Text>
         </TouchableOpacity>
       )}
     </SafeAreaView>
@@ -192,72 +173,62 @@ function SkeletonList() {
 /* ---------------- Styles ---------------- */
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: BG,
-    padding: 16,
-  },
+  safe: { flex: 1, backgroundColor: C.bg },
 
-  title: {
-    fontSize: 22,
-    fontWeight: "800",
-    color: "#fff",
-    marginBottom: 16,
-  },
-
-  card: {
-    backgroundColor: CARD,
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 12,
-  },
-
-  defaultCard: {
-    borderWidth: 1,
-    borderColor: PRIMARY,
-  },
-
-  row: {
+  header: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    backgroundColor: C.card,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+    shadowColor: C.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  backBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: C.bgSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerTitle: {
+    flex: 1,
+    textAlign: "center",
+    color: C.text,
+    fontSize: 20,
+    fontWeight: "900",
+    letterSpacing: -0.3,
+  },
+  addIconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: C.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: C.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
   },
 
-  label: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "700",
-  },
-
-  badge: {
-    fontSize: 11,
-    color: PRIMARY,
-    fontWeight: "700",
-    borderWidth: 1,
-    borderColor: PRIMARY,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 999,
-  },
-
-  address: {
-    color: "#C4BDEA",
-    fontSize: 14,
-    marginTop: 6,
-    lineHeight: 20,
-  },
-
-  meta: {
-    color: "#9C94D7",
-    fontSize: 12,
-    marginTop: 8,
-  },
+  listContent: { padding: 20, paddingBottom: 120 },
 
   skeleton: {
-    height: 92,
-    borderRadius: 18,
-    backgroundColor: "#1B1533",
-    marginBottom: 12,
+    height: 88,
+    borderRadius: 14,
+    backgroundColor: C.bgSoft,
+    marginBottom: 10,
+    marginHorizontal: 16,
+    marginTop: 8,
   },
 
   emptyWrap: {
@@ -265,45 +236,61 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     paddingBottom: 80,
+    gap: 12,
   },
-
   emptyTitle: {
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "700",
+    color: C.text,
+    fontSize: 20,
+    fontWeight: "900",
+    marginTop: 8,
   },
-
   emptySub: {
-    color: "#8F88C9",
-    fontSize: 14,
-    marginTop: 6,
-    marginBottom: 20,
+    color: C.textSub,
+    fontSize: 15,
+    textAlign: "center",
+    lineHeight: 22,
   },
-
   emptyBtn: {
-    backgroundColor: PRIMARY,
-    borderRadius: 999,
-    paddingHorizontal: 28,
-    paddingVertical: 14,
+    marginTop: 16,
+    backgroundColor: C.primary,
+    borderRadius: 16,
+    paddingHorizontal: 32,
+    paddingVertical: 16,
+    shadowColor: C.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
   },
-
   emptyBtnText: {
     color: "#fff",
-    fontSize: 15,
-    fontWeight: "700",
+    fontSize: 16,
+    fontWeight: "800",
+    letterSpacing: 0.3,
   },
 
   addBtn: {
-    marginTop: 12,
-    backgroundColor: PRIMARY,
-    borderRadius: 999,
-    paddingVertical: 14,
+    position: "absolute",
+    bottom: 28,
+    left: 20,
+    right: 20,
+    flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    backgroundColor: C.primary,
+    borderRadius: 16,
+    paddingVertical: 18,
+    shadowColor: C.primary,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 8,
   },
-
   addText: {
     color: "#fff",
-    fontSize: 15,
-    fontWeight: "700",
+    fontSize: 16,
+    fontWeight: "900",
+    letterSpacing: 0.3,
   },
 });

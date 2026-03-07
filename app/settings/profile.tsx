@@ -2,7 +2,6 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useMemo, useState } from "react";
 import {
-    Image,
     KeyboardAvoidingView,
     Platform,
     StyleSheet,
@@ -13,32 +12,24 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-const BG = "#05030A";
-const CARD = "#140F2D";
-const CARD_SOFT = "#1A1440";
-const PRIMARY = "#765fba";
-const MUTED = "#9C94D7";
-const BORDER = "#2A2450";
-const GREEN = "#3CFF8F";
+import { C } from "../../constants/colors";
+import { useAuth } from "../../context/AuthContext";
 
 export default function ProfileScreen() {
-  const original = {
-    name: "Enigma",
-    phone: "+91 9XXXX XXXXX",
-    email: "user@email.com",
-    avatar_url: null as string | null,
-  };
+  const { user } = useAuth();
 
-  const [name, setName] = useState(original.name);
-  const [email, setEmail] = useState(original.email);
+  const [name, setName] = useState(user?.name ?? "");
+  const [email, setEmail] = useState(user?.email ?? "");
 
   const hasChanges = useMemo(() => {
-    return name !== original.name || email !== original.email;
-  }, [name, email]);
+    return name !== (user?.name ?? "") || email !== (user?.email ?? "");
+  }, [name, email, user]);
 
   const handleSave = async () => {
     router.back();
   };
+
+  const initial = (user?.name ?? "?").charAt(0).toUpperCase();
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -47,63 +38,33 @@ export default function ProfileScreen() {
         style={{ flex: 1 }}
       >
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <MaterialCommunityIcons name="arrow-left" size={24} color="#fff" />
+          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+            <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Edit Profile</Text>
-          <View style={{ width: 24 }} />
+          <View style={{ width: 38 }} />
         </View>
 
-        <View style={{ paddingHorizontal: 16 }}>
+        <View style={styles.content}>
           <View style={styles.avatarWrap}>
-            {original.avatar_url ? (
-              <Image
-                source={{ uri: original.avatar_url }}
-                style={styles.avatar}
-              />
-            ) : (
-              <View style={styles.avatarFallback}>
-                <Text style={styles.avatarText}>{original.name.charAt(0)}</Text>
-              </View>
-            )}
-
+            <View style={styles.avatarFallback}>
+              <Text style={styles.avatarText}>{initial}</Text>
+            </View>
             <Text style={styles.avatarHint}>Profile photo coming soon</Text>
           </View>
 
           <View style={styles.card}>
-            <Field
-              label="Full name"
-              value={name}
-              onChangeText={setName}
-              placeholder="Your name"
-            />
-
-            <Field
-              label="Email"
-              value={email}
-              onChangeText={setEmail}
-              placeholder="you@email.com"
-              keyboardType="email-address"
-            />
-
-            <Field
-              label="Phone"
-              value={original.phone}
-              editable={false}
-              helper="Phone number cannot be changed"
-            />
+            <Field label="Full name" value={name} onChangeText={setName} placeholder="Your name" />
+            <Field label="Email" value={email} onChangeText={setEmail} placeholder="you@email.com" keyboardType="email-address" />
+            <Field label="Phone" value={user?.phone ?? ""} editable={false} helper="Phone number cannot be changed" isLast />
           </View>
 
           <TouchableOpacity
-            style={[styles.saveBtn, !hasChanges && { opacity: 0.5 }]}
+            style={[styles.saveBtn, !hasChanges && styles.saveBtnDisabled]}
             disabled={!hasChanges}
             onPress={handleSave}
           >
-            <MaterialCommunityIcons
-              name="content-save"
-              size={18}
-              color="#fff"
-            />
+            <MaterialCommunityIcons name="content-save-outline" size={18} color="#fff" />
             <Text style={styles.saveText}>Save Changes</Text>
           </TouchableOpacity>
         </View>
@@ -120,6 +81,7 @@ function Field({
   editable = true,
   helper,
   keyboardType,
+  isLast,
 }: {
   label: string;
   value: string;
@@ -128,15 +90,16 @@ function Field({
   editable?: boolean;
   helper?: string;
   keyboardType?: any;
+  isLast?: boolean;
 }) {
   return (
-    <View style={{ marginBottom: 18 }}>
+    <View style={[styles.fieldWrap, !isLast && styles.fieldBorder]}>
       <Text style={styles.label}>{label}</Text>
       <TextInput
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
-        placeholderTextColor="#6F68A8"
+        placeholderTextColor={C.textLight}
         editable={editable}
         keyboardType={keyboardType}
         style={[styles.input, !editable && styles.inputDisabled]}
@@ -147,108 +110,76 @@ function Field({
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: BG,
-  },
+  safe: { flex: 1, backgroundColor: C.bg },
 
   header: {
     flexDirection: "row",
     alignItems: "center",
-    padding: 16,
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: C.card,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
   },
-
-  headerTitle: {
-    flex: 1,
-    textAlign: "center",
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "800",
-  },
-
-  avatarWrap: {
+  backBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: C.bgSoft,
     alignItems: "center",
-    marginTop: 20,
-    marginBottom: 30,
+    justifyContent: "center",
   },
+  headerTitle: { flex: 1, textAlign: "center", color: C.text, fontSize: 18, fontWeight: "800" },
 
-  avatar: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-  },
+  content: { paddingHorizontal: 16, paddingTop: 8 },
 
+  avatarWrap: { alignItems: "center", marginTop: 24, marginBottom: 28 },
   avatarFallback: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: PRIMARY,
+    width: 88,
+    height: 88,
+    borderRadius: 24,
+    backgroundColor: C.primary,
     justifyContent: "center",
     alignItems: "center",
   },
-
-  avatarText: {
-    color: "#fff",
-    fontSize: 36,
-    fontWeight: "900",
-  },
-
-  avatarHint: {
-    color: MUTED,
-    fontSize: 11,
-    marginTop: 8,
-  },
+  avatarText: { color: "#fff", fontSize: 34, fontWeight: "900" },
+  avatarHint: { color: C.textLight, fontSize: 12, marginTop: 10 },
 
   card: {
-    backgroundColor: CARD_SOFT,
-    borderRadius: 22,
-    padding: 16,
+    backgroundColor: C.card,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: BORDER,
+    borderColor: C.border,
+    overflow: "hidden",
   },
+  fieldWrap: { paddingHorizontal: 16, paddingVertical: 14 },
+  fieldBorder: { borderBottomWidth: 1, borderBottomColor: C.border },
 
-  label: {
-    color: MUTED,
-    fontSize: 12,
-    fontWeight: "700",
-    marginBottom: 6,
-  },
-
+  label: { color: C.textSub, fontSize: 11, fontWeight: "700", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 },
   input: {
-    backgroundColor: CARD,
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: "#fff",
-    fontSize: 14,
+    backgroundColor: C.bgSoft,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    color: C.text,
+    fontSize: 15,
     borderWidth: 1,
-    borderColor: BORDER,
+    borderColor: C.border,
   },
-
-  inputDisabled: {
-    opacity: 0.6,
-  },
-
-  helper: {
-    color: MUTED,
-    fontSize: 11,
-    marginTop: 4,
-  },
+  inputDisabled: { opacity: 0.65 },
+  helper: { color: C.textLight, fontSize: 11, marginTop: 5 },
 
   saveBtn: {
-    marginTop: 30,
-    backgroundColor: GREEN,
-    paddingVertical: 14,
-    borderRadius: 999,
+    marginTop: 24,
+    backgroundColor: C.primary,
+    paddingVertical: 15,
+    borderRadius: 14,
     flexDirection: "row",
     gap: 10,
     justifyContent: "center",
     alignItems: "center",
   },
-
-  saveText: {
-    color: "#000",
-    fontWeight: "900",
-    fontSize: 14,
-  },
+  saveBtnDisabled: { opacity: 0.45 },
+  saveText: { color: "#fff", fontWeight: "800", fontSize: 15 },
 });

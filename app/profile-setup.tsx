@@ -3,22 +3,22 @@ import * as Location from "expo-location";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useRef, useState } from "react";
 import {
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    Alert,
+    KeyboardAvoidingView,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { C } from "../constants/colors";
 import { useAuth } from "../context/AuthContext";
 import { updateCustomerProfile } from "../lib/authService";
 
-const PRIMARY = "#059669";
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyAaEh8Qu-k6nT5BphpHcOUBOZ5RJ7F2QTQ";
 
 export default function ProfileSetupScreen() {
@@ -332,7 +332,7 @@ export default function ProfileSetupScreen() {
                       <MaterialCommunityIcons
                         name="map-marker"
                         size={29}
-                        color={PRIMARY}
+                        color={C.primary}
                       />
                     </Marker>
                   </MapView>
@@ -446,12 +446,10 @@ export default function ProfileSetupScreen() {
   );
 }
 
-const BG = "#f9fafb";
-
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: BG,
+    backgroundColor: C.bg,
   },
   flex: {
     flex: 1,
@@ -569,10 +567,10 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: PRIMARY,
+    backgroundColor: C.primary,
   },
   buttonDisabled: {
-    backgroundColor: "rgba(5, 150, 105, 0.45)",
+    opacity: 0.45,
   },
   buttonText: {
     fontSize: 16,
@@ -606,7 +604,7 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   locationBtnText: {
-    color: PRIMARY,
+    color: C.primary,
     fontSize: 20,
   },
 
@@ -614,7 +612,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: PRIMARY,
+    backgroundColor: C.primary,
     alignItems: "center",
     justifyContent: "center",
 

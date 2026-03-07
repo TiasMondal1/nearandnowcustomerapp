@@ -1,20 +1,19 @@
-// app/phone.tsx
 import { router } from "expo-router";
 import React, { useState } from "react";
 import {
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    Alert,
+    KeyboardAvoidingView,
+    Platform,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { sendOTP } from "../lib/authService";
 
-const PRIMARY = "#059669";
+import { C } from "../constants/colors";
+import { sendOTP } from "../lib/authService";
 
 export default function PhoneScreen() {
   const [phone, setPhone] = useState("");
@@ -135,12 +134,10 @@ export default function PhoneScreen() {
   );
 }
 
-const PRIMARY_BG = "#f9fafb";
-
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: PRIMARY_BG,
+    backgroundColor: C.bg,
   },
   flex: {
     flex: 1,
@@ -219,7 +216,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: PRIMARY,
+    backgroundColor: C.primary,
   },
   primaryButtonText: {
     fontSize: 16,
@@ -227,7 +224,7 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
   },
   buttonDisabled: {
-    backgroundColor: "rgba(5, 150, 105, 0.45)",
+    opacity: 0.45,
   },
   separatorRow: {
     flexDirection: "row",
@@ -270,7 +267,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   termsLink: {
-    color: PRIMARY,
+    color: C.primary,
     fontWeight: "600",
   },
 });

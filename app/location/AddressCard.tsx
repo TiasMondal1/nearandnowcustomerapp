@@ -3,8 +3,7 @@ import React, { memo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Swipeable } from "react-native-gesture-handler";
 
-const PRIMARY = "#765fba";
-const CARD = "#120D24";
+import { C } from "../../constants/colors";
 
 type Props = {
   id: string;
@@ -41,21 +40,29 @@ function AddressCard({
       {/* 👇 TAP AREA (this fixes selection) */}
       <Pressable
         onPress={onSelect}
-        android_ripple={{ color: "#2A224A" }}
+        android_ripple={{ color: C.bgSoft }}
         style={({ pressed }) => [
           styles.card,
-          pressed && { opacity: 0.85 },
+          pressed && { opacity: 0.88 },
           isDefault && styles.defaultCard,
         ]}
       >
         <View style={styles.row}>
-          <Text style={styles.label}>{label}</Text>
-          {isDefault && <Text style={styles.badge}>DEFAULT</Text>}
+          <View style={styles.labelRow}>
+            <MaterialCommunityIcons
+              name={label === "Home" ? "home-outline" : label === "Work" ? "briefcase-outline" : "map-marker-outline"}
+              size={16}
+              color={isDefault ? C.primary : C.textSub}
+            />
+            <Text style={[styles.label, isDefault && { color: C.primary }]}>{label}</Text>
+          </View>
+          {isDefault && (
+            <View style={styles.defaultBadge}>
+              <Text style={styles.defaultBadgeText}>DEFAULT</Text>
+            </View>
+          )}
         </View>
-
-        <Text style={styles.address} numberOfLines={2}>
-          {address}
-        </Text>
+        <Text style={styles.address} numberOfLines={2}>{address}</Text>
       </Pressable>
     </Swipeable>
   );
@@ -87,59 +94,48 @@ export default memo(AddressCard);
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: CARD,
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 12,
-  },
-
-  defaultCard: {
+    backgroundColor: C.card,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
     borderWidth: 1,
-    borderColor: PRIMARY,
+    borderColor: C.border,
+    shadowColor: C.shadow,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
   },
-
+  defaultCard: {
+    borderColor: C.primary,
+    borderWidth: 1.5,
+    backgroundColor: C.primaryXLight,
+  },
   row: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    marginBottom: 6,
   },
-
-  label: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "700",
-  },
-
-  badge: {
-    fontSize: 11,
-    color: PRIMARY,
-    fontWeight: "700",
+  labelRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  label: { color: C.text, fontSize: 15, fontWeight: "700" },
+  defaultBadge: {
+    backgroundColor: C.primaryXLight,
     borderWidth: 1,
-    borderColor: PRIMARY,
+    borderColor: C.primaryLight,
     paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 999,
+    paddingVertical: 3,
+    borderRadius: 8,
   },
-
-  address: {
-    color: "#C4BDEA",
-    fontSize: 14,
-    marginTop: 6,
-    lineHeight: 20,
-  },
+  defaultBadgeText: { fontSize: 10, color: C.primary, fontWeight: "800" },
+  address: { color: C.textSub, fontSize: 13, lineHeight: 19 },
 
   action: {
-    width: 86,
+    width: 80,
     justifyContent: "center",
     alignItems: "center",
     marginVertical: 6,
-    borderRadius: 16,
+    borderRadius: 12,
   },
-
-  actionText: {
-    color: "#fff",
-    fontSize: 12,
-    marginTop: 4,
-    fontWeight: "600",
-  },
+  actionText: { color: "#fff", fontSize: 12, marginTop: 4, fontWeight: "600" },
 });

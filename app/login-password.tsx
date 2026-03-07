@@ -1,19 +1,18 @@
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useState } from "react";
 import {
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    Alert,
+    KeyboardAvoidingView,
+    Platform,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-const PRIMARY = "#059669";
-const BG = "#f9fafb";
+import { C } from "../constants/colors";
 
 export default function LoginPasswordScreen() {
   const params = useLocalSearchParams();
@@ -135,7 +134,7 @@ export default function LoginPasswordScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: BG,
+    backgroundColor: C.bg,
   },
   flex: {
     flex: 1,
@@ -219,7 +218,7 @@ const styles = StyleSheet.create({
   },
   linkText: {
     fontSize: 12,
-    color: PRIMARY,
+    color: C.primary,
     fontWeight: "600",
   },
   bottomSection: {
@@ -230,10 +229,10 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: PRIMARY,
+    backgroundColor: C.primary,
   },
   buttonDisabled: {
-    backgroundColor: "rgba(5, 150, 105, 0.45)",
+    opacity: 0.45,
   },
   buttonText: {
     fontSize: 16,

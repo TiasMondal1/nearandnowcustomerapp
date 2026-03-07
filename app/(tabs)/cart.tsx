@@ -11,7 +11,7 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { C } from "../../constants/colors";
 import { calcOrderTotal } from "../../constants/fees";
@@ -20,6 +20,7 @@ import { useCart } from "../../context/CartContext";
 export default function CartScreen() {
   const { items, updateQty, removeItem, clearCart } = useCart();
   const [showInfo, setShowInfo] = useState(false);
+  const insets = useSafeAreaInsets();
 
   const subtotal = useMemo(
     () => items.reduce((sum, item) => sum + item.price * item.quantity, 0),
@@ -35,11 +36,8 @@ export default function CartScreen() {
   );
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
-        </TouchableOpacity>
         <Text style={styles.headerTitle}>Your Cart</Text>
         {items.length > 0 ? (
           <TouchableOpacity onPress={clearCart}>
@@ -55,7 +53,7 @@ export default function CartScreen() {
           <MaterialCommunityIcons name="cart-off" size={64} color={C.textLight} />
           <Text style={styles.emptyTitle}>Your cart is empty</Text>
           <Text style={styles.emptyText}>Add products from the home screen</Text>
-          <TouchableOpacity style={styles.shopBtn} onPress={() => router.back()}>
+          <TouchableOpacity style={styles.shopBtn} onPress={() => router.push("/home")}>
             <Text style={styles.shopBtnText}>Start Shopping</Text>
           </TouchableOpacity>
         </View>
@@ -138,7 +136,7 @@ export default function CartScreen() {
             )}
           />
 
-          <View style={styles.checkoutBar}>
+          <View style={[styles.checkoutBar, { paddingBottom: Math.max(insets.bottom, 16) + 60 }]}>
             <View>
               <Text style={styles.projectedLabel}>Estimated total</Text>
               <Text style={styles.projectedAmount}>₹{projected.toFixed(2)}</Text>
@@ -148,7 +146,7 @@ export default function CartScreen() {
               activeOpacity={0.9}
               onPress={() => router.push("../support/checkout")}
             >
-              <Text style={styles.checkoutText}>Proceed to Checkout</Text>
+              <Text style={styles.checkoutText}>Checkout</Text>
               <MaterialCommunityIcons name="arrow-right" size={18} color="#fff" />
             </TouchableOpacity>
           </View>
@@ -192,21 +190,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     backgroundColor: C.card,
     borderBottomWidth: 1,
     borderBottomColor: C.border,
   },
-  backBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: C.bgSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerTitle: { fontSize: 18, fontWeight: "800", color: C.text },
+  headerTitle: { fontSize: 20, fontWeight: "900", color: C.text, flex: 1 },
   clearText: { color: C.danger, fontSize: 14, fontWeight: "600" },
 
   empty: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10, padding: 32 },
@@ -221,7 +211,7 @@ const styles = StyleSheet.create({
   },
   shopBtnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
 
-  listContent: { paddingTop: 12, paddingBottom: 160, paddingHorizontal: 16 },
+  listContent: { paddingTop: 12, paddingBottom: 200, paddingHorizontal: 16 },
 
   itemCard: {
     flexDirection: "row",
@@ -306,9 +296,8 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     backgroundColor: C.card,
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-    paddingBottom: 28,
+    paddingHorizontal: 16,
+    paddingTop: 16,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
@@ -326,11 +315,12 @@ const styles = StyleSheet.create({
     backgroundColor: C.primary,
     flexDirection: "row",
     gap: 8,
-    paddingHorizontal: 20,
-    height: 50,
-    borderRadius: 14,
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
+    minHeight: 48,
   },
   checkoutText: { color: "#fff", fontSize: 14, fontWeight: "800" },
 

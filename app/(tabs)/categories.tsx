@@ -3,19 +3,16 @@ import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import React, { useMemo } from "react";
 import {
-  FlatList,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    FlatList,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { CATEGORY_CONFIG } from "../../constants/categoryConfig";
-
-const BG = "#f9fafb";
-const TEXT = "#1f2937";
-const SUBTLE = "#6b7280";
+import { C } from "../../constants/colors";
 
 export default function CategoriesScreen() {
   const categories = useMemo(
@@ -73,7 +70,7 @@ export default function CategoriesScreen() {
                 <MaterialCommunityIcons
                   name="arrow-right"
                   size={14}
-                  color={SUBTLE}
+                  color={C.textSub}
                 />
               </View>
             </LinearGradient>
@@ -87,7 +84,7 @@ export default function CategoriesScreen() {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: BG,
+    backgroundColor: C.bg,
   },
 
   header: {
@@ -97,13 +94,13 @@ const styles = StyleSheet.create({
   },
 
   title: {
-    color: TEXT,
+    color: C.text,
     fontSize: 22,
     fontWeight: "900",
   },
 
   subtitle: {
-    color: SUBTLE,
+    color: C.textSub,
     fontSize: 13,
     marginTop: 4,
   },
@@ -142,7 +139,7 @@ const styles = StyleSheet.create({
   },
 
   label: {
-    color: TEXT,
+    color: C.text,
     fontSize: 15,
     fontWeight: "800",
     marginTop: 14,
@@ -156,7 +153,7 @@ const styles = StyleSheet.create({
   },
 
   ctaText: {
-    color: SUBTLE,
+    color: C.textSub,
     fontSize: 12,
     fontWeight: "700",
   },

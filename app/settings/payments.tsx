@@ -1,4 +1,5 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
     ActivityIndicator,
@@ -11,17 +12,9 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { C } from "../../constants/colors";
 import { useAuth } from "../../context/AuthContext";
 import { getUserOrders } from "../../lib/orderService";
-
-const BG = "#05030A";
-const CARD = "#140F2D";
-const CARD_SOFT = "#1A1440";
-const PRIMARY = "#765fba";
-const MUTED = "#9C94D7";
-const BORDER = "#2A2450";
-const GREEN = "#3CFF8F";
-const YELLOW = "#FFD166";
 
 type Payment = {
   id: string;
@@ -64,7 +57,14 @@ export default function PaymentsScreen() {
   if (loading) {
     return (
       <SafeAreaView style={styles.safe}>
-        <ActivityIndicator size="large" color={PRIMARY} />
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+            <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Payments</Text>
+          <View style={{ width: 38 }} />
+        </View>
+        <ActivityIndicator size="large" color={C.primary} style={{ marginTop: 40 }} />
       </SafeAreaView>
     );
   }
@@ -72,7 +72,11 @@ export default function PaymentsScreen() {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+          <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
+        </TouchableOpacity>
         <Text style={styles.headerTitle}>Payments</Text>
+        <View style={{ width: 38 }} />
       </View>
 
       <FlatList
@@ -82,21 +86,16 @@ export default function PaymentsScreen() {
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={() => {
-              setRefreshing(true);
-              fetchPayments();
-            }}
-            tintColor={PRIMARY}
+            onRefresh={() => { setRefreshing(true); fetchPayments(); }}
+            tintColor={C.primary}
+            colors={[C.primary]}
           />
         }
         ListEmptyComponent={
           <View style={styles.empty}>
-            <MaterialCommunityIcons
-              name="credit-card-outline"
-              size={56}
-              color={MUTED}
-            />
-            <Text style={styles.emptyText}>No payments yet</Text>
+            <MaterialCommunityIcons name="credit-card-outline" size={56} color={C.textLight} />
+            <Text style={styles.emptyTitle}>No payments yet</Text>
+            <Text style={styles.emptyText}>Your payment history will appear here</Text>
           </View>
         }
         renderItem={({ item }) => <PaymentCard payment={item} />}
@@ -107,117 +106,89 @@ export default function PaymentsScreen() {
 
 function PaymentCard({ payment }: { payment: Payment }) {
   const paid = payment.payment_status === "paid";
+  const d = new Date(payment.placed_at);
+  const dateStr = d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) +
+    " · " + d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
 
   return (
-    <TouchableOpacity
-      activeOpacity={0.85}
-      style={styles.card}
-      onPress={() => {
-        // future: router.push(`/payments/${payment.id}`)
-      }}
-    >
-      <View style={styles.rowBetween}>
-        <Text style={styles.orderCode}>Order #{payment.order_code}</Text>
-
-        <View
-          style={[styles.badge, { backgroundColor: paid ? GREEN : YELLOW }]}
-        >
-          <Text style={styles.badgeText}>{paid ? "PAID" : "PENDING"}</Text>
+    <View style={styles.card}>
+      <View style={styles.cardTop}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.orderCode}>#{payment.order_code}</Text>
+          <Text style={styles.date}>{dateStr}</Text>
+        </View>
+        <View style={[styles.badge, { backgroundColor: paid ? C.successLight : C.warningLight }]}>
+          <Text style={[styles.badgeText, { color: paid ? C.success : C.warning }]}>
+            {paid ? "PAID" : "PENDING"}
+          </Text>
         </View>
       </View>
-
-      <Text style={styles.date}>
-        {new Date(payment.placed_at).toLocaleString()}
-      </Text>
-
-      <View style={styles.rowBetween}>
-        <Text style={styles.method}>
-          {payment.payment_method.toUpperCase()}
-        </Text>
-
+      <View style={styles.cardBottom}>
+        <View style={styles.methodPill}>
+          <MaterialCommunityIcons
+            name={payment.payment_method === "cod" ? "cash" : "qrcode-scan"}
+            size={13}
+            color={C.textSub}
+          />
+          <Text style={styles.method}>
+            {payment.payment_method === "cod" ? "Cash on Delivery" : "UPI"}
+          </Text>
+        </View>
         <Text style={styles.amount}>₹{payment.total_amount.toFixed(2)}</Text>
       </View>
-    </TouchableOpacity>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: BG,
-  },
+  safe: { flex: 1, backgroundColor: C.bg },
 
   header: {
-    padding: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: C.card,
     borderBottomWidth: 1,
-    borderColor: BORDER,
+    borderBottomColor: C.border,
   },
-
-  headerTitle: {
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "800",
+  backBtn: {
+    width: 38, height: 38, borderRadius: 12,
+    backgroundColor: C.bgSoft, alignItems: "center", justifyContent: "center",
   },
+  headerTitle: { flex: 1, textAlign: "center", color: C.text, fontSize: 18, fontWeight: "800" },
 
   card: {
-    backgroundColor: CARD_SOFT,
-    borderRadius: 18,
-    padding: 16,
+    backgroundColor: C.card,
+    borderRadius: 14,
+    padding: 14,
     borderWidth: 1,
-    borderColor: BORDER,
-    marginBottom: 12,
+    borderColor: C.border,
+    marginBottom: 10,
+    shadowColor: C.shadow,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  cardTop: { flexDirection: "row", alignItems: "flex-start", gap: 10, marginBottom: 12 },
+  cardBottom: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    paddingTop: 10, borderTopWidth: 1, borderTopColor: C.border,
   },
 
-  rowBetween: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
+  orderCode: { color: C.text, fontWeight: "800", fontSize: 15 },
+  date: { color: C.textSub, fontSize: 12, marginTop: 3 },
 
-  orderCode: {
-    color: "#fff",
-    fontWeight: "800",
-    fontSize: 14,
-  },
+  methodPill: { flexDirection: "row", alignItems: "center", gap: 5 },
+  method: { color: C.textSub, fontSize: 13 },
+  amount: { color: C.primary, fontSize: 17, fontWeight: "900" },
 
-  date: {
-    color: MUTED,
-    fontSize: 11,
-    marginTop: 4,
-  },
+  badge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
+  badgeText: { fontSize: 11, fontWeight: "800" },
 
-  method: {
-    color: MUTED,
-    fontSize: 12,
-    fontWeight: "700",
-  },
-
-  amount: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "900",
-  },
-
-  badge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-  },
-
-  badgeText: {
-    fontSize: 10,
-    fontWeight: "900",
-    color: "#000",
-  },
-
-  empty: {
-    alignItems: "center",
-    marginTop: 80,
-  },
-
-  emptyText: {
-    color: MUTED,
-    fontSize: 13,
-    marginTop: 10,
-  },
+  empty: { alignItems: "center", marginTop: 80, gap: 8 },
+  emptyTitle: { color: C.text, fontSize: 16, fontWeight: "700" },
+  emptyText: { color: C.textSub, fontSize: 14 },
 });

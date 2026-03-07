@@ -2,26 +2,18 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
-  ActivityIndicator,
-  FlatList,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    FlatList,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { supabaseAdmin } from "../../lib/supabase";
+import { C } from "../../constants/colors";
 import { useCart } from "../../context/CartContext";
-
-const BG = "#05030A";
-const CARD = "#140F2D";
-const CARD_SOFT = "#1B1542";
-const PRIMARY = "#7C6AE6";
-const GREEN = "#3CFF8F";
-const MUTED = "#9C94D7";
-const BORDER = "#2A2450";
-const DASH = "#2F2970";
+import { supabaseAdmin } from "../../lib/supabase";
 
 type Coupon = {
   id: string;
@@ -68,101 +60,88 @@ export default function CouponsScreen() {
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
         <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <MaterialCommunityIcons name="arrow-left" size={22} color="#fff" />
+          <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
         </TouchableOpacity>
-
-        <Text style={styles.headerTitle}>Available Coupons</Text>
-        <View style={{ width: 36 }} />
+        <Text style={styles.headerTitle}>Coupons</Text>
+        <View style={{ width: 38 }} />
       </View>
 
       {loading ? (
         <View style={styles.center}>
-          <ActivityIndicator size="large" color={PRIMARY} />
+          <ActivityIndicator size="large" color={C.primary} />
         </View>
       ) : coupons.length === 0 ? (
         <View style={styles.center}>
-          <MaterialCommunityIcons
-            name="ticket-percent-outline"
-            size={56}
-            color={MUTED}
-          />
-          <Text style={styles.emptyText}>No coupons available right now</Text>
+          <MaterialCommunityIcons name="ticket-percent-outline" size={56} color={C.textLight} />
+          <Text style={styles.emptyTitle}>No coupons available</Text>
+          <Text style={styles.emptyText}>Check back later for offers</Text>
         </View>
       ) : (
         <FlatList
           data={coupons}
           keyExtractor={(c) => c.id}
-          contentContainerStyle={{ paddingBottom: 48, paddingTop: 8 }}
+          contentContainerStyle={styles.list}
+          showsVerticalScrollIndicator={false}
           renderItem={({ item }) => {
             const applied = appliedCoupon?.id === item.id;
             const disabled = !isApplicable(item);
 
             return (
-              <View
-                style={[styles.couponWrapper, applied && styles.wrapperApplied]}
-              >
-                <View style={styles.cutLeft} />
-                <View style={styles.cutRight} />
-
-                <View style={styles.topRow}>
-                  <Text style={styles.code}>{item.code}</Text>
-
+              <View style={[styles.couponCard, applied && styles.couponCardApplied]}>
+                <View style={styles.couponTop}>
+                  <View style={styles.couponTopLeft}>
+                    <View style={[styles.discountPill, applied && styles.discountPillApplied]}>
+                      <Text style={[styles.discountPillText, applied && { color: C.primary }]}>
+                        {item.discount_type === "flat"
+                          ? `₹${item.value} OFF`
+                          : `${item.value}% OFF`}
+                      </Text>
+                    </View>
+                    <Text style={styles.code}>{item.code}</Text>
+                  </View>
                   {applied && (
                     <View style={styles.appliedBadge}>
-                      <MaterialCommunityIcons
-                        name="check-bold"
-                        size={12}
-                        color="#000"
-                      />
+                      <MaterialCommunityIcons name="check" size={12} color={C.primary} />
                       <Text style={styles.appliedText}>APPLIED</Text>
                     </View>
                   )}
                 </View>
 
-                <View style={styles.dashRow}>
-                  <View style={styles.dash} />
-                </View>
+                <View style={styles.divider} />
 
                 <Text style={styles.desc}>{item.description}</Text>
 
-                <View style={styles.metaRow}>
-                  <View style={styles.metaPill}>
-                    <Text style={styles.metaStrong}>
-                      {item.type === "flat"
-                        ? `₹${item.value} OFF`
-                        : `${item.value}% OFF`}
-                    </Text>
+                {item.min_order_value != null && item.min_order_value > 0 && (
+                  <View style={styles.minOrderRow}>
+                    <MaterialCommunityIcons name="cart-outline" size={13} color={C.textLight} />
+                    <Text style={styles.minOrderText}>Min order ₹{item.min_order_value}</Text>
+                    {disabled && !applied && (
+                      <Text style={styles.needMore}>
+                        Add ₹{(item.min_order_value - subtotal).toFixed(0)} more
+                      </Text>
+                    )}
                   </View>
-
-                  {item.min_order_value != null && item.min_order_value > 0 && (
-                    <Text style={styles.meta}>
-                      Min order ₹{item.min_order_value}
-                    </Text>
-                  )}
-                </View>
+                )}
 
                 <TouchableOpacity
-                  disabled={disabled}
+                  disabled={disabled && !applied}
                   style={[
                     styles.actionBtn,
-                    applied && styles.removeBtn,
-                    disabled && styles.disabledBtn,
+                    applied && styles.removeBtnStyle,
+                    disabled && !applied && styles.disabledBtn,
                   ]}
+                  activeOpacity={0.85}
                   onPress={() => {
                     if (applied) {
                       removeCoupon();
                     } else {
-                      applyCoupon(item);
+                      applyCoupon({ ...item, type: item.discount_type });
                       router.back();
                     }
                   }}
                 >
-                  <Text style={styles.actionText}>
-                    {applied
-                      ? "Remove Coupon"
-                      : disabled
-                        ? "Not Applicable"
-                        : "Apply Coupon"}
+                  <Text style={[styles.actionText, applied && { color: C.danger }]}>
+                    {applied ? "Remove" : disabled ? "Not Applicable" : "Apply Coupon"}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -175,7 +154,7 @@ export default function CouponsScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: BG },
+  safe: { flex: 1, backgroundColor: C.bg },
 
   header: {
     flexDirection: "row",
@@ -183,168 +162,107 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingVertical: 14,
+    backgroundColor: C.card,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
   },
-
   backBtn: {
-    height: 36,
-    width: 36,
+    width: 38,
+    height: 38,
     borderRadius: 12,
-    backgroundColor: CARD_SOFT,
+    backgroundColor: C.bgSoft,
     alignItems: "center",
     justifyContent: "center",
   },
+  headerTitle: { color: C.text, fontSize: 18, fontWeight: "800" },
 
-  headerTitle: {
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "900",
-    letterSpacing: 0.3,
+  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10 },
+  emptyTitle: { color: C.text, fontSize: 16, fontWeight: "700" },
+  emptyText: { color: C.textSub, fontSize: 14 },
+
+  list: { padding: 16, gap: 12 },
+
+  couponCard: {
+    backgroundColor: C.card,
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1.5,
+    borderColor: C.border,
+    shadowColor: C.shadow,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
+    gap: 10,
+  },
+  couponCardApplied: {
+    borderColor: C.primary,
+    backgroundColor: C.primaryXLight,
   },
 
-  center: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 14,
-  },
-
-  emptyText: {
-    color: MUTED,
-    fontSize: 14,
-  },
-
-  couponWrapper: {
-    backgroundColor: CARD,
-    marginHorizontal: 16,
-    marginBottom: 18,
-    borderRadius: 20,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: BORDER,
-    position: "relative",
-  },
-
-  wrapperApplied: {
-    borderColor: GREEN,
-    shadowColor: GREEN,
-    shadowOpacity: 0.35,
-    shadowRadius: 14,
-  },
-
-  cutLeft: {
-    position: "absolute",
-    left: -10,
-    top: "50%",
-    marginTop: -10,
-    height: 20,
-    width: 20,
-    borderRadius: 10,
-    backgroundColor: BG,
-  },
-
-  cutRight: {
-    position: "absolute",
-    right: -10,
-    top: "50%",
-    marginTop: -10,
-    height: 20,
-    width: 20,
-    borderRadius: 10,
-    backgroundColor: BG,
-  },
-
-  topRow: {
+  couponTop: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
   },
-
-  code: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "900",
-    letterSpacing: 1.2,
+  couponTopLeft: { gap: 6 },
+  discountPill: {
+    alignSelf: "flex-start",
+    backgroundColor: C.bgSoft,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: C.border,
   },
+  discountPillApplied: {
+    backgroundColor: C.primaryLight,
+    borderColor: C.primary,
+  },
+  discountPillText: { color: C.text, fontSize: 12, fontWeight: "800" },
+  code: { color: C.text, fontSize: 18, fontWeight: "900", letterSpacing: 1.5 },
 
   appliedBadge: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    backgroundColor: GREEN,
+    gap: 5,
+    backgroundColor: C.primaryXLight,
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 999,
-  },
-
-  appliedText: {
-    color: "#000",
-    fontSize: 11,
-    fontWeight: "900",
-  },
-
-  dashRow: {
-    marginVertical: 14,
-  },
-
-  dash: {
-    height: 1,
-    borderStyle: "dashed",
     borderWidth: 1,
-    borderColor: DASH,
+    borderColor: C.primaryLight,
   },
+  appliedText: { color: C.primary, fontSize: 11, fontWeight: "800" },
 
-  desc: {
-    color: "#C9C3F2",
-    fontSize: 13,
-    lineHeight: 18,
-  },
+  divider: { height: 1, backgroundColor: C.border },
 
-  metaRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    marginTop: 12,
-  },
+  desc: { color: C.textSub, fontSize: 13, lineHeight: 19 },
 
-  metaPill: {
-    backgroundColor: CARD_SOFT,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-
-  metaStrong: {
-    color: "#fff",
+  minOrderRow: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" },
+  minOrderText: { color: C.textSub, fontSize: 12 },
+  needMore: {
+    color: C.warning,
     fontSize: 12,
-    fontWeight: "800",
-  },
-
-  meta: {
-    color: MUTED,
-    fontSize: 12,
+    fontWeight: "700",
+    backgroundColor: C.warningLight,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
   },
 
   actionBtn: {
-    marginTop: 16,
     height: 44,
-    borderRadius: 999,
-    backgroundColor: PRIMARY,
+    borderRadius: 12,
+    backgroundColor: C.primary,
     alignItems: "center",
     justifyContent: "center",
   },
-
-  removeBtn: {
-    backgroundColor: CARD_SOFT,
+  removeBtnStyle: {
+    backgroundColor: C.dangerLight,
+    borderWidth: 1,
+    borderColor: "#fca5a5",
   },
-
-  disabledBtn: {
-    opacity: 0.4,
-  },
-
-  actionText: {
-    color: "#fff",
-    fontSize: 13,
-    fontWeight: "900",
-    letterSpacing: 0.3,
-  },
+  disabledBtn: { opacity: 0.45 },
+  actionText: { color: "#fff", fontSize: 14, fontWeight: "800" },
 });

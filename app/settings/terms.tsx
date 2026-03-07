@@ -1,27 +1,27 @@
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { router } from "expo-router";
 import React from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-const BG = "#05030A";
-const CARD = "#120D24";
-const BORDER = "#2A2450";
-const MUTED = "#9C94D7";
-const PRIMARY = "#765fba";
+import { C } from "../../constants/colors";
 
 
 export default function TermsAndPrivacyScreen() {
   return (
     <SafeAreaView style={styles.safe}>
+      <View style={styles.header}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+          <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Terms &amp; Privacy</Text>
+        <View style={{ width: 38 }} />
+      </View>
       <ScrollView
         contentContainerStyle={styles.container}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.header}>
-          <Text style={styles.title}>Terms & Privacy Policy</Text>
-          <Text style={styles.subtitle}>
-            Near&Now — User Agreement & Data Protection Policy
-          </Text>
-        </View>
+        <Text style={styles.pageSubtitle}>Near&amp;Now — User Agreement &amp; Data Protection Policy</Text>
 
         <View style={styles.card}>
           <PolicySection title="1. Introduction">
@@ -195,99 +195,47 @@ function Bold({ children }: { children: React.ReactNode }) {
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: BG,
-  },
-
-  container: {
-    padding: 16,
-    paddingBottom: 90,
-  },
+  safe: { flex: 1, backgroundColor: C.bg },
 
   header: {
-    marginBottom: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: C.card,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
   },
+  backBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: C.bgSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerTitle: { flex: 1, textAlign: "center", color: C.text, fontSize: 18, fontWeight: "800" },
 
-  title: {
-    fontSize: 22,
-    fontWeight: "900",
-    color: "#fff",
-  },
-
-  subtitle: {
-    fontSize: 13,
-    color: MUTED,
-    marginTop: 4,
-  },
+  container: { padding: 16, paddingBottom: 90 },
+  pageSubtitle: { fontSize: 13, color: C.textSub, marginBottom: 16, lineHeight: 19 },
 
   card: {
-    backgroundColor: CARD,
-    borderRadius: 20,
+    backgroundColor: C.card,
+    borderRadius: 16,
     padding: 20,
     borderWidth: 1,
-    borderColor: BORDER,
+    borderColor: C.border,
   },
+  section: { marginBottom: 6 },
+  sectionTitle: { fontSize: 14, fontWeight: "800", color: C.primary, marginBottom: 8 },
+  paragraph: { fontSize: 13, color: C.textSub, lineHeight: 21, marginBottom: 10 },
+  bullet: { fontSize: 13, color: C.textSub, lineHeight: 21, marginBottom: 6, paddingLeft: 4 },
+  divider: { height: 1, backgroundColor: C.border, marginVertical: 14 },
 
-  section: {
-    marginBottom: 6,
-  },
-
-  sectionTitle: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: PRIMARY,
-    marginBottom: 8,
-  },
-
-  paragraph: {
-    fontSize: 13,
-    color: "#ddd",
-    lineHeight: 21,
-    marginBottom: 10,
-  },
-
-  bullet: {
-    fontSize: 13,
-    color: "#ddd",
-    lineHeight: 21,
-    marginBottom: 6,
-    paddingLeft: 4,
-  },
-
-  divider: {
-    height: 1,
-    backgroundColor: BORDER,
-    marginVertical: 14,
-  },
-
-  footerNote: {
-    fontSize: 12,
-    color: MUTED,
-    marginTop: 18,
-    textAlign: "center",
-    lineHeight: 18,
-  },
-
-  footer: {
-    marginTop: 28,
-    alignItems: "center",
-  },
-
-  companyName: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: PRIMARY,
-  },
-
-  companyNote: {
-    marginTop: 6,
-    fontSize: 11,
-    color: MUTED,
-  },
-
-  bold: {
-    fontWeight: "700",
-    color: "#fff",
-  },
+  footerNote: { fontSize: 12, color: C.textLight, marginTop: 18, textAlign: "center", lineHeight: 18 },
+  footer: { marginTop: 28, alignItems: "center" },
+  companyName: { fontSize: 14, fontWeight: "800", color: C.primary },
+  companyNote: { marginTop: 6, fontSize: 11, color: C.textLight },
+  bold: { fontWeight: "700", color: C.text },
 });

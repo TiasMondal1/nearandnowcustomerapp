@@ -1,23 +1,31 @@
 import { router } from "expo-router";
 import React, { useEffect } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 
-const PRIMARY = "#059669";
-const BG = "#f9fafb";
+import { C } from "../constants/colors";
+import { useAuth } from "../context/AuthContext";
 
 export default function SplashScreen() {
-  useEffect(() => {
-    const timeout = setTimeout(() => {
-      router.replace("/phone");
-    }, 2000);
+  const { isLoading, isAuthenticated } = useAuth();
 
-    return () => clearTimeout(timeout);
-  }, []);
+  useEffect(() => {
+    if (isLoading) return;
+    if (isAuthenticated) {
+      router.replace("/(tabs)/home");
+    } else {
+      router.replace("/phone");
+    }
+  }, [isLoading, isAuthenticated]);
 
   return (
     <View style={styles.container}>
-      <Text style={styles.logo}>Near & Now</Text>
+      <Text style={styles.logo}>Near &amp; Now</Text>
       <Text style={styles.tagline}>Digital Dukan, Local Dil Se</Text>
+      <ActivityIndicator
+        size="small"
+        color={C.primary}
+        style={styles.spinner}
+      />
     </View>
   );
 }
@@ -25,21 +33,24 @@ export default function SplashScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: BG,
+    backgroundColor: C.bg,
     justifyContent: "center",
     alignItems: "center",
   },
   logo: {
     fontSize: 36,
     fontWeight: "800",
-    color: PRIMARY,
+    color: C.primary,
     letterSpacing: 0.5,
   },
   tagline: {
     marginTop: 8,
     fontSize: 14,
-    color: "#6b7280",
+    color: C.textSub,
     fontWeight: "600",
     letterSpacing: 0.3,
+  },
+  spinner: {
+    marginTop: 40,
   },
 });

@@ -1,7 +1,9 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons"; //// CODE WRITTEN BY GPT 5 < NEEDS RECHECK || EXCESSIVE REDUNCANCY >
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { router } from "expo-router";
 import React, { useState } from "react";
 import {
     LayoutAnimation,
+    Linking,
     Platform,
     ScrollView,
     StyleSheet,
@@ -12,54 +14,31 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-if (
-  Platform.OS === "android" &&
-  UIManager.setLayoutAnimationEnabledExperimental
-) {
+import { C } from "../../constants/colors";
+
+if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
-
-const BG = "#05030A";
-const CARD = "#140F2D";
-const CARD_SOFT = "#1A1440";
-const PRIMARY = "#765fba";
-const MUTED = "#9C94D7";
-const BORDER = "#2A2450";
-const GREEN = "#3CFF8F";
-const YELLOW = "#FFD166";
-const DANGER = "#E54848";
 
 export default function SupportScreen() {
   return (
     <SafeAreaView style={styles.safe}>
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 40 }}
-      >
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Support</Text>
-          <Text style={styles.headerSub}>We’re here to help you anytime</Text>
-        </View>
+      <View style={styles.header}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+          <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Support</Text>
+        <View style={{ width: 38 }} />
+      </View>
 
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
         <Section title="Quick Help">
-          <SupportAction
-            icon="package-variant-closed"
-            title="Order Issues"
-            subtitle="Missing items, wrong order"
-          />
-          <SupportAction
-            icon="credit-card-outline"
-            title="Payments & Refunds"
-            subtitle="Charges, refunds, failed payments"
-          />
-          <SupportAction
-            icon="truck-delivery-outline"
-            title="Delivery Problems"
-            subtitle="Late or incomplete delivery"
-          />
+          <SupportAction icon="package-variant-closed" title="Order Issues" subtitle="Missing items, wrong order" />
+          <SupportAction icon="credit-card-outline" title="Payments & Refunds" subtitle="Charges, refunds, failed payments" />
+          <SupportAction icon="truck-delivery-outline" title="Delivery Problems" subtitle="Late or incomplete delivery" isLast />
         </Section>
 
-        <Section title="Contact Support">
+        <Section title="Contact Us">
           <SupportAction
             icon="chat-processing-outline"
             title="Live Chat"
@@ -70,58 +49,42 @@ export default function SupportScreen() {
             icon="email-outline"
             title="Email Us"
             subtitle="support@nearandnow.app"
+            onPress={() => Linking.openURL("mailto:support@nearandnow.app")}
           />
           <SupportAction
             icon="phone-outline"
             title="Call Support"
-            subtitle="+91 9XXXX XXXXX"
+            subtitle="+91 98765 43210"
+            onPress={() => Linking.openURL("tel:+919876543210")}
+            isLast
           />
         </Section>
 
         <Section title="FAQs">
-          <FAQ
-            q="How do refunds work?"
-            a="Refunds are processed to your original payment method within 3–5 business days once approved."
-          />
-          <FAQ
-            q="Can I cancel an order?"
-            a="Orders can be cancelled before the store accepts them. After acceptance, cancellation may not be possible."
-          />
-          <FAQ
-            q="Why was my order split?"
-            a="If items are from different stores, your order is split so each store can process it independently."
-          />
+          <FAQ q="How do refunds work?" a="Refunds are processed to your original payment method within 3–5 business days once approved." />
+          <FAQ q="Can I cancel an order?" a="Orders can be cancelled before the store accepts them. After acceptance, cancellation may not be possible." />
+          <FAQ q="Why was my order split?" a="If items are from different stores, your order is split so each store can process it independently." isLast />
         </Section>
 
         <Section title="App Information">
           <InfoRow label="App Version" value="1.0.0" />
-          <InfoRow label="Terms of Service" />
-          <InfoRow label="Privacy Policy" />
+          <InfoRow label="Terms of Service" onPress={() => router.push("/settings/terms")} />
+          <InfoRow label="Privacy Policy" onPress={() => router.push("/settings/terms")} isLast />
         </Section>
 
-        {/* ESCALATION */}
-        <Section title="Need urgent help?">
-          <TouchableOpacity style={styles.emergency}>
-            <MaterialCommunityIcons
-              name="alert-octagon-outline"
-              size={20}
-              color="#fff"
-            />
-            <Text style={styles.emergencyText}>Escalate an Issue</Text>
-          </TouchableOpacity>
-        </Section>
+        <TouchableOpacity
+          style={styles.escalate}
+          onPress={() => Linking.openURL("mailto:support@nearandnow.app?subject=Urgent Issue")}
+        >
+          <MaterialCommunityIcons name="alert-octagon-outline" size={20} color={C.danger} />
+          <Text style={styles.escalateText}>Escalate an Issue</Text>
+        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>{title}</Text>
@@ -131,185 +94,126 @@ function Section({
 }
 
 function SupportAction({
-  icon,
-  title,
-  subtitle,
-  badge,
+  icon, title, subtitle, badge, onPress, isLast,
 }: {
-  icon: any;
-  title: string;
-  subtitle: string;
-  badge?: string;
+  icon: any; title: string; subtitle: string;
+  badge?: string; onPress?: () => void; isLast?: boolean;
 }) {
   return (
-    <TouchableOpacity activeOpacity={0.85} style={styles.action}>
-      <View style={styles.actionLeft}>
-        <MaterialCommunityIcons name={icon} size={22} color="#fff" />
-        <View>
-          <Text style={styles.actionTitle}>{title}</Text>
-          <Text style={styles.actionSub}>{subtitle}</Text>
-        </View>
+    <TouchableOpacity
+      activeOpacity={0.75}
+      style={[styles.action, !isLast && styles.actionBorder]}
+      onPress={onPress}
+    >
+      <View style={styles.iconWrap}>
+        <MaterialCommunityIcons name={icon} size={18} color={C.primary} />
       </View>
-
+      <View style={{ flex: 1 }}>
+        <Text style={styles.actionTitle}>{title}</Text>
+        <Text style={styles.actionSub}>{subtitle}</Text>
+      </View>
       {badge ? (
         <View style={styles.badge}>
           <Text style={styles.badgeText}>{badge}</Text>
         </View>
       ) : (
-        <MaterialCommunityIcons name="chevron-right" size={22} color={MUTED} />
+        <MaterialCommunityIcons name="chevron-right" size={18} color={C.textLight} />
       )}
     </TouchableOpacity>
   );
 }
 
-function FAQ({ q, a }: { q: string; a: string }) {
+function FAQ({ q, a, isLast }: { q: string; a: string; isLast?: boolean }) {
   const [open, setOpen] = useState(false);
-
   return (
-    <View>
+    <View style={!isLast && styles.actionBorder}>
       <TouchableOpacity
-        onPress={() => {
-          LayoutAnimation.easeInEaseOut();
-          setOpen(!open);
-        }}
+        onPress={() => { LayoutAnimation.easeInEaseOut(); setOpen(!open); }}
         style={styles.faqQ}
       >
         <Text style={styles.faqQText}>{q}</Text>
-        <MaterialCommunityIcons
-          name={open ? "chevron-up" : "chevron-down"}
-          size={20}
-          color={MUTED}
-        />
+        <MaterialCommunityIcons name={open ? "chevron-up" : "chevron-down"} size={18} color={C.textLight} />
       </TouchableOpacity>
-
       {open && <Text style={styles.faqA}>{a}</Text>}
     </View>
   );
 }
 
-function InfoRow({ label, value }: { label: string; value?: string }) {
+function InfoRow({ label, value, onPress, isLast }: { label: string; value?: string; onPress?: () => void; isLast?: boolean }) {
   return (
-    <View style={styles.infoRow}>
+    <TouchableOpacity
+      style={[styles.action, !isLast && styles.actionBorder]}
+      onPress={onPress}
+      activeOpacity={onPress ? 0.7 : 1}
+    >
       <Text style={styles.infoLabel}>{label}</Text>
-      {value && <Text style={styles.infoValue}>{value}</Text>}
-    </View>
+      {value
+        ? <Text style={styles.infoValue}>{value}</Text>
+        : onPress && <MaterialCommunityIcons name="chevron-right" size={18} color={C.textLight} />}
+    </TouchableOpacity>
   );
 }
 
-/* ───────── STYLES ───────── */
-
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: BG },
+  safe: { flex: 1, backgroundColor: C.bg },
 
-  header: { padding: 20 },
-  headerTitle: {
-    color: "#fff",
-    fontSize: 22,
-    fontWeight: "900",
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: C.card,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
   },
-  headerSub: {
-    color: MUTED,
-    fontSize: 13,
-    marginTop: 4,
+  backBtn: {
+    width: 38, height: 38, borderRadius: 12,
+    backgroundColor: C.bgSoft, alignItems: "center", justifyContent: "center",
   },
+  headerTitle: { flex: 1, textAlign: "center", color: C.text, fontSize: 18, fontWeight: "800" },
 
-  section: { marginTop: 12 },
+  scrollContent: { padding: 16, paddingBottom: 40 },
+
+  section: { marginBottom: 20 },
   sectionTitle: {
-    color: MUTED,
-    fontSize: 13,
-    fontWeight: "700",
-    marginLeft: 20,
-    marginBottom: 6,
+    color: C.textSub, fontSize: 11, fontWeight: "700",
+    marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.7, paddingHorizontal: 2,
   },
-
   sectionCard: {
-    backgroundColor: CARD_SOFT,
-    borderRadius: 20,
-    marginHorizontal: 16,
-    borderWidth: 1,
-    borderColor: BORDER,
-    overflow: "hidden",
+    backgroundColor: C.card, borderRadius: 14,
+    borderWidth: 1, borderColor: C.border, overflow: "hidden",
   },
 
   action: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: 16,
-    borderBottomWidth: 1,
-    borderColor: BORDER,
+    flexDirection: "row", alignItems: "center",
+    paddingHorizontal: 14, paddingVertical: 13, gap: 12,
   },
-
-  actionLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
+  actionBorder: { borderBottomWidth: 1, borderBottomColor: C.border },
+  iconWrap: {
+    width: 34, height: 34, borderRadius: 10,
+    backgroundColor: C.primaryXLight, alignItems: "center", justifyContent: "center",
   },
-
-  actionTitle: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  actionSub: {
-    color: MUTED,
-    fontSize: 11,
-    marginTop: 2,
-  },
+  actionTitle: { color: C.text, fontSize: 14, fontWeight: "700" },
+  actionSub: { color: C.textSub, fontSize: 12, marginTop: 1 },
 
   badge: {
-    backgroundColor: YELLOW,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 999,
+    backgroundColor: C.warningLight, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999,
+    borderWidth: 1, borderColor: C.warning,
   },
-  badgeText: {
-    fontSize: 10,
-    fontWeight: "900",
-    color: "#000",
-  },
+  badgeText: { fontSize: 10, fontWeight: "800", color: C.warning },
 
-  faqQ: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    padding: 16,
-  },
-  faqQText: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 13,
-    flex: 1,
-    paddingRight: 10,
-  },
-  faqA: {
-    color: MUTED,
-    fontSize: 12,
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-    lineHeight: 18,
-  },
+  faqQ: { flexDirection: "row", justifyContent: "space-between", padding: 14 },
+  faqQText: { color: C.text, fontWeight: "600", fontSize: 13, flex: 1, paddingRight: 10 },
+  faqA: { color: C.textSub, fontSize: 13, paddingHorizontal: 14, paddingBottom: 14, lineHeight: 20 },
 
-  infoRow: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderColor: BORDER,
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  infoLabel: { color: "#fff", fontSize: 13 },
-  infoValue: { color: MUTED, fontSize: 13 },
+  infoLabel: { color: C.text, fontSize: 14, flex: 1 },
+  infoValue: { color: C.textSub, fontSize: 13 },
 
-  emergency: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-    padding: 16,
-    backgroundColor: DANGER,
+  escalate: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10,
+    marginTop: 4, paddingVertical: 14, borderRadius: 14,
+    backgroundColor: C.dangerLight, borderWidth: 1, borderColor: "#fca5a5",
   },
-  emergencyText: {
-    color: "#fff",
-    fontWeight: "900",
-    fontSize: 14,
-  },
+  escalateText: { color: C.danger, fontWeight: "800", fontSize: 14 },
 });

@@ -319,6 +319,10 @@ export async function getUserOrders(userId: string): Promise<Order[]> {
         });
       }
     }
+
+    // Debug logging for order status
+    console.log(`Order ${co.order_code}: status from DB = "${co.status}"`);
+
     return {
       id: co.id,
       order_number: co.order_code,

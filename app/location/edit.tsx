@@ -2,28 +2,27 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    Alert,
+    KeyboardAvoidingView,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { C } from "../../constants/colors";
 import { useAuth } from "../../context/AuthContext";
+import { useLocation } from "../../context/LocationContext";
 import { getUserAddresses } from "../../lib/addressService";
 import { supabaseAdmin } from "../../lib/supabase";
-import { useLocation } from "../../context/LocationContext";
 
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyAaEh8Qu-k6nT5BphpHcOUBOZ5RJ7F2QTQ";
 
-const PRIMARY = "#765fba";
-const BG = "#05030A";
 const LABELS = ["Home", "Work", "Other"] as const;
 
 export default function EditLocationScreen() {
@@ -79,17 +78,20 @@ export default function EditLocationScreen() {
           return;
         }
 
-        setLabel(LABELS.includes(loc.label) ? loc.label : "Other");
-        setCustomLabel(LABELS.includes(loc.label) ? "" : loc.label);
+        const resolvedLabel = LABELS.includes(loc.label as (typeof LABELS)[number])
+          ? (loc.label as (typeof LABELS)[number])
+          : "Other";
+        setLabel(resolvedLabel);
+        setCustomLabel(resolvedLabel === "Other" ? loc.label : "");
 
         setFormattedAddress(loc.address);
         setCoords({
-          latitude: loc.latitude,
-          longitude: loc.longitude,
+          latitude: loc.latitude ?? 0,
+          longitude: loc.longitude ?? 0,
         });
         setRegion({
-          latitude: loc.latitude,
-          longitude: loc.longitude,
+          latitude: loc.latitude ?? 0,
+          longitude: loc.longitude ?? 0,
           latitudeDelta: 0.01,
           longitudeDelta: 0.01,
         });
@@ -223,7 +225,7 @@ export default function EditLocationScreen() {
                 <MaterialCommunityIcons
                   name="map-marker"
                   size={32}
-                  color={PRIMARY}
+                  color={C.primary}
                 />
               </Marker>
             </MapView>
@@ -237,7 +239,7 @@ export default function EditLocationScreen() {
               onChangeText={setFormattedAddress}
               onBlur={() => forwardGeocode(formattedAddress)}
               placeholder="Address"
-              placeholderTextColor="#7A6FB3"
+              placeholderTextColor={C.textLight}
             />
           </View>
 
@@ -253,44 +255,42 @@ export default function EditLocationScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: BG },
+  safe: { flex: 1, backgroundColor: C.bg },
   container: { padding: 20, paddingBottom: 40 },
-  title: { fontSize: 24, fontWeight: "700", color: "#fff" },
+  title: { fontSize: 22, fontWeight: "800", color: C.text },
 
   mapWrap: {
     height: 220,
-    borderRadius: 18,
+    borderRadius: 16,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "#3A2D68",
+    borderColor: C.border,
     marginTop: 16,
   },
 
   addressBox: {
     marginTop: 14,
     padding: 14,
-    backgroundColor: "#120D24",
+    backgroundColor: C.card,
     borderRadius: 14,
+    borderWidth: 1,
+    borderColor: C.border,
   },
 
   addressInput: {
     fontSize: 13,
-    color: "#EAE6FF",
+    color: C.text,
+    lineHeight: 22,
     minHeight: 44,
     maxHeight: 96,
   },
 
   saveBtn: {
     marginTop: 26,
-    backgroundColor: PRIMARY,
-    borderRadius: 999,
-    paddingVertical: 14,
+    backgroundColor: C.primary,
+    borderRadius: 14,
+    paddingVertical: 15,
     alignItems: "center",
   },
-
-  saveText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
-  },
+  saveText: { color: "#fff", fontSize: 15, fontWeight: "700" },
 });

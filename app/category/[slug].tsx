@@ -1,23 +1,23 @@
-import React, { useCallback, useEffect, useState } from "react";
-
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { router, useLocalSearchParams } from "expo-router";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
     FlatList,
     Image,
+    InteractionManager,
     RefreshControl,
     StyleSheet,
     Text,
     TouchableOpacity,
     View,
 } from "react-native";
-
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { router, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { getProductsByCategory, type Product as ServiceProduct } from "../../lib/productService";
+import { C } from "../../constants/colors";
 import { useCart } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
+import { getProductsByCategory, type Product as ServiceProduct } from "../../lib/productService";
 
 
 export const CATEGORY_CONFIG = {
@@ -65,9 +65,6 @@ export const CATEGORY_CONFIG = {
 
 export type CategoryKey = keyof typeof CATEGORY_CONFIG;
 
-//RESTORE TYPE MAP @INCOGNITOISM/JIRA/TEMPEST/TYPEMAP
-//RESTORE TYPE MAP @INCOGNITOISM/JIRA/TEMPEST/TYPEMAP - N888271
-
 export default function CategorySlugScreen() {
   const { slug } = useLocalSearchParams<{ slug: CategoryKey }>();
   const category = slug ? CATEGORY_CONFIG[slug] : null;
@@ -80,43 +77,41 @@ export default function CategorySlugScreen() {
   const { addItem, items, updateQty } = useCart();
   const { location } = useLocation();
 
-  const fetchProducts = useCallback(async () => {
+  const locationRef = useRef(location);
+  useEffect(() => { locationRef.current = location; }, [location]);
+
+  const fetchProducts = useCallback(async (isRefresh = false) => {
     if (!slug) return;
     try {
       setError(null);
       const categoryLabel = CATEGORY_CONFIG[slug]?.label ?? slug;
+      const loc = locationRef.current;
       const data = await getProductsByCategory(
         categoryLabel,
-        location ? { lat: location.latitude, lng: location.longitude } : undefined,
+        loc ? { lat: loc.latitude, lng: loc.longitude } : undefined,
       );
       setProducts(data);
-    } catch (err) {
-      console.error("CATEGORY_FETCH_FAILED", err);
+    } catch {
       setError("Failed to load products");
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [slug, location]);
-
-  //RESTORE TYPE MAP @INCOGNITOISM/JIRA/TEMPEST/LOADMAP
+  }, [slug]);
 
   useEffect(() => {
-    fetchProducts();
+    const task = InteractionManager.runAfterInteractions(() => {
+      fetchProducts();
+    });
+    return () => task.cancel();
   }, [fetchProducts]);
 
-  //RESTORE TYPE MAP @INCOGNITOISM/JIRA/TEMPEST/CANMAP
-
-  const onRefresh = () => {
+  const onRefresh = useCallback(() => {
     setRefreshing(true);
-    fetchProducts();
-  };
-
-  //RESTORE TYPE MAP @INCOGNITOISM/JIRA/TEMPEST/VALMAP
+    fetchProducts(true);
+  }, [fetchProducts]);
 
   const isEmpty = !loading && products.length === 0;
-
-  //RESTORE TYPE MAP @INCOGNITOISM/JIRA/TEMPEST/GUARDMAP
 
   if (!category) {
     return (
@@ -133,24 +128,26 @@ export default function CategorySlugScreen() {
         {item.image_url ? (
           <Image source={{ uri: item.image_url }} style={styles.image} />
         ) : (
-          <View style={styles.imagePlaceholder} />
+          <View style={styles.imagePlaceholder}>
+            <MaterialCommunityIcons name="image-off-outline" size={24} color={C.textLight} />
+          </View>
         )}
 
         <View style={{ flex: 1 }}>
           <Text style={styles.name} numberOfLines={2}>{item.name}</Text>
           <Text style={styles.unit}>{item.unit ?? "1 unit"}</Text>
           <Text style={styles.price}>₹{item.price}</Text>
-          <Text style={styles.store}>{item.category}</Text>
+          {item.category ? <Text style={styles.store}>{item.category}</Text> : null}
         </View>
 
         {cartItem ? (
           <View style={styles.qtyRow}>
             <TouchableOpacity onPress={() => updateQty(item.id, cartItem.quantity - 1)}>
-              <Text style={styles.qtyBtn}>−</Text>
+              <MaterialCommunityIcons name="minus" size={16} color={C.primary} />
             </TouchableOpacity>
             <Text style={styles.qtyText}>{cartItem.quantity}</Text>
             <TouchableOpacity onPress={() => updateQty(item.id, cartItem.quantity + 1)}>
-              <Text style={styles.qtyBtn}>+</Text>
+              <MaterialCommunityIcons name="plus" size={16} color={C.primary} />
             </TouchableOpacity>
           </View>
         ) : (
@@ -176,8 +173,8 @@ export default function CategorySlugScreen() {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <MaterialCommunityIcons name="arrow-left" size={24} color="#fff" />
+        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+          <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
         </TouchableOpacity>
 
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
@@ -189,7 +186,7 @@ export default function CategorySlugScreen() {
           <Text style={styles.headerTitle}>{category.label}</Text>
         </View>
 
-        <View style={{ width: 24 }} />
+        <View style={{ width: 38 }} />
       </View>
 
       {loading ? (
@@ -210,11 +207,17 @@ export default function CategorySlugScreen() {
           keyExtractor={(item) => item.id}
           renderItem={renderItem}
           contentContainerStyle={styles.list}
+          removeClippedSubviews={true}
+          initialNumToRender={8}
+          maxToRenderPerBatch={8}
+          windowSize={5}
+          showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
               tintColor={category.color}
+              colors={[category.color]}
             />
           }
         />
@@ -224,134 +227,84 @@ export default function CategorySlugScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: "#05030A",
-  },
+  safe: { flex: 1, backgroundColor: C.bg },
 
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: C.card,
     borderBottomWidth: 1,
-    borderBottomColor: "#1F1A3A",
+    borderBottomColor: C.border,
   },
+  backBtn: {
+    width: 38, height: 38, borderRadius: 12,
+    backgroundColor: C.bgSoft, alignItems: "center", justifyContent: "center",
+  },
+  headerTitle: { color: C.text, fontSize: 17, fontWeight: "800" },
 
-  headerTitle: {
-    color: "#fff",
-    fontSize: 17,
-    fontWeight: "800",
-  },
-
-  list: {
-    padding: 16,
-    paddingBottom: 120,
-  },
+  list: { padding: 16, paddingBottom: 120 },
 
   card: {
     flexDirection: "row",
     gap: 12,
-    backgroundColor: "#140F2D",
-    borderRadius: 18,
+    backgroundColor: C.card,
+    borderRadius: 14,
     padding: 12,
-    marginBottom: 12,
+    marginBottom: 10,
     borderWidth: 1,
-    borderColor: "#2A2450",
+    borderColor: C.border,
+    shadowColor: C.shadow,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
   },
 
   image: {
-    width: 72,
-    height: 72,
-    borderRadius: 14,
-    backgroundColor: "#1C1636",
+    width: 72, height: 72, borderRadius: 12,
+    backgroundColor: C.bgSoft,
   },
-
   imagePlaceholder: {
-    width: 72,
-    height: 72,
-    borderRadius: 14,
-    backgroundColor: "#1C1636",
+    width: 72, height: 72, borderRadius: 12,
+    backgroundColor: C.bgSoft,
+    alignItems: "center", justifyContent: "center",
   },
 
-  name: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "700",
-  },
-
-  unit: {
-    color: "#9C94D7",
-    fontSize: 11,
-    marginTop: 2,
-  },
-
-  price: {
-    color: "#3CFF8F",
-    fontSize: 15,
-    fontWeight: "900",
-    marginTop: 4,
-  },
-
-  store: {
-    color: "#9C94D7",
-    fontSize: 10,
-    marginTop: 2,
-  },
+  name: { color: C.text, fontSize: 14, fontWeight: "700" },
+  unit: { color: C.textLight, fontSize: 11, marginTop: 2 },
+  price: { color: C.primary, fontSize: 15, fontWeight: "800", marginTop: 4 },
+  store: { color: C.textSub, fontSize: 10, marginTop: 2 },
 
   addBtn: {
     alignSelf: "center",
-    backgroundColor: "#765FBA",
+    backgroundColor: C.primary,
     paddingHorizontal: 16,
     paddingVertical: 8,
-    borderRadius: 999,
+    borderRadius: 10,
   },
-
-  addText: {
-    color: "#fff",
-    fontWeight: "900",
-    fontSize: 12,
-  },
+  addText: { color: "#fff", fontWeight: "800", fontSize: 12 },
 
   qtyRow: {
     alignSelf: "center",
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    backgroundColor: "#120D24",
-    borderRadius: 999,
+    gap: 6,
+    backgroundColor: C.primaryXLight,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: C.primaryLight,
     paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingVertical: 6,
   },
-
-  qtyBtn: {
-    color: "#765FBA",
-    fontSize: 18,
-    fontWeight: "700",
-    paddingHorizontal: 4,
-  },
-
   qtyText: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "600",
-    minWidth: 20,
-    textAlign: "center",
+    color: C.primary, fontSize: 14, fontWeight: "700",
+    minWidth: 20, textAlign: "center",
   },
 
-  center: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  errorText: {
-    color: "#FF6B6B",
-    fontWeight: "700",
-  },
-
-  emptyText: {
-    color: "#9C94D7",
-    fontWeight: "600",
-  },
+  center: { flex: 1, justifyContent: "center", alignItems: "center" },
+  errorText: { color: C.danger, fontWeight: "700" },
+  emptyText: { color: C.textSub, fontWeight: "600" },
 });

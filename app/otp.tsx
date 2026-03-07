@@ -1,22 +1,21 @@
-// app/otp.tsx
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    KeyboardAvoidingView,
+    Platform,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+
+import { C } from "../constants/colors";
 import { useAuth } from "../context/AuthContext";
 import { sendOTP } from "../lib/authService";
-
-const PRIMARY = "#059669";
 
 export default function OtpScreen() {
   const params = useLocalSearchParams();
@@ -202,7 +201,7 @@ export default function OtpScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: "#f9fafb" },
+  safeArea: { flex: 1, backgroundColor: C.bg },
   flex: { flex: 1 },
   container: {
     flex: 1,
@@ -242,26 +241,26 @@ const styles = StyleSheet.create({
     color: "#1f2937",
   },
   otpBoxFocused: {
-    borderColor: PRIMARY,
-    shadowColor: PRIMARY,
+    borderColor: C.primary,
+    shadowColor: C.primary,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 4,
   },
-  otpBoxFilled: { borderColor: PRIMARY, backgroundColor: "#f0fdf4" },
+  otpBoxFilled: { borderColor: C.primary, backgroundColor: C.primaryXLight },
   infoRow: { marginTop: 8 },
   timerText: { fontSize: 12, color: "#6b7280" },
-  resendText: { fontSize: 13, color: PRIMARY, fontWeight: "600" },
+  resendText: { fontSize: 13, color: C.primary, fontWeight: "600" },
   bottomSection: { gap: 12 },
   button: {
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: PRIMARY,
+    backgroundColor: C.primary,
   },
-  buttonDisabled: { backgroundColor: "rgba(5, 150, 105, 0.45)" },
+  buttonDisabled: { opacity: 0.45 },
   buttonText: { fontSize: 16, fontWeight: "600", color: "#FFFFFF" },
   backRow: { alignItems: "center", marginTop: 4 },
   backText: { fontSize: 12, color: "#6b7280" },

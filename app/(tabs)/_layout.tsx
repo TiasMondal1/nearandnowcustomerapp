@@ -83,11 +83,11 @@ export default function TabLayout() {
       />
 
       <Tabs.Screen
-        name="settings"
+        name="cart"
         options={{
-          title: "Settings",
+          title: "Cart",
           tabBarIcon: ({ color, size }) => (
-            <MaterialCommunityIcons name="cog" size={size} color={color} />
+            <MaterialCommunityIcons name="cart-outline" size={size} color={color} />
           ),
         }}
       />

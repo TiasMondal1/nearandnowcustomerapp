@@ -4,25 +4,24 @@ import * as Location from "expo-location";
 import { router } from "expo-router";
 import React, { useCallback, useRef, useState } from "react";
 import {
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    Alert,
+    KeyboardAvoidingView,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { C } from "../../constants/colors";
 import { useAuth } from "../../context/AuthContext";
-import { createAddress } from "../../lib/addressService";
 import { useLocation } from "../../context/LocationContext";
+import { createAddress } from "../../lib/addressService";
 
-const PRIMARY = "#765fba";
-const BG = "#05030A";
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyAaEh8Qu-k6nT5BphpHcOUBOZ5RJ7F2QTQ";
 
 const LABELS = ["Home", "Work", "Other"] as const;
@@ -229,13 +228,13 @@ export default function AddLocationScreen() {
         contact_name: contactName || undefined,
         contact_phone:
           deliveryFor === "other" && receiverPhone.trim()
-            ? normalizeIndianPhone(receiverPhone)
+            ? normalizeIndianPhone(receiverPhone) ?? undefined
             : undefined,
         delivery_for: deliveryFor === "other" ? "others" : "self",
         receiver_name: deliveryFor === "other" ? receiverName.trim() : undefined,
         receiver_phone:
           deliveryFor === "other" && receiverPhone.trim()
-            ? normalizeIndianPhone(receiverPhone)
+            ? normalizeIndianPhone(receiverPhone) ?? undefined
             : undefined,
         is_default: false,
       });
@@ -281,7 +280,7 @@ export default function AddLocationScreen() {
                 <MaterialCommunityIcons
                   name="map-marker"
                   size={32}
-                  color={PRIMARY}
+                  color={C.primary}
                 />
               </Marker>
             </MapView>
@@ -302,7 +301,7 @@ export default function AddLocationScreen() {
             <TextInput
               style={styles.addressInput}
               placeholder="Enter or edit address"
-              placeholderTextColor="#7A6FB3"
+              placeholderTextColor={C.textLight}
               value={formattedAddress}
               scrollEnabled
               multiline
@@ -340,8 +339,8 @@ export default function AddLocationScreen() {
           {label === "Other" && (
             <TextInput
               style={styles.input}
-              placeholder="Custom label (e.g. Mom’s house)"
-              placeholderTextColor="#7A6FB3"
+              placeholder="Custom label (e.g. Mom's house)"
+              placeholderTextColor={C.textLight}
               value={customLabel}
               onChangeText={setCustomLabel}
             />
@@ -396,7 +395,7 @@ export default function AddLocationScreen() {
                 <MaterialCommunityIcons
                   name="account-box"
                   size={18}
-                  color={PRIMARY}
+                  color={C.primary}
                 />
                 <Text style={styles.contactBtnText}>Pick from contacts</Text>
               </TouchableOpacity>
@@ -404,7 +403,7 @@ export default function AddLocationScreen() {
               <TextInput
                 style={styles.input}
                 placeholder="Receiver name"
-                placeholderTextColor="#7A6FB3"
+                placeholderTextColor={C.textLight}
                 value={receiverName}
                 onChangeText={setReceiverName}
               />
@@ -412,7 +411,7 @@ export default function AddLocationScreen() {
               <TextInput
                 style={styles.input}
                 placeholder="Nickname (optional)"
-                placeholderTextColor="#7A6FB3"
+                placeholderTextColor={C.textLight}
                 value={receiverNickname}
                 onChangeText={setReceiverNickname}
               />
@@ -420,7 +419,7 @@ export default function AddLocationScreen() {
               <TextInput
                 style={styles.input}
                 placeholder="10-digit mobile number"
-                placeholderTextColor="#7A6FB3"
+                placeholderTextColor={C.textLight}
                 keyboardType="number-pad"
                 maxLength={10}
                 value={receiverPhone}
@@ -449,115 +448,150 @@ export default function AddLocationScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: BG },
-  container: { padding: 20, paddingBottom: 32 },
+  safe: { flex: 1, backgroundColor: C.bg },
+  container: { padding: 20, paddingBottom: 40 },
 
-  title: { fontSize: 24, fontWeight: "700", color: "#fff" },
-  subtitle: { fontSize: 13, color: "#C4BDEA", marginTop: 4, marginBottom: 14 },
+  title: { fontSize: 24, fontWeight: "900", color: C.text, letterSpacing: -0.5 },
+  subtitle: { fontSize: 14, color: C.textSub, marginTop: 6, marginBottom: 18, lineHeight: 20 },
 
   mapWrap: {
-    height: 220,
-    borderRadius: 18,
+    height: 240,
+    borderRadius: 20,
     overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "#3A2D68",
+    borderWidth: 2,
+    borderColor: C.border,
+    shadowColor: C.shadow,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
   },
   locateBtn: {
     position: "absolute",
-    bottom: 12,
-    right: 12,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: PRIMARY,
+    bottom: 16,
+    right: 16,
+    width: 50,
+    height: 50,
+    borderRadius: 16,
+    backgroundColor: C.primary,
     alignItems: "center",
     justifyContent: "center",
+    shadowColor: C.primary,
+    shadowOpacity: 0.5,
+    shadowRadius: 8,
+    elevation: 6,
   },
 
   addressBox: {
-    marginTop: 14,
-    padding: 14,
-    backgroundColor: "#120D24",
-    borderRadius: 14,
+    marginTop: 18,
+    padding: 16,
+    backgroundColor: C.card,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: C.border,
+    shadowColor: C.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 3,
   },
-  addressText: { fontSize: 13, color: "#EAE6FF" },
 
-  labelRow: { flexDirection: "row", gap: 10, marginTop: 18 },
+  labelRow: { flexDirection: "row", gap: 12, marginTop: 20 },
   labelChip: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 999,
-    backgroundColor: "#120D24",
-    borderWidth: 1,
-    borderColor: "#392B6A",
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    backgroundColor: C.bgSoft,
+    borderWidth: 1.5,
+    borderColor: C.border,
   },
-  labelActive: { backgroundColor: PRIMARY, borderColor: PRIMARY },
-  labelText: { fontSize: 13, color: "#C4BDEA" },
-  labelTextActive: { color: "#fff", fontWeight: "600" },
+  labelActive: {
+    backgroundColor: C.primary,
+    borderColor: C.primary,
+    shadowColor: C.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  labelText: { fontSize: 14, color: C.textSub, fontWeight: "600" },
+  labelTextActive: { color: "#fff", fontWeight: "800" },
 
-  section: { marginTop: 22 },
-  sectionTitle: { fontSize: 13, color: "#B3A9E6", marginBottom: 8 },
+  section: { marginTop: 24 },
+  sectionTitle: { fontSize: 14, color: C.text, fontWeight: "800", marginBottom: 10, letterSpacing: 0.3 },
 
-  toggleRow: { flexDirection: "row", gap: 10 },
+  toggleRow: { flexDirection: "row", gap: 12 },
   toggleChip: {
     flex: 1,
-    paddingVertical: 10,
-    borderRadius: 999,
-    backgroundColor: "#120D24",
-    borderWidth: 1,
-    borderColor: "#392B6A",
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: C.bgSoft,
+    borderWidth: 1.5,
+    borderColor: C.border,
     alignItems: "center",
   },
-  toggleActive: { backgroundColor: PRIMARY, borderColor: PRIMARY },
-  toggleText: { color: "#C4BDEA", fontSize: 13 },
-  toggleTextActive: { color: "#fff", fontWeight: "600" },
+  toggleActive: {
+    backgroundColor: C.primary,
+    borderColor: C.primary,
+    shadowColor: C.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  toggleText: { color: C.textSub, fontSize: 14, fontWeight: "600" },
+  toggleTextActive: { color: "#fff", fontWeight: "800" },
 
-  receiverBox: { marginTop: 14, gap: 10 },
+  receiverBox: { marginTop: 16, gap: 12 },
 
   input: {
     borderRadius: 14,
-    backgroundColor: "#120D24",
-    borderWidth: 1,
-    borderColor: "#392B6A",
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    color: "#fff",
+    backgroundColor: C.card,
+    borderWidth: 1.5,
+    borderColor: C.border,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    color: C.text,
+    fontSize: 15,
+    fontWeight: "500",
   },
 
   saveBtn: {
-    marginTop: 26,
-    backgroundColor: PRIMARY,
-    borderRadius: 999,
-    paddingVertical: 14,
+    marginTop: 32,
+    backgroundColor: C.primary,
+    borderRadius: 16,
+    paddingVertical: 18,
     alignItems: "center",
+    shadowColor: C.primary,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    elevation: 8,
   },
-  saveText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  saveText: { color: "#fff", fontSize: 17, fontWeight: "900", letterSpacing: 0.5 },
 
   contactBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    marginTop: 6,
+    marginTop: 4,
+    marginBottom: 4,
     alignSelf: "flex-start",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: C.primaryXLight,
   },
+  contactBtnText: { fontSize: 14, color: C.primary, fontWeight: "700" },
 
-  contactBtnText: {
-    fontSize: 13,
-    color: PRIMARY,
+  addressInput: {
+    fontSize: 14,
+    color: C.text,
+    lineHeight: 22,
+    minHeight: 50,
+    maxHeight: 80,
     fontWeight: "500",
   },
 
-  addressInput: {
-    fontSize: 13,
-    color: "#EAE6FF",
-    lineHeight: 25,
-    minHeight: 44,
-    maxHeight: 75,
-  },
-
-  updatingText: {
-    marginTop: 6,
-    fontSize: 11,
-    color: "#9C94D7",
-  },
+  updatingText: { marginTop: 8, fontSize: 12, color: C.primary, fontWeight: "600" },
 });
