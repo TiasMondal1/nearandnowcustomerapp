@@ -15,6 +15,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { C } from "../../constants/colors";
 import { useAuth } from "../../context/AuthContext";
 import { getUserOrders, type Order } from "../../lib/orderService";
+import { supabase } from "../../lib/supabase";
 
 const TIMELINE: { key: string; label: string; icon: string }[] = [
   { key: "pending_at_store",  label: "Order Placed",       icon: "receipt" },
@@ -59,23 +60,39 @@ export default function OrderDetailScreen() {
     if (userId) loadOrder();
   }, [id, userId]);
 
-  // Auto-refresh order status every 10 seconds if order is not in final state
+  // Supabase Realtime subscription for instant order status updates.
+  // Requires: realtime enabled on customer_orders table in Supabase Dashboard
+  //           + a SELECT RLS policy allowing the customer to read their own order.
   useEffect(() => {
-    if (!order || !userId) return;
+    if (!id) return;
 
-    const finalStates = ['delivered', 'cancelled', 'rejected_by_store'];
-    const isFinalState = finalStates.includes(order.order_status ?? '');
+    const channel = supabase
+      .channel(`order-status-${id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'customer_orders',
+          filter: `id=eq.${id}`,
+        },
+        (payload) => {
+          const newStatus = (payload.new as any)?.status as string | undefined;
+          if (newStatus) {
+            setAutoRefreshing(true);
+            setOrder((prev) =>
+              prev ? { ...prev, order_status: newStatus } : prev,
+            );
+            setTimeout(() => setAutoRefreshing(false), 800);
+          }
+        },
+      )
+      .subscribe();
 
-    if (isFinalState) return;
-
-    const interval = setInterval(async () => {
-      setAutoRefreshing(true);
-      await loadOrder(true);
-      setAutoRefreshing(false);
-    }, 10000); // Poll every 10 seconds
-
-    return () => clearInterval(interval);
-  }, [order?.order_status, userId]);
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [id]);
 
   const loadOrder = async (isRefresh = false) => {
     if (!userId) return;

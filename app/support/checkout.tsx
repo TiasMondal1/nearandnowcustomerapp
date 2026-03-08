@@ -243,9 +243,11 @@ export default function CheckoutScreen() {
 
           <PaymentOption
             label="Pay via UPI"
+            sublabel="Coming soon (Razorpay)"
             icon="qrcode-scan"
-            selected={payment === "upi"}
-            onPress={() => setPayment("upi")}
+            selected={false}
+            disabled
+            onPress={() => {}}
           />
 
           <PaymentOption
@@ -319,16 +321,37 @@ function BillRow({ label, value, highlight }: { label: string; value: number; hi
   );
 }
 
-function PaymentOption({ label, icon, selected, onPress }: { label: string; icon: any; selected: boolean; onPress: () => void }) {
+function PaymentOption({
+  label,
+  sublabel,
+  icon,
+  selected,
+  disabled,
+  onPress,
+}: {
+  label: string;
+  sublabel?: string;
+  icon: any;
+  selected: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+}) {
   return (
-    <TouchableOpacity style={[styles.paymentRow, selected && styles.paymentActive]} onPress={onPress}>
+    <TouchableOpacity
+      style={[styles.paymentRow, selected && styles.paymentActive, disabled && styles.paymentDisabled]}
+      onPress={disabled ? undefined : onPress}
+      activeOpacity={disabled ? 1 : 0.7}
+    >
       <View style={styles.paymentLeft}>
-        <View style={[styles.paymentIconWrap, selected && styles.paymentIconActive]}>
-          <MaterialCommunityIcons name={icon} size={20} color={selected ? "#fff" : C.textSub} />
+        <View style={[styles.paymentIconWrap, selected && styles.paymentIconActive, disabled && styles.paymentIconDisabled]}>
+          <MaterialCommunityIcons name={icon} size={20} color={disabled ? C.textLight : selected ? "#fff" : C.textSub} />
         </View>
-        <Text style={[styles.paymentText, selected && { color: C.primary }]}>{label}</Text>
+        <View>
+          <Text style={[styles.paymentText, selected && { color: C.primary }, disabled && { color: C.textLight }]}>{label}</Text>
+          {sublabel ? <Text style={styles.paymentSublabel}>{sublabel}</Text> : null}
+        </View>
       </View>
-      <View style={[styles.radioOuter, selected && styles.radioOuterActive]}>
+      <View style={[styles.radioOuter, selected && styles.radioOuterActive, disabled && styles.radioDisabled]}>
         {selected && <View style={styles.radioInner} />}
       </View>
     </TouchableOpacity>
@@ -492,7 +515,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   paymentIconActive: { backgroundColor: C.primary },
+  paymentIconDisabled: { backgroundColor: C.bgSoft },
+  paymentDisabled: { opacity: 0.5 },
   paymentText: { color: C.text, fontSize: 15, fontWeight: "600" },
+  paymentSublabel: { color: C.textLight, fontSize: 11, marginTop: 2 },
   radioOuter: {
     width: 20,
     height: 20,
@@ -503,6 +529,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   radioOuterActive: { borderColor: C.primary },
+  radioDisabled: { borderColor: C.border },
   radioInner: { width: 10, height: 10, borderRadius: 5, backgroundColor: C.primary },
 
   slideDock: {
