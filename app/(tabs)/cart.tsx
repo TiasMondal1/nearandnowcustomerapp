@@ -30,7 +30,7 @@ export default function CartScreen() {
     () => items.reduce((sum, i) => sum + i.quantity, 0),
     [items],
   );
-  const { convFee, packagingFee, deliveryFee, projected } = useMemo(
+  const { platformFee, handlingFee, convFee, packagingFee, deliveryFee, projected } = useMemo(
     () => calcOrderTotal(subtotal, totalItems),
     [subtotal, totalItems],
   );
@@ -70,6 +70,14 @@ export default function CartScreen() {
                 <View style={styles.billRow}>
                   <Text style={styles.billLabel}>Items subtotal</Text>
                   <Text style={styles.billValue}>₹{subtotal.toFixed(2)}</Text>
+                </View>
+                <View style={styles.billRow}>
+                  <Text style={styles.billLabel}>Platform fee</Text>
+                  <Text style={styles.billValue}>₹{platformFee.toFixed(2)}</Text>
+                </View>
+                <View style={styles.billRow}>
+                  <Text style={styles.billLabel}>Handling fee</Text>
+                  <Text style={styles.billValue}>₹{handlingFee.toFixed(2)}</Text>
                 </View>
                 <View style={styles.billRow}>
                   <View style={styles.billLabelRow}>
@@ -163,6 +171,12 @@ export default function CartScreen() {
               </TouchableOpacity>
             </View>
             <View style={styles.modalBody}>
+              <Text style={styles.modalSectionTitle}>Platform Fee</Text>
+              <Text style={styles.modalDesc}>Fixed ₹9.50 per order</Text>
+              <View style={styles.divider} />
+              <Text style={styles.modalSectionTitle}>Handling Fee</Text>
+              <Text style={styles.modalDesc}>Fixed ₹5.50 per order</Text>
+              <View style={styles.divider} />
               <Text style={styles.modalSectionTitle}>Convenience Fee</Text>
               <Text style={styles.modalDesc}>Order below ₹100 → ₹60</Text>
               <Text style={styles.modalDesc}>Order ₹100–₹300 → ₹30</Text>
@@ -171,10 +185,13 @@ export default function CartScreen() {
               <Text style={styles.modalSectionTitle}>Packaging Fee</Text>
               <Text style={styles.modalDesc}>₹5 per 3 items (rounded up)</Text>
               <View style={styles.divider} />
-              <Text style={styles.modalSectionTitle}>Delivery Fee</Text>
-              <Text style={styles.modalDesc}>Flat ₹30 per order</Text>
+              <Text style={styles.modalSectionTitle}>Delivery Fee (Distance-based)</Text>
+              <Text style={styles.modalDesc}>0-1 km → ₹15</Text>
+              <Text style={styles.modalDesc}>1-2 km → ₹20</Text>
+              <Text style={styles.modalDesc}>2-3 km → ₹25</Text>
+              <Text style={styles.modalDesc}>3-4 km → ₹30 (maximum)</Text>
               <View style={styles.divider} />
-              <Text style={styles.modalNote}>Final charges are confirmed at checkout and may vary slightly.</Text>
+              <Text style={styles.modalNote}>Delivery fee is calculated based on the farthest store from your location. Final charges are confirmed at checkout.</Text>
             </View>
           </Pressable>
         </Pressable>

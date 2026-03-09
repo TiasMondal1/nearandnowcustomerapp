@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
     Alert,
     Animated,
@@ -19,6 +19,7 @@ import { calcOrderTotal } from "../../constants/fees";
 import { useAuth } from "../../context/AuthContext";
 import { useCart } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
+import { getProductStoreDistance } from "../../lib/distanceUtils";
 import { createOrder } from "../../lib/orderService";
 
 type PaymentMode = "upi" | "cod";
@@ -29,8 +30,40 @@ export default function CheckoutScreen() {
   const [showSuccess, setShowSuccess] = useState(false);
   const [placing, setPlacing] = useState(false);
   const { location } = useLocation();
+  const [maxDistance, setMaxDistance] = useState<number>(2);
+  const [loadingDistance, setLoadingDistance] = useState(false);
 
   const [payment, setPayment] = useState<PaymentMode>("upi");
+
+  useEffect(() => {
+    if (!location || items.length === 0) {
+      setMaxDistance(2);
+      return;
+    }
+
+    const calculateMaxDistance = async () => {
+      setLoadingDistance(true);
+      try {
+        const distances = await Promise.all(
+          items.map((item) =>
+            getProductStoreDistance(
+              item.product_id,
+              location.latitude,
+              location.longitude,
+            ),
+          ),
+        );
+        const max = Math.max(...distances);
+        setMaxDistance(Math.min(max, 4));
+      } catch {
+        setMaxDistance(2);
+      } finally {
+        setLoadingDistance(false);
+      }
+    };
+
+    calculateMaxDistance();
+  }, [location, items]);
 
   const subtotal = useMemo(
     () => items.reduce((s, i) => s + i.price * i.quantity, 0),
@@ -40,9 +73,9 @@ export default function CheckoutScreen() {
     () => items.reduce((s, i) => s + i.quantity, 0),
     [items],
   );
-  const { convFee, packagingFee, deliveryFee, projected } = useMemo(
-    () => calcOrderTotal(subtotal, totalItems),
-    [subtotal, totalItems],
+  const { platformFee, handlingFee, convFee, packagingFee, deliveryFee, projected } = useMemo(
+    () => calcOrderTotal(subtotal, totalItems, maxDistance),
+    [subtotal, totalItems, maxDistance],
   );
   const finalPayable = useMemo(
     () => Math.max(projected - discount, 0),
@@ -225,9 +258,11 @@ export default function CheckoutScreen() {
         <View style={styles.billCard}>
           <Text style={styles.billTitle}>Bill Details</Text>
           <BillRow label="Items subtotal" value={subtotal} />
+          <BillRow label="Platform fee" value={platformFee} />
+          <BillRow label="Handling fee" value={handlingFee} />
           {convFee > 0 && <BillRow label="Convenience fee" value={convFee} />}
           {packagingFee > 0 && <BillRow label="Packaging fee" value={packagingFee} />}
-          <BillRow label="Delivery fee" value={deliveryFee} />
+          <BillRow label={`Delivery fee (${maxDistance.toFixed(1)} km)`} value={deliveryFee} />
           {appliedCoupon && (
             <BillRow label={`Discount (${appliedCoupon.code})`} value={-discount} highlight />
           )}
