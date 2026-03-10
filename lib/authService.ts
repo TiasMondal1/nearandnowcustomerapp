@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase, supabaseAdmin } from './supabase';
 
 export interface AppUser {
   id: string;
@@ -21,8 +21,8 @@ export interface Customer {
   state: string | null;
   pincode: string | null;
   country: string;
-  landmark: string;
-  delivery_instructions: string;
+  landmark?: string | null;
+  delivery_instructions?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -103,7 +103,7 @@ export async function getCurrentUserFromSession(
   userId: string,
 ): Promise<{ user: AppUser; customer?: Customer } | null> {
   try {
-    const { data: appUser, error } = await supabase
+    const { data: appUser, error } = await supabaseAdmin
       .from('app_users')
       .select('id, name, email, phone, role, is_activated, created_at, updated_at')
       .eq('id', userId)
@@ -112,7 +112,7 @@ export async function getCurrentUserFromSession(
     if (error || !appUser) return null;
 
     if (appUser.role === 'customer') {
-      const { data: customer } = await supabase
+      const { data: customer } = await supabaseAdmin
         .from('customers')
         .select('*')
         .eq('user_id', appUser.id)
@@ -146,7 +146,7 @@ export async function updateCustomerProfile(
     if (updates.name) appUserUpdates.name = updates.name;
     if (updates.email) appUserUpdates.email = updates.email;
 
-    await supabase.from('app_users').update(appUserUpdates).eq('id', userId);
+    await supabaseAdmin.from('app_users').update(appUserUpdates).eq('id', userId);
   }
 
   const customerUpdates: Record<string, string | undefined> = {};
@@ -161,6 +161,6 @@ export async function updateCustomerProfile(
     customerUpdates.delivery_instructions = updates.delivery_instructions;
 
   if (Object.keys(customerUpdates).length > 0) {
-    await supabase.from('customers').update(customerUpdates).eq('user_id', userId);
+    await supabaseAdmin.from('customers').update(customerUpdates).eq('user_id', userId);
   }
 }

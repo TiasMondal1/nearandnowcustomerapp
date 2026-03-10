@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import {
     KeyboardAvoidingView,
     Platform,
@@ -16,17 +16,30 @@ import { C } from "../../constants/colors";
 import { useAuth } from "../../context/AuthContext";
 
 export default function ProfileScreen() {
-  const { user } = useAuth();
+  const { user, updateUserProfile } = useAuth();
 
   const [name, setName] = useState(user?.name ?? "");
   const [email, setEmail] = useState(user?.email ?? "");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setName(user?.name ?? "");
+    setEmail(user?.email ?? "");
+  }, [user?.id, user?.name, user?.email]);
 
   const hasChanges = useMemo(() => {
     return name !== (user?.name ?? "") || email !== (user?.email ?? "");
   }, [name, email, user]);
 
   const handleSave = async () => {
-    router.back();
+    if (!user?.id || !hasChanges || saving) return;
+    setSaving(true);
+    try {
+      await updateUserProfile({ name: name.trim() || undefined, email: email.trim() || undefined });
+      router.back();
+    } catch {
+      setSaving(false);
+    }
   };
 
   const initial = (user?.name ?? "?").charAt(0).toUpperCase();

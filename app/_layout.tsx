@@ -5,11 +5,11 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "../context/AuthContext";
 import { CartProvider } from "../context/CartContext";
 import { LocationProvider } from "../context/LocationContext";
-import { usePushNotifications } from "../hooks/usePushNotifications";
+// import { usePushNotifications } from "../hooks/usePushNotifications";
 
 function AppShell() {
-  const { userId } = useAuth();
-  usePushNotifications(userId);
+  // const { userId } = useAuth();
+  // usePushNotifications(userId);
 
   return (
     <CartProvider>

@@ -39,23 +39,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const restoreSession = async () => {
     try {
       setIsLoading(true);
-      const [storedUserId, storedToken, storedUser, storedCustomer] = await Promise.all([
+      const [storedUserId, storedToken] = await Promise.all([
         AsyncStorage.getItem('userId'),
         AsyncStorage.getItem('userToken'),
-        AsyncStorage.getItem('userData'),
-        AsyncStorage.getItem('customerData'),
       ]);
 
-      if (storedUserId && storedToken && storedUser) {
-        try {
-          const userData = JSON.parse(storedUser) as AppUser;
-          const customerData = storedCustomer ? (JSON.parse(storedCustomer) as Customer) : null;
-          setUser(userData);
-          setCustomer(customerData);
+      if (storedUserId && storedToken) {
+        const fresh = await getCurrentUserFromSession(storedUserId);
+        if (fresh) {
+          setUser(fresh.user);
+          setCustomer(fresh.customer || null);
           setUserId(storedUserId);
           setUserToken(storedToken);
           setIsAuthenticated(true);
-        } catch {
+          await Promise.all([
+            AsyncStorage.setItem('userData', JSON.stringify(fresh.user)),
+            AsyncStorage.setItem(
+              'customerData',
+              fresh.customer ? JSON.stringify(fresh.customer) : '',
+            ),
+          ]);
+        } else {
           await clearStoredSession();
         }
       } else {
