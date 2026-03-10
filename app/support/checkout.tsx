@@ -73,7 +73,7 @@ export default function CheckoutScreen() {
     () => items.reduce((s, i) => s + i.quantity, 0),
     [items],
   );
-  const { platformFee, handlingFee, convFee, packagingFee, deliveryFee, projected } = useMemo(
+  const { platformFee, handlingFee, convFee, deliveryFee, projected } = useMemo(
     () => calcOrderTotal(subtotal, totalItems, maxDistance),
     [subtotal, totalItems, maxDistance],
   );
@@ -261,7 +261,6 @@ export default function CheckoutScreen() {
           <BillRow label="Platform fee" value={platformFee} />
           <BillRow label="Handling fee" value={handlingFee} />
           {convFee > 0 && <BillRow label="Convenience fee" value={convFee} />}
-          {packagingFee > 0 && <BillRow label="Packaging fee" value={packagingFee} />}
           <BillRow label={`Delivery fee (${maxDistance.toFixed(1)} km)`} value={deliveryFee} />
           {appliedCoupon && (
             <BillRow label={`Discount (${appliedCoupon.code})`} value={-discount} highlight />

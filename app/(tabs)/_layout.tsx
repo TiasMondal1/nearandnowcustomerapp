@@ -1,10 +1,14 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
+import { useCart } from "../../context/CartContext";
 
 const PRIMARY = "#059669";
 const BG = "#ffffff";
 
 export default function TabLayout() {
+  const { items } = useCart();
+  const cartItemCount = items.reduce((sum, item) => sum + item.quantity, 0);
+
   return (
     <Tabs
       screenOptions={{
@@ -89,6 +93,7 @@ export default function TabLayout() {
           tabBarIcon: ({ color, size }) => (
             <MaterialCommunityIcons name="cart-outline" size={size} color={color} />
           ),
+          tabBarBadge: cartItemCount > 0 ? cartItemCount : undefined,
         }}
       />
     </Tabs>

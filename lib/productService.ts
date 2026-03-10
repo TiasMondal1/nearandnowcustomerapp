@@ -44,7 +44,7 @@ function chunk<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
-async function getNearbyStoreIds(lat: number, lng: number, radiusKm = 50): Promise<string[]> {
+async function getNearbyStoreIds(lat: number, lng: number, radiusKm = 4): Promise<string[]> {
   try {
     const { data: storeIds, error } = await supabaseAdmin.rpc('get_nearby_store_ids', {
       cust_lat: lat,
@@ -147,7 +147,7 @@ export async function getAllProducts(options?: {
   lng?: number;
   radiusKm?: number;
 }): Promise<Product[]> {
-  const { lat, lng, radiusKm = 50 } = options || {};
+  const { lat, lng, radiusKm = 4 } = options || {};
   const nearbyStoreIds =
     lat != null && lng != null ? await getNearbyStoreIds(lat, lng, radiusKm) : null;
   const storeIdsToUse = nearbyStoreIds?.length ? nearbyStoreIds : null;
@@ -159,7 +159,7 @@ export async function getProductsByCategory(
   categoryName: string,
   options?: { lat?: number; lng?: number; radiusKm?: number },
 ): Promise<Product[]> {
-  const { lat, lng, radiusKm = 50 } = options || {};
+  const { lat, lng, radiusKm = 4 } = options || {};
   const nearbyStoreIds =
     lat != null && lng != null ? await getNearbyStoreIds(lat, lng, radiusKm) : null;
   const storeIdsToUse = nearbyStoreIds?.length ? nearbyStoreIds : null;
@@ -172,7 +172,7 @@ export async function searchProducts(
   query: string,
   options?: { lat?: number; lng?: number; radiusKm?: number },
 ): Promise<Product[]> {
-  const { lat, lng, radiusKm = 50 } = options || {};
+  const { lat, lng, radiusKm = 4 } = options || {};
   const nearbyStoreIds =
     lat != null && lng != null ? await getNearbyStoreIds(lat, lng, radiusKm) : null;
   const storeIdsToUse = nearbyStoreIds?.length ? nearbyStoreIds : null;

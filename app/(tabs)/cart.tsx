@@ -30,7 +30,7 @@ export default function CartScreen() {
     () => items.reduce((sum, i) => sum + i.quantity, 0),
     [items],
   );
-  const { platformFee, handlingFee, convFee, packagingFee, deliveryFee, projected } = useMemo(
+  const { platformFee, handlingFee, convFee, deliveryFee, projected } = useMemo(
     () => calcOrderTotal(subtotal, totalItems),
     [subtotal, totalItems],
   );
@@ -87,10 +87,6 @@ export default function CartScreen() {
                     </TouchableOpacity>
                   </View>
                   <Text style={styles.billValue}>₹{convFee}</Text>
-                </View>
-                <View style={styles.billRow}>
-                  <Text style={styles.billLabel}>Packaging fee</Text>
-                  <Text style={styles.billValue}>₹{packagingFee}</Text>
                 </View>
                 <View style={styles.billRow}>
                   <Text style={styles.billLabel}>Delivery fee</Text>
@@ -181,9 +177,6 @@ export default function CartScreen() {
               <Text style={styles.modalDesc}>Order below ₹100 → ₹60</Text>
               <Text style={styles.modalDesc}>Order ₹100–₹300 → ₹30</Text>
               <Text style={styles.modalDesc}>Order above ₹300 → Free</Text>
-              <View style={styles.divider} />
-              <Text style={styles.modalSectionTitle}>Packaging Fee</Text>
-              <Text style={styles.modalDesc}>₹5 per 3 items (rounded up)</Text>
               <View style={styles.divider} />
               <Text style={styles.modalSectionTitle}>Delivery Fee (Distance-based)</Text>
               <Text style={styles.modalDesc}>0-1 km → ₹15</Text>

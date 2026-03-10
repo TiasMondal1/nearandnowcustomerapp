@@ -16,11 +16,6 @@ export function calcConvFee(subtotal: number): number {
   return 0;
 }
 
-export function calcPackagingFee(totalItems: number): number {
-  if (totalItems === 0) return 0;
-  return Math.ceil(totalItems / 3) * 5;
-}
-
 export function calcOrderTotal(
   subtotal: number,
   totalItems: number,
@@ -30,7 +25,6 @@ export function calcOrderTotal(
   platformFee: number;
   handlingFee: number;
   convFee: number;
-  packagingFee: number;
   deliveryFee: number;
   projected: number;
   finalPayable: number;
@@ -38,9 +32,8 @@ export function calcOrderTotal(
   const platformFee = PLATFORM_FEE;
   const handlingFee = HANDLING_FEE;
   const convFee = calcConvFee(subtotal);
-  const packagingFee = calcPackagingFee(totalItems);
   const deliveryFee = calcDeliveryFee(distanceKm);
-  const projected = subtotal + platformFee + handlingFee + convFee + packagingFee + deliveryFee;
+  const projected = subtotal + platformFee + handlingFee + convFee + deliveryFee;
   const finalPayable = Math.max(projected - discount, 0);
-  return { platformFee, handlingFee, convFee, packagingFee, deliveryFee, projected, finalPayable };
+  return { platformFee, handlingFee, convFee, deliveryFee, projected, finalPayable };
 }
