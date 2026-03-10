@@ -167,7 +167,7 @@ function MenuItem({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
+    backgroundColor: "rgba(0,0,0,0.55)",
     justifyContent: "flex-end",
   },
   menuCard: {
@@ -176,6 +176,11 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 28,
     maxHeight: "85%",
     paddingBottom: 40,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 20,
   },
   header: {
     flexDirection: "row",
@@ -209,6 +214,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     margin: 20,
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: C.border,
   },
   avatarFallback: {
     width: 60,
@@ -217,6 +224,11 @@ const styles = StyleSheet.create({
     backgroundColor: C.primary,
     justifyContent: "center",
     alignItems: "center",
+    shadowColor: C.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
   },
   avatarText: { color: "#fff", fontSize: 24, fontWeight: "900" },
   name: { color: C.text, fontSize: 17, fontWeight: "800" },
@@ -228,6 +240,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: C.border,
     overflow: "hidden",
+    shadowColor: C.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 3,
   },
   menuItem: {
     flexDirection: "row",
@@ -258,8 +275,13 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: "#fca5a5",
+    shadowColor: C.danger,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
   },
   logoutText: { color: C.danger, fontWeight: "800", fontSize: 15 },
 });

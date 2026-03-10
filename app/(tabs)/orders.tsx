@@ -40,14 +40,22 @@ export default function OrdersScreen() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchOrders = useCallback(async (isRefresh = false) => {
     try {
-      if (!userId) return;
+      if (!userId) {
+        setOrders([]);
+        setLoading(false);
+        return;
+      }
       if (!isRefresh) setLoading(true);
       const data = await getUserOrders(userId);
       setOrders(data);
-    } catch {
+      setError(null);
+    } catch (err) {
+      console.error("Failed to fetch orders:", err);
+      setError("Failed to load orders. Please try again.");
       setOrders([]);
     } finally {
       setLoading(false);
@@ -140,7 +148,29 @@ export default function OrdersScreen() {
         <View style={styles.header}>
           <Text style={styles.headerTitle}>My Orders</Text>
         </View>
-        <ActivityIndicator size="large" color={C.primary} style={{ marginTop: 40 }} />
+        <View style={styles.centerContainer}>
+          <ActivityIndicator size="large" color={C.primary} />
+          <Text style={styles.loadingText}>Loading your orders...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (error && orders.length === 0) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>My Orders</Text>
+        </View>
+        <View style={styles.centerContainer}>
+          <MaterialCommunityIcons name="alert-circle-outline" size={64} color={C.danger} />
+          <Text style={styles.errorTitle}>Connection Error</Text>
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity style={styles.retryBtn} onPress={() => fetchOrders()}>
+            <MaterialCommunityIcons name="refresh" size={18} color="#fff" />
+            <Text style={styles.retryText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
     );
   }
@@ -201,6 +231,50 @@ const styles = StyleSheet.create({
   headerTitle: { color: C.text, fontSize: 22, fontWeight: "900" },
   orderCount: { color: C.textSub, fontSize: 13, fontWeight: "600" },
 
+  centerContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 32,
+  },
+
+  loadingText: {
+    color: C.textSub,
+    fontSize: 14,
+  },
+
+  errorTitle: {
+    color: C.text,
+    fontSize: 17,
+    fontWeight: "800",
+    marginTop: 12,
+  },
+
+  errorText: {
+    color: C.textSub,
+    fontSize: 14,
+    textAlign: "center",
+    lineHeight: 20,
+  },
+
+  retryBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 16,
+    backgroundColor: C.primary,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+
+  retryText: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 14,
+  },
+
   list: { paddingTop: 14, paddingBottom: 110 },
 
   card: {
@@ -212,10 +286,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: C.border,
     shadowColor: C.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 4,
   },
   cardHeader: {
     flexDirection: "row",
@@ -255,6 +329,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 10,
+    shadowColor: C.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
   },
   invoiceBtn: {
     backgroundColor: C.success,

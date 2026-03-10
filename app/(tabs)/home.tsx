@@ -19,21 +19,18 @@ import { C } from "../../constants/colors";
 import { useAuth } from "../../context/AuthContext";
 import { useCart } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
+import { getAllCategories, type Category } from "../../lib/categoryService";
 import { getAllProducts, type Product } from "../../lib/productService";
 
-const CATEGORIES = [
-  { key: "All", icon: "apps" },
-  { key: "Fruits", icon: "food-apple" },
-  { key: "Vegetables", icon: "food-variant" },
-  { key: "Dairy", icon: "cow" },
-  { key: "Snacks", icon: "cookie" },
-  { key: "Beverages", icon: "cup" },
-  { key: "Staples", icon: "sack" },
+const FALLBACK_ICONS = [
+  "apple", "leaf", "cow", "cookie", 
+  "cup", "sack", "face-woman-shimmer", "home-outline"
 ];
 
 export default function HomeScreen() {
   const [loading, setLoading] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [activeCategory, setActiveCategory] = useState("All");
   const [refreshing, setRefreshing] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -45,16 +42,22 @@ export default function HomeScreen() {
   const locationRef = useRef(location);
   useEffect(() => { locationRef.current = location; }, [location]);
 
-  const fetchProducts = useCallback(async (isRefresh = false) => {
+  const fetchData = useCallback(async (isRefresh = false) => {
     try {
       if (!isRefresh) setLoading(true);
       const loc = locationRef.current;
-      const data = await getAllProducts(
-        loc ? { lat: loc.latitude, lng: loc.longitude } : undefined,
-      );
-      setProducts(data);
-    } catch {
+      const [productsData, categoriesData] = await Promise.all([
+        getAllProducts(
+          loc ? { lat: loc.latitude, lng: loc.longitude } : undefined,
+        ),
+        getAllCategories(),
+      ]);
+      setProducts(productsData);
+      setCategories(categoriesData);
+    } catch (error) {
+      console.error("Failed to fetch data:", error);
       setProducts([]);
+      setCategories([]);
     } finally {
       setLoading(false);
     }
@@ -62,16 +65,16 @@ export default function HomeScreen() {
 
   useEffect(() => {
     const task = InteractionManager.runAfterInteractions(() => {
-      fetchProducts();
+      fetchData();
     });
     return () => task.cancel();
-  }, [fetchProducts]);
+  }, [fetchData]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchProducts(true);
+    await fetchData(true);
     setRefreshing(false);
-  }, [fetchProducts]);
+  }, [fetchData]);
 
   const filteredProducts = useMemo(() => {
     if (activeCategory === "All") return products;
@@ -170,28 +173,39 @@ export default function HomeScreen() {
             </TouchableOpacity>
 
             <FlatList
-              data={CATEGORIES}
+              data={[{ id: 'all', name: 'All', icon: 'apps' }, ...categories]}
               horizontal
               showsHorizontalScrollIndicator={false}
-              keyExtractor={(c) => c.key}
+              keyExtractor={(c) => c.id}
               contentContainerStyle={styles.categorySlider}
-              renderItem={({ item }) => {
-                const active = activeCategory === item.key;
+              renderItem={({ item, index }) => {
+                const active = activeCategory === item.name;
+                const icon = item.icon || FALLBACK_ICONS[(index - 1) % FALLBACK_ICONS.length];
+                
                 return (
                   <TouchableOpacity
-                    onPress={() => setActiveCategory(item.key)}
+                    onPress={() => setActiveCategory(item.name)}
                     style={[styles.categoryIcon, active && styles.categoryIconActive]}
                     activeOpacity={0.7}
                   >
-                    <View style={[styles.categoryIconCircle, active && styles.categoryIconCircleActive]}>
-                      <MaterialCommunityIcons
-                        name={item.icon as any}
-                        size={24}
-                        color={active ? "#fff" : C.primary}
-                      />
-                    </View>
+                    {item.id === 'all' || !item.image_url ? (
+                      <View style={[styles.categoryIconCircle, active && styles.categoryIconCircleActive]}>
+                        <MaterialCommunityIcons
+                          name={icon as any}
+                          size={24}
+                          color={active ? "#fff" : C.primary}
+                        />
+                      </View>
+                    ) : (
+                      <View style={[styles.categoryIconCircle, active && styles.categoryIconCircleActive]}>
+                        <Image 
+                          source={{ uri: item.image_url }} 
+                          style={styles.categoryImage}
+                        />
+                      </View>
+                    )}
                     <Text style={[styles.categoryLabel, active && styles.categoryLabelActive]}>
-                      {item.key}
+                      {item.name}
                     </Text>
                   </TouchableOpacity>
                 );
@@ -426,10 +440,10 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: C.border,
     shadowColor: C.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 4,
   },
   searchPlaceholder: { color: C.textLight, fontSize: 15, flex: 1 },
 
@@ -453,10 +467,15 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderWidth: 2,
     borderColor: C.primaryLight,
+    overflow: "hidden",
   },
   categoryIconCircleActive: {
     backgroundColor: C.primary,
     borderColor: C.primary,
+  },
+  categoryImage: {
+    width: "100%",
+    height: "100%",
   },
   categoryLabel: {
     fontSize: 12,
@@ -490,9 +509,9 @@ const styles = StyleSheet.create({
     borderColor: C.border,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 5,
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    elevation: 6,
     marginBottom: 4,
   },
   cardOutOfStock: { opacity: 0.65 },
@@ -517,15 +536,15 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3,
-    elevation: 4,
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
   },
   discountText: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 0.3 },
   outOfStockOverlay: {
     position: "absolute",
     inset: 0,
-    backgroundColor: "rgba(0,0,0,0.35)",
+    backgroundColor: "rgba(0,0,0,0.4)",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -569,10 +588,10 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     backgroundColor: C.primary,
     shadowColor: C.primary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
+    elevation: 5,
   },
   addText: { fontSize: 13, color: "#fff", fontWeight: "900", letterSpacing: 0.8 },
   soldOutBtn: {
