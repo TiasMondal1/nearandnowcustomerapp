@@ -178,7 +178,6 @@ export default function HomeScreen() {
                   color="#fff"
                 />
               </View>
-              <Text style={styles.profileLabel}>Profile</Text>
             </Pressable>
           </Animated.View>
         </Animated.View>
@@ -566,9 +565,8 @@ const styles = StyleSheet.create({
   profileBtn: {
     padding: 4,
     marginRight: 8,
-    flexDirection: "column",
     alignItems: "center",
-    gap: 4,
+    justifyContent: "center",
   },
   profileAvatar: {
     width: 40,
@@ -580,53 +578,35 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: C.primaryLight,
   },
-  profileLabel: {
-    fontSize: 11,
-    color: C.textSub,
-    fontWeight: "700",
-  },
 
   locationBar: {
     paddingHorizontal: 20,
     paddingTop: 0,
-    paddingBottom: 8,
+    paddingBottom: 12,
     backgroundColor: "transparent",
   },
   locationPill: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 16,
-    backgroundColor: C.card,
-    borderWidth: 1,
-    borderColor: C.border,
-    shadowColor: C.shadow,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 0,
   },
   locationIconWrap: {
-    width: 34,
-    height: 34,
-    borderRadius: 12,
-    backgroundColor: C.primaryXLight,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: C.primaryLight,
   },
   locationChevronWrap: {
-    width: 30,
-    height: 30,
+    width: 24,
+    height: 24,
     borderRadius: 12,
-    backgroundColor: C.bgSoft,
+    backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: C.border,
   },
   locationLabel: {
     fontSize: 11,
@@ -636,10 +616,10 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   locationTitle: {
-    fontSize: 14,
+    fontSize: 15,
     color: C.text,
-    fontWeight: "700",
-    marginTop: 2,
+    fontWeight: "800",
+    marginTop: 1,
   },
   locationAddress: {
     fontSize: 12,
