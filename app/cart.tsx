@@ -2,20 +2,20 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useMemo, useState } from "react";
 import {
-    FlatList,
-    Image,
-    Modal,
-    Pressable,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  FlatList,
+  Image,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { C } from "../../constants/colors";
-import { calcOrderTotal } from "../../constants/fees";
-import { useCart } from "../../context/CartContext";
+import { C } from "../constants/colors";
+import { calcOrderTotal } from "../constants/fees";
+import { useCart } from "../context/CartContext";
 
 export default function CartScreen() {
   const { items, updateQty, removeItem, clearCart } = useCart();
@@ -36,7 +36,7 @@ export default function CartScreen() {
   );
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
+    <SafeAreaView style={styles.safe} edges={["top"]}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Your Cart</Text>
         {items.length > 0 ? (
@@ -140,7 +140,7 @@ export default function CartScreen() {
             )}
           />
 
-          <View style={[styles.checkoutBar, { paddingBottom: Math.max(insets.bottom, 16) + 60 }]}>
+          <View style={[styles.checkoutBar, { paddingBottom: Math.max(insets.bottom, 16) }]}>
             <View>
               <Text style={styles.projectedLabel}>Estimated total</Text>
               <Text style={styles.projectedAmount}>₹{projected.toFixed(2)}</Text>
@@ -148,7 +148,7 @@ export default function CartScreen() {
             <TouchableOpacity
               style={styles.checkoutBtn}
               activeOpacity={0.9}
-              onPress={() => router.push("../support/checkout")}
+              onPress={() => router.push("/support/checkout")}
             >
               <Text style={styles.checkoutText}>Checkout</Text>
               <MaterialCommunityIcons name="arrow-right" size={18} color="#fff" />
@@ -221,7 +221,7 @@ const styles = StyleSheet.create({
   },
   shopBtnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
 
-  listContent: { paddingTop: 12, paddingBottom: 200, paddingHorizontal: 16 },
+  listContent: { paddingTop: 12, paddingBottom: 140, paddingHorizontal: 16 },
 
   itemCard: {
     flexDirection: "row",
@@ -238,9 +238,9 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 4,
   },
-  image: { 
-    width: 68, 
-    height: 68, 
+  image: {
+    width: 68,
+    height: 68,
     borderRadius: 10,
   },
   imagePlaceholder: {

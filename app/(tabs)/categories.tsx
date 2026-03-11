@@ -1,21 +1,23 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-    ActivityIndicator,
-    FlatList,
-    Image,
-    RefreshControl,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  FlatList,
+  Image,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { C } from "../../constants/colors";
+import { useLocation } from "../../context/LocationContext";
 import { getAllCategories, type Category } from "../../lib/categoryService";
+import { getAllProducts } from "../../lib/productService";
 
 const FALLBACK_COLORS = [
   "#FF6B6B", "#51CF66", "#FFD43B", "#845EF7", 
@@ -28,31 +30,54 @@ const FALLBACK_ICONS = [
 ];
 
 export default function CategoriesScreen() {
+  const { location } = useLocation();
   const [categories, setCategories] = useState<Category[]>([]);
+  const [products, setProducts] = useState<{ category?: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetchCategories = useCallback(async (isRefresh = false) => {
+  const fetchData = useCallback(async (isRefresh = false) => {
     try {
       if (!isRefresh) setLoading(true);
-      const data = await getAllCategories();
-      setCategories(data);
+      const loc = location ?? undefined;
+      const [categoriesData, productsData] = await Promise.all([
+        getAllCategories(),
+        getAllProducts(
+          loc ? { lat: loc.latitude, lng: loc.longitude } : undefined,
+        ),
+      ]);
+      setCategories(categoriesData);
+      setProducts(productsData);
     } catch (error) {
-      console.error("Failed to fetch categories:", error);
+      console.error("Failed to fetch data:", error);
+      setCategories([]);
+      setProducts([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [location?.latitude, location?.longitude]);
 
   useEffect(() => {
-    fetchCategories();
-  }, [fetchCategories]);
+    fetchData();
+  }, [fetchData]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    fetchCategories(true);
-  }, [fetchCategories]);
+    fetchData(true);
+  }, [fetchData]);
+
+  const categoriesForProducts = useMemo(() => {
+    const categoryNames = new Set(
+      products
+        .map((p) => p.category?.trim())
+        .filter((name): name is string => !!name)
+        .map((name) => name.toLowerCase()),
+    );
+    return categories.filter((cat) =>
+      categoryNames.has(cat.name?.toLowerCase() ?? ""),
+    );
+  }, [products, categories]);
 
   if (loading) {
     return (
@@ -77,7 +102,7 @@ export default function CategoriesScreen() {
       </View>
 
       <FlatList
-        data={categories}
+        data={categoriesForProducts}
         numColumns={2}
         keyExtractor={(item) => item.id}
         columnWrapperStyle={styles.row}

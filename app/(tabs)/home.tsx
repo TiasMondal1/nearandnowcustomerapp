@@ -23,6 +23,7 @@ import {
 import Animated, {
   FadeIn,
   FadeInDown,
+  FadeInUp,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
@@ -54,6 +55,7 @@ export default function HomeScreen() {
   const [activeCategory, setActiveCategory] = useState("All");
   const [refreshing, setRefreshing] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [hasScrolled, setHasScrolled] = useState(false);
 
   const { location } = useLocation();
   const { addItem, items, updateQty } = useCart();
@@ -104,6 +106,18 @@ export default function HomeScreen() {
     );
   }, [products, activeCategory]);
 
+  const categoriesForProducts = useMemo(() => {
+    const categoryNames = new Set(
+      products
+        .map((p) => p.category?.trim())
+        .filter((name): name is string => !!name)
+        .map((name) => name.toLowerCase()),
+    );
+    return categories.filter((cat) =>
+      categoryNames.has(cat.name?.toLowerCase() ?? ""),
+    );
+  }, [products, categories]);
+
   const profileScale = useSharedValue(1);
   const locationScale = useSharedValue(1);
 
@@ -114,6 +128,18 @@ export default function HomeScreen() {
   const locationAnimatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: locationScale.value }],
   }));
+
+  const handleScroll = useCallback(
+    (event: any) => {
+      const offsetY = event?.nativeEvent?.contentOffset?.y ?? 0;
+      if (!hasScrolled && offsetY > 24) {
+        setHasScrolled(true);
+      } else if (hasScrolled && offsetY <= 24) {
+        setHasScrolled(false);
+      }
+    },
+    [hasScrolled],
+  );
 
   if (loading) {
     return (
@@ -182,68 +208,83 @@ export default function HomeScreen() {
           </Animated.View>
         </Animated.View>
 
-        <Animated.View
-          entering={FadeInDown.delay(90).duration(420).springify()}
-          style={styles.locationBar}
-        >
-          <Animated.View style={locationAnimatedStyle}>
-            <Pressable
-              onPress={() => router.push("/location")}
-              onPressIn={() => {
-                locationScale.value = withSpring(0.985, {
-                  damping: 18,
-                  stiffness: 220,
-                });
-              }}
-              onPressOut={() => {
-                locationScale.value = withSpring(1, {
-                  damping: 18,
-                  stiffness: 220,
-                });
-              }}
-              style={({ pressed }) => [
-                styles.locationPill,
-                pressed && { opacity: 0.92 },
-              ]}
-            >
-              <View style={styles.locationIconWrap}>
-                <MaterialCommunityIcons
-                  name="map-marker"
-                  size={18}
-                  color={C.primary}
-                />
-              </View>
+        {!hasScrolled && (
+          <Animated.View
+            entering={FadeInDown.delay(90).duration(420).springify()}
+            style={styles.locationBar}
+          >
+            <Animated.View style={locationAnimatedStyle}>
+              <Pressable
+                onPress={() => router.push("/location")}
+                onPressIn={() => {
+                  locationScale.value = withSpring(0.985, {
+                    damping: 18,
+                    stiffness: 220,
+                  });
+                }}
+                onPressOut={() => {
+                  locationScale.value = withSpring(1, {
+                    damping: 18,
+                    stiffness: 220,
+                  });
+                }}
+                style={({ pressed }) => [
+                  styles.locationPill,
+                  pressed && { opacity: 0.92 },
+                ]}
+              >
+                <View style={styles.locationIconWrap}>
+                  <MaterialCommunityIcons
+                    name="map-marker"
+                    size={18}
+                    color={C.primary}
+                  />
+                </View>
 
-              <View style={{ flex: 1 }}>
-                <Text style={styles.locationLabel}>Deliver to</Text>
-                {location ? (
-                  <>
+                <View style={{ flex: 1 }}>
+                  {location ? (
                     <Text style={styles.locationTitle} numberOfLines={1}>
-                      {location.label || "Selected location"}
+                      {location.address
+                        ? `${(location.label || "Home").toUpperCase()} - ${location.address}`
+                        : location.label || "Selected location"}
                     </Text>
-                    {!!location.address && (
-                      <Text style={styles.locationAddress} numberOfLines={1}>
-                        {location.address}
-                      </Text>
-                    )}
-                  </>
-                ) : (
-                  <Text style={styles.locationTitle} numberOfLines={1}>
-                    Select your location
-                  </Text>
-                )}
-              </View>
+                  ) : (
+                    <Text style={styles.locationTitle} numberOfLines={1}>
+                      Select your location
+                    </Text>
+                  )}
+                </View>
 
-              <View style={styles.locationChevronWrap}>
-                <MaterialCommunityIcons
-                  name="chevron-down"
-                  size={18}
-                  color={C.textSub}
-                />
-              </View>
-            </Pressable>
+                <View style={styles.locationChevronWrap}>
+                  <MaterialCommunityIcons
+                    name="chevron-down"
+                    size={18}
+                    color={C.textSub}
+                  />
+                </View>
+              </Pressable>
+            </Animated.View>
           </Animated.View>
-        </Animated.View>
+        )}
+
+        {hasScrolled && (
+          <View style={styles.stickySearchContainer}>
+            <TouchableOpacity
+              style={styles.searchBar}
+              activeOpacity={0.9}
+              onPress={() => router.push("../support/search")}
+            >
+              <MaterialCommunityIcons
+                name="magnify"
+                size={20}
+                color={C.textLight}
+              />
+              <Text style={styles.searchPlaceholder}>
+                Search groceries, dairy, snacks…
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </Animated.View>
 
       <FlatList
@@ -259,6 +300,8 @@ export default function HomeScreen() {
           />
         }
         removeClippedSubviews={true}
+        onScroll={handleScroll}
+        scrollEventThrottle={16}
         keyboardShouldPersistTaps="handled"
         initialNumToRender={6}
         maxToRenderPerBatch={8}
@@ -284,7 +327,7 @@ export default function HomeScreen() {
             </TouchableOpacity>
 
             <FlatList
-              data={[{ id: "all", name: "All", icon: "apps" }, ...categories]}
+              data={[{ id: "all", name: "All", icon: "apps" }, ...categoriesForProducts]}
               horizontal
               showsHorizontalScrollIndicator={false}
               keyExtractor={(c) => c.id}
@@ -485,6 +528,35 @@ export default function HomeScreen() {
         }}
       />
 
+      {items.length > 0 && (
+        <Animated.View
+          entering={FadeInUp.duration(320).springify()}
+          style={styles.cartPillWrap}
+        >
+          <Pressable
+            onPress={() => router.push("/cart")}
+            style={({ pressed }) => [
+              styles.cartPill,
+              pressed && { opacity: 0.95 },
+            ]}
+          >
+            <View style={styles.cartPillContent}>
+              <Text style={styles.cartTitle} numberOfLines={1}>
+                View cart
+              </Text>
+              <Text style={styles.cartSubtitle} numberOfLines={1}>
+                {items.reduce((sum, it) => sum + it.quantity, 0)} item
+                {items.reduce((sum, it) => sum + it.quantity, 0) === 1
+                  ? ""
+                  : "s"}
+              </Text>
+            </View>
+
+            <MaterialCommunityIcons name="arrow-right" size={18} color="#fff" />
+          </Pressable>
+        </Animated.View>
+      )}
+
       <ProfileMenu
         visible={showProfileMenu}
         onClose={() => setShowProfileMenu(false)}
@@ -627,6 +699,58 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     marginTop: 2,
     lineHeight: 16,
+  },
+
+  stickySearchContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    paddingTop: 4,
+    backgroundColor: C.bg,
+  },
+
+  cartPillWrap: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 112,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 28,
+    pointerEvents: "box-none",
+  },
+  cartPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "center",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 999,
+    backgroundColor: C.info,
+    shadowColor: C.shadow,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 8,
+    maxWidth: 140,
+  },
+  cartPillContent: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cartTitle: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  cartSubtitle: {
+    color: "rgba(255,255,255,0.9)",
+    fontSize: 12,
+    marginTop: 2,
+    fontWeight: "600",
+    textAlign: "center",
   },
 
   searchBar: {

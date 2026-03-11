@@ -1,15 +1,12 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useCart } from "../../context/CartContext";
 
 const PRIMARY = "#059669";
 const BG = "#ffffff";
 
 export default function TabLayout() {
-  const { items } = useCart();
   const insets = useSafeAreaInsets();
-  const cartItemCount = items.reduce((sum, item) => sum + item.quantity, 0);
   const baseHeight = 60;
   const basePaddingV = 8;
 
@@ -88,17 +85,6 @@ export default function TabLayout() {
               color={color}
             />
           ),
-        }}
-      />
-
-      <Tabs.Screen
-        name="cart"
-        options={{
-          title: "Cart",
-          tabBarIcon: ({ color, size }) => (
-            <MaterialCommunityIcons name="cart-outline" size={size} color={color} />
-          ),
-          tabBarBadge: cartItemCount > 0 ? cartItemCount : undefined,
         }}
       />
     </Tabs>
