@@ -1,5 +1,6 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCart } from "../../context/CartContext";
 
 const PRIMARY = "#059669";
@@ -7,7 +8,10 @@ const BG = "#ffffff";
 
 export default function TabLayout() {
   const { items } = useCart();
+  const insets = useSafeAreaInsets();
   const cartItemCount = items.reduce((sum, item) => sum + item.quantity, 0);
+  const baseHeight = 60;
+  const basePaddingV = 8;
 
   return (
     <Tabs
@@ -18,10 +22,11 @@ export default function TabLayout() {
           backgroundColor: BG,
           borderTopWidth: 1,
           borderTopColor: "#e5e7eb",
-          height: 60,
-          paddingBottom: 8,
-          paddingTop: 8,
+          height: baseHeight + insets.bottom,
+          paddingBottom: Math.max(insets.bottom, basePaddingV),
+          paddingTop: basePaddingV,
           position: "absolute",
+          bottom: 0,
           shadowColor: "#000",
           shadowOffset: { width: 0, height: -2 },
           shadowOpacity: 0.1,

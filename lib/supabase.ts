@@ -10,9 +10,28 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   realtime: { params: { eventsPerSecond: 10 } },
 });
 
-export const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY, {
+export const supabaseAdmin = createClient(
+  SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY,
+  {
   auth: {
     autoRefreshToken: false,
     persistSession: false,
   },
-});
+  },
+);
+
+export function assertSupabaseConfigured() {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    throw new Error('Supabase is not configured. Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY.');
+  }
+}
+
+export function assertSupabaseAdminConfigured() {
+  assertSupabaseConfigured();
+  if (!SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error(
+      'Supabase admin key is missing. Set EXPO_PUBLIC_SUPABASE_SERVICE_ROLE_KEY (note: do not ship this in a production mobile app).',
+    );
+  }
+}

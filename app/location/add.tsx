@@ -248,6 +248,9 @@ export default function AddLocationScreen() {
       });
 
       router.back();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to save address";
+      Alert.alert("Saved addresses", message);
     } finally {
       setSaving(false);
     }

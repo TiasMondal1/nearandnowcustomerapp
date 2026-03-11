@@ -1,30 +1,50 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
-    ActivityIndicator,
-    FlatList,
-    Image,
-    InteractionManager,
-    RefreshControl,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  FlatList,
+  Image,
+  InteractionManager,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
+import Animated, {
+  FadeIn,
+  FadeInDown,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import ProfileMenu from "../../components/ProfileMenu";
 import { C } from "../../constants/colors";
-import { useAuth } from "../../context/AuthContext";
 import { useCart } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
 import { getAllCategories, type Category } from "../../lib/categoryService";
 import { getAllProducts, type Product } from "../../lib/productService";
 
 const FALLBACK_ICONS = [
-  "apple", "leaf", "cow", "cookie", 
-  "cup", "sack", "face-woman-shimmer", "home-outline"
+  "apple",
+  "leaf",
+  "cow",
+  "cookie",
+  "cup",
+  "sack",
+  "face-woman-shimmer",
+  "home-outline",
 ];
 
 export default function HomeScreen() {
@@ -37,10 +57,11 @@ export default function HomeScreen() {
 
   const { location } = useLocation();
   const { addItem, items, updateQty } = useCart();
-  const { user } = useAuth();
 
   const locationRef = useRef(location);
-  useEffect(() => { locationRef.current = location; }, [location]);
+  useEffect(() => {
+    locationRef.current = location;
+  }, [location]);
 
   const fetchData = useCallback(async (isRefresh = false) => {
     try {
@@ -83,6 +104,17 @@ export default function HomeScreen() {
     );
   }, [products, activeCategory]);
 
+  const profileScale = useSharedValue(1);
+  const locationScale = useSharedValue(1);
+
+  const profileAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: profileScale.value }],
+  }));
+
+  const locationAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: locationScale.value }],
+  }));
+
   if (loading) {
     return (
       <SafeAreaView style={styles.center}>
@@ -94,52 +126,126 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <View style={styles.appHeader}>
-        <View style={styles.appBranding}>
-          <Image
-            source={require("../../Logo.png")}
-            style={styles.logoImage}
-            resizeMode="contain"
-          />
-          <Text style={styles.appName}>near & now</Text>
-        </View>
-        <TouchableOpacity
-          style={styles.profileBtn}
-          onPress={() => setShowProfileMenu(true)}
-          activeOpacity={0.8}
-        >
-          <View style={styles.profileAvatar}>
-            <Text style={styles.profileInitial}>
-              {user?.name?.charAt(0)?.toUpperCase() ?? "?"}
-            </Text>
-          </View>
-        </TouchableOpacity>
-      </View>
+      <Animated.View entering={FadeIn.duration(350)} style={styles.topWrap}>
+        <LinearGradient
+          colors={[C.primaryXLight, C.bg]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.topGradient}
+        />
 
-      <View style={styles.locationBar}>
-        <TouchableOpacity
-          onPress={() => router.push("/location")}
-          style={styles.locationContent}
-          activeOpacity={0.7}
+        <Animated.View
+          entering={FadeInDown.duration(420).springify()}
+          style={styles.appHeader}
         >
-          <MaterialCommunityIcons
-            name="map-marker"
-            size={20}
-            color={C.primary}
-          />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.locationLabel}>Deliver to</Text>
-            <Text style={styles.locationAddress} numberOfLines={1}>
-              {location?.label ?? "Select your location"}
-            </Text>
+          <View style={styles.appBranding}>
+            <View style={styles.logoWrap}>
+              <Image
+                source={require("../../Logo.png")}
+                style={styles.logoImage}
+                resizeMode="contain"
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.appName}>Near & Now</Text>
+              <Text style={styles.appTagline} numberOfLines={1}>
+                Digital dukaan, local dil se
+              </Text>
+            </View>
           </View>
-          <MaterialCommunityIcons
-            name="chevron-down"
-            size={20}
-            color={C.textSub}
-          />
-        </TouchableOpacity>
-      </View>
+
+          <Animated.View style={profileAnimatedStyle}>
+            <Pressable
+              onPress={() => setShowProfileMenu(true)}
+              onPressIn={() => {
+                profileScale.value = withSpring(0.96, {
+                  damping: 16,
+                  stiffness: 220,
+                });
+              }}
+              onPressOut={() => {
+                profileScale.value = withSpring(1, {
+                  damping: 16,
+                  stiffness: 220,
+                });
+              }}
+              style={styles.profileBtn}
+            >
+              <View style={styles.profileAvatar}>
+                <MaterialCommunityIcons
+                  name="account-outline"
+                  size={22}
+                  color="#fff"
+                />
+              </View>
+              <Text style={styles.profileLabel}>Profile</Text>
+            </Pressable>
+          </Animated.View>
+        </Animated.View>
+
+        <Animated.View
+          entering={FadeInDown.delay(90).duration(420).springify()}
+          style={styles.locationBar}
+        >
+          <Animated.View style={locationAnimatedStyle}>
+            <Pressable
+              onPress={() => router.push("/location")}
+              onPressIn={() => {
+                locationScale.value = withSpring(0.985, {
+                  damping: 18,
+                  stiffness: 220,
+                });
+              }}
+              onPressOut={() => {
+                locationScale.value = withSpring(1, {
+                  damping: 18,
+                  stiffness: 220,
+                });
+              }}
+              style={({ pressed }) => [
+                styles.locationPill,
+                pressed && { opacity: 0.92 },
+              ]}
+            >
+              <View style={styles.locationIconWrap}>
+                <MaterialCommunityIcons
+                  name="map-marker"
+                  size={18}
+                  color={C.primary}
+                />
+              </View>
+
+              <View style={{ flex: 1 }}>
+                <Text style={styles.locationLabel}>Deliver to</Text>
+                {location ? (
+                  <>
+                    <Text style={styles.locationTitle} numberOfLines={1}>
+                      {location.label || "Selected location"}
+                    </Text>
+                    {!!location.address && (
+                      <Text style={styles.locationAddress} numberOfLines={1}>
+                        {location.address}
+                      </Text>
+                    )}
+                  </>
+                ) : (
+                  <Text style={styles.locationTitle} numberOfLines={1}>
+                    Select your location
+                  </Text>
+                )}
+              </View>
+
+              <View style={styles.locationChevronWrap}>
+                <MaterialCommunityIcons
+                  name="chevron-down"
+                  size={18}
+                  color={C.textSub}
+                />
+              </View>
+            </Pressable>
+          </Animated.View>
+        </Animated.View>
+      </Animated.View>
 
       <FlatList
         data={filteredProducts}
@@ -168,28 +274,44 @@ export default function HomeScreen() {
               activeOpacity={0.85}
               onPress={() => router.push("../support/search")}
             >
-              <MaterialCommunityIcons name="magnify" size={20} color={C.textLight} />
-              <Text style={styles.searchPlaceholder}>Search groceries, dairy, snacks…</Text>
+              <MaterialCommunityIcons
+                name="magnify"
+                size={20}
+                color={C.textLight}
+              />
+              <Text style={styles.searchPlaceholder}>
+                Search groceries, dairy, snacks…
+              </Text>
             </TouchableOpacity>
 
             <FlatList
-              data={[{ id: 'all', name: 'All', icon: 'apps' }, ...categories]}
+              data={[{ id: "all", name: "All", icon: "apps" }, ...categories]}
               horizontal
               showsHorizontalScrollIndicator={false}
               keyExtractor={(c) => c.id}
               contentContainerStyle={styles.categorySlider}
               renderItem={({ item, index }) => {
                 const active = activeCategory === item.name;
-                const icon = item.icon || FALLBACK_ICONS[(index - 1) % FALLBACK_ICONS.length];
-                
+                const icon =
+                  item.icon ||
+                  FALLBACK_ICONS[(index - 1) % FALLBACK_ICONS.length];
+
                 return (
                   <TouchableOpacity
                     onPress={() => setActiveCategory(item.name)}
-                    style={[styles.categoryIcon, active && styles.categoryIconActive]}
+                    style={[
+                      styles.categoryIcon,
+                      active && styles.categoryIconActive,
+                    ]}
                     activeOpacity={0.7}
                   >
-                    {item.id === 'all' || !item.image_url ? (
-                      <View style={[styles.categoryIconCircle, active && styles.categoryIconCircleActive]}>
+                    {item.id === "all" || !item.image_url ? (
+                      <View
+                        style={[
+                          styles.categoryIconCircle,
+                          active && styles.categoryIconCircleActive,
+                        ]}
+                      >
                         <MaterialCommunityIcons
                           name={icon as any}
                           size={24}
@@ -197,14 +319,24 @@ export default function HomeScreen() {
                         />
                       </View>
                     ) : (
-                      <View style={[styles.categoryIconCircle, active && styles.categoryIconCircleActive]}>
-                        <Image 
-                          source={{ uri: item.image_url }} 
+                      <View
+                        style={[
+                          styles.categoryIconCircle,
+                          active && styles.categoryIconCircleActive,
+                        ]}
+                      >
+                        <Image
+                          source={{ uri: item.image_url }}
                           style={styles.categoryImage}
                         />
                       </View>
                     )}
-                    <Text style={[styles.categoryLabel, active && styles.categoryLabelActive]}>
+                    <Text
+                      style={[
+                        styles.categoryLabel,
+                        active && styles.categoryLabelActive,
+                      ]}
+                    >
                       {item.name}
                     </Text>
                   </TouchableOpacity>
@@ -214,13 +346,20 @@ export default function HomeScreen() {
 
             <Text style={styles.sectionLabel}>
               {activeCategory === "All" ? "All Products" : activeCategory}
-              <Text style={styles.productCount}> ({filteredProducts.length})</Text>
+              <Text style={styles.productCount}>
+                {" "}
+                ({filteredProducts.length})
+              </Text>
             </Text>
           </>
         }
         ListEmptyComponent={
           <View style={styles.empty}>
-            <MaterialCommunityIcons name="store-off-outline" size={56} color={C.textLight} />
+            <MaterialCommunityIcons
+              name="store-off-outline"
+              size={56}
+              color={C.textLight}
+            />
             <Text style={styles.emptyTitle}>
               {location ? "No products found" : "Set your location"}
             </Text>
@@ -244,7 +383,9 @@ export default function HomeScreen() {
           const hasDiscount =
             p.original_price != null && p.original_price > p.price;
           const discountPct = hasDiscount
-            ? Math.round(((p.original_price! - p.price) / p.original_price!) * 100)
+            ? Math.round(
+                ((p.original_price! - p.price) / p.original_price!) * 100,
+              )
             : 0;
 
           return (
@@ -267,7 +408,9 @@ export default function HomeScreen() {
                   )}
                   {hasDiscount && (
                     <View style={styles.discountBadge}>
-                      <Text style={styles.discountText}>{discountPct}% OFF</Text>
+                      <Text style={styles.discountText}>
+                        {discountPct}% OFF
+                      </Text>
                     </View>
                   )}
                   {!p.in_stock && (
@@ -286,7 +429,9 @@ export default function HomeScreen() {
                 <View style={styles.priceRow}>
                   <Text style={styles.priceValue}>₹{p.price}</Text>
                   {hasDiscount && (
-                    <Text style={styles.originalPrice}>₹{p.original_price}</Text>
+                    <Text style={styles.originalPrice}>
+                      ₹{p.original_price}
+                    </Text>
                   )}
                   <Text style={styles.priceUnit}>/{p.unit}</Text>
                 </View>
@@ -323,7 +468,11 @@ export default function HomeScreen() {
                       }
                     >
                       <Text style={styles.addText}>ADD</Text>
-                      <MaterialCommunityIcons name="plus" size={14} color="#fff" />
+                      <MaterialCommunityIcons
+                        name="plus"
+                        size={14}
+                        color="#fff"
+                      />
                     </TouchableOpacity>
                   )
                 ) : (
@@ -357,20 +506,46 @@ const styles = StyleSheet.create({
   loadingText: { color: C.textSub, fontSize: 14 },
   listContent: { paddingBottom: 100, paddingHorizontal: 16 },
 
+  topWrap: {
+    backgroundColor: C.card,
+    // Smooth transition into the content below (no hard divider line)
+    borderBottomWidth: 0,
+    overflow: "visible",
+  },
+  topGradient: {
+    ...StyleSheet.absoluteFillObject,
+  },
   appHeader: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: C.card,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
+    justifyContent: "flex-start",
+    // Keep edges aligned with the location pill (locationBar paddingHorizontal)
+    paddingLeft: 20,
+    paddingRight: 15,
+    paddingTop: 5,
+    paddingBottom: 5,
+    backgroundColor: "transparent",
   },
   appBranding: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
+    flex: 1,
+  },
+  logoWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 16,
+    backgroundColor: C.card,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: C.border,
+    shadowColor: C.shadow,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 4,
   },
   logoImage: {
     width: 36,
@@ -382,8 +557,18 @@ const styles = StyleSheet.create({
     color: C.text,
     letterSpacing: 0.3,
   },
+  appTagline: {
+    marginTop: 2,
+    fontSize: 12,
+    color: C.textSub,
+    fontWeight: "600",
+  },
   profileBtn: {
-    padding: 2,
+    padding: 4,
+    marginRight: 8,
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 4,
   },
   profileAvatar: {
     width: 40,
@@ -395,23 +580,53 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: C.primaryLight,
   },
-  profileInitial: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "900",
+  profileLabel: {
+    fontSize: 11,
+    color: C.textSub,
+    fontWeight: "700",
   },
 
   locationBar: {
-    backgroundColor: C.card,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
+    paddingHorizontal: 20,
+    paddingTop: 0,
+    paddingBottom: 8,
+    backgroundColor: "transparent",
   },
-  locationContent: {
+  locationPill: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    backgroundColor: C.card,
+    borderWidth: 1,
+    borderColor: C.border,
+    shadowColor: C.shadow,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  locationIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    backgroundColor: C.primaryXLight,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: C.primaryLight,
+  },
+  locationChevronWrap: {
+    width: 30,
+    height: 30,
+    borderRadius: 12,
+    backgroundColor: C.bgSoft,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: C.border,
   },
   locationLabel: {
     fontSize: 11,
@@ -420,18 +635,25 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
-  locationAddress: {
+  locationTitle: {
     fontSize: 14,
     color: C.text,
     fontWeight: "700",
     marginTop: 2,
+  },
+  locationAddress: {
+    fontSize: 12,
+    color: C.textSub,
+    fontWeight: "600",
+    marginTop: 2,
+    lineHeight: 16,
   },
 
   searchBar: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    marginTop: 16,
+    marginTop: 10,
     marginBottom: 8,
     paddingVertical: 14,
     paddingHorizontal: 16,
@@ -540,7 +762,12 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 5,
   },
-  discountText: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 0.3 },
+  discountText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 0.3,
+  },
   outOfStockOverlay: {
     position: "absolute",
     inset: 0,
@@ -570,7 +797,12 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     flexWrap: "wrap",
   },
-  priceValue: { color: C.primary, fontSize: 18, fontWeight: "900", letterSpacing: -0.5 },
+  priceValue: {
+    color: C.primary,
+    fontSize: 18,
+    fontWeight: "900",
+    letterSpacing: -0.5,
+  },
   originalPrice: {
     color: C.textLight,
     fontSize: 13,
@@ -593,7 +825,12 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 5,
   },
-  addText: { fontSize: 13, color: "#fff", fontWeight: "900", letterSpacing: 0.8 },
+  addText: {
+    fontSize: 13,
+    color: "#fff",
+    fontWeight: "900",
+    letterSpacing: 0.8,
+  },
   soldOutBtn: {
     borderRadius: 10,
     paddingVertical: 10,
@@ -624,7 +861,13 @@ const styles = StyleSheet.create({
     backgroundColor: C.primary,
   },
   qtyBtnText: { color: "#fff", fontSize: 18, fontWeight: "900" },
-  qtyValue: { color: C.text, fontSize: 15, fontWeight: "800", minWidth: 24, textAlign: "center" },
+  qtyValue: {
+    color: C.text,
+    fontSize: 15,
+    fontWeight: "800",
+    minWidth: 24,
+    textAlign: "center",
+  },
 
   empty: {
     marginTop: 60,
@@ -633,7 +876,12 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   emptyTitle: { color: C.text, fontSize: 16, fontWeight: "800", marginTop: 8 },
-  emptyText: { color: C.textSub, fontSize: 14, textAlign: "center", lineHeight: 20 },
+  emptyText: {
+    color: C.textSub,
+    fontSize: 14,
+    textAlign: "center",
+    lineHeight: 20,
+  },
   emptyBtn: {
     marginTop: 8,
     backgroundColor: C.primary,

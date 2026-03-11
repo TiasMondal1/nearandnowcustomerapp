@@ -3,6 +3,7 @@ import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
     ActivityIndicator,
+    Alert,
     FlatList,
     RefreshControl,
     StyleSheet,
@@ -44,6 +45,10 @@ export default function PaymentsScreen() {
         placed_at: o.created_at,
       }));
       setPayments(mapped);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to load previous orders";
+      Alert.alert("Previous orders", message);
+      setPayments([]);
     } finally {
       setLoading(false);
       setRefreshing(false);

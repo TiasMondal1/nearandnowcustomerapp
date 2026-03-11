@@ -18,8 +18,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { C } from "../../constants/colors";
 import { useAuth } from "../../context/AuthContext";
 import { useLocation } from "../../context/LocationContext";
-import { getUserAddresses } from "../../lib/addressService";
-import { supabaseAdmin } from "../../lib/supabase";
+import { getUserAddresses, updateAddress } from "../../lib/addressService";
 
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyAaEh8Qu-k6nT5BphpHcOUBOZ5RJ7F2QTQ";
 
@@ -96,16 +95,15 @@ export default function EditLocationScreen() {
           longitudeDelta: 0.01,
         });
 
-        if (loc.contact_name) {
-          setDeliveryFor("other");
-          setReceiverName(loc.contact_name);
-          setReceiverPhone(loc.contact_phone?.replace("+91", "") ?? "");
-        }
+        setDeliveryFor(loc.delivery_for === "others" ? "other" : "me");
+        setReceiverName(loc.receiver_name || "");
+        setReceiverNickname("");
+        setReceiverPhone(loc.receiver_phone?.replace("+91", "") ?? "");
       } finally {
         setLoading(false);
       }
     })();
-  }, [id]);
+  }, [id, userId]);
 
   const reverseGeocode = useCallback(async (lat: number, lng: number) => {
     if (isReverseRef.current) return;
@@ -152,34 +150,20 @@ export default function EditLocationScreen() {
       setSaving(true);
 
       const finalLabel = label === "Other" ? customLabel.trim() : label;
-      const contactName =
-        deliveryFor === "other"
-          ? receiverNickname.trim()
-            ? `${receiverName} (${receiverNickname})`
-            : receiverName
+      const normalizedReceiverPhone =
+        deliveryFor === "other" && receiverPhone.trim()
+          ? normalizeIndianPhone(receiverPhone)
           : null;
 
-      const { error } = await supabaseAdmin
-        .from('customer_saved_addresses')
-        .update({
-          label: finalLabel || "Saved",
-          address: formattedAddress,
-          latitude: coords.latitude,
-          longitude: coords.longitude,
-          contact_name: contactName,
-          contact_phone:
-            deliveryFor === "other" && receiverPhone
-              ? normalizeIndianPhone(receiverPhone)
-              : null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', id)
-        .eq('customer_id', userId);
-
-      if (error) {
-        Alert.alert("Error", "Could not update address");
-        return;
-      }
+      await updateAddress(String(id), userId, {
+        label: finalLabel || "Saved",
+        address: formattedAddress,
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        delivery_for: deliveryFor === "other" ? "others" : "self",
+        receiver_name: deliveryFor === "other" ? receiverName.trim() : null,
+        receiver_phone: deliveryFor === "other" ? normalizedReceiverPhone : null,
+      });
 
       setLocation({
         latitude: coords.latitude,
@@ -190,6 +174,9 @@ export default function EditLocationScreen() {
       });
 
       router.back();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not update address";
+      Alert.alert("Saved addresses", message);
     } finally {
       setSaving(false);
     }

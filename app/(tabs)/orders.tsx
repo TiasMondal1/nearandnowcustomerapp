@@ -55,7 +55,11 @@ export default function OrdersScreen() {
       setError(null);
     } catch (err) {
       console.error("Failed to fetch orders:", err);
-      setError("Failed to load orders. Please try again.");
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Failed to load orders. Please try again.";
+      setError(message);
       setOrders([]);
     } finally {
       setLoading(false);

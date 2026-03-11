@@ -32,7 +32,9 @@ export default function LocationIndex() {
       const data = await getUserAddresses(userId);
       setLocations(data);
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fetch addresses";
       console.error("Failed to fetch locations", err);
+      Alert.alert("Saved addresses", message);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -73,9 +75,14 @@ export default function LocationIndex() {
             text: "Delete",
             style: "destructive",
             onPress: async () => {
-              if (!userId) return;
-              await deleteAddress(id, userId);
-              fetchLocations();
+              try {
+                if (!userId) return;
+                await deleteAddress(id, userId);
+                fetchLocations();
+              } catch (err) {
+                const message = err instanceof Error ? err.message : "Failed to delete address";
+                Alert.alert("Saved addresses", message);
+              }
             },
           },
         ],

@@ -107,7 +107,7 @@ export default function CheckoutScreen() {
         subtotal,
         delivery_fee: deliveryFee,
         order_total: finalPayable,
-        delivery_address: location.label ?? "",
+        delivery_address: location.address ?? location.label ?? "",
         delivery_latitude: location.latitude,
         delivery_longitude: location.longitude,
         items: items.map((i) => ({
