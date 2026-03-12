@@ -201,28 +201,48 @@ eas submit --profile production --platform all
 
 ---
 
-## 7. Razorpay Integration (Future)
+## 7. Razorpay Integration (Required for UPI)
 
-When ready to add UPI payments:
+The app uses `@codearcade/expo-razorpay` (WebView-based, works with Expo). Add this endpoint to the Railway backend:
 
-```bash
-npm install react-native-razorpay
-npx expo run:android   # Razorpay requires native build
+### POST /api/razorpay/create-order
+
+Creates a Razorpay order. **Requires Razorpay secret key on the server** (never in the app).
+
+**Request body:**
+```json
+{
+  "amount": 25000,
+  "currency": "INR",
+  "receipt": "order_1739260800000"
+}
+```
+- `amount`: in paise (e.g. ₹250 = 25000)
+- `currency`: "INR"
+- `receipt`: optional string for your reference
+
+**Response:**
+```json
+{
+  "order_id": "order_xxxxxxxxxxxx"
+}
 ```
 
-Then in checkout.tsx, replace the disabled UPI option with:
-```ts
-import RazorpayCheckout from 'react-native-razorpay';
+**Server-side logic (Node.js example):**
+```js
+const Razorpay = require('razorpay');
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
+});
 
-const payWithRazorpay = async () => {
-  const options = {
-    key: process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID,
-    amount: finalPayable * 100, // in paise
-    currency: 'INR',
-    name: 'Near & Now',
-    description: 'Order Payment',
-  };
-  const data = await RazorpayCheckout.open(options);
-  // data.razorpay_payment_id = successful payment
-};
+app.post('/api/razorpay/create-order', async (req, res) => {
+  const { amount, currency = 'INR', receipt } = req.body;
+  const order = await razorpay.orders.create({ amount, currency, receipt });
+  res.json({ order_id: order.id });
+});
 ```
+
+**Environment variables on Railway:**
+- `RAZORPAY_KEY_ID` = rzp_test_xxx (or rzp_live_xxx)
+- `RAZORPAY_KEY_SECRET` = your secret key (never expose to client)

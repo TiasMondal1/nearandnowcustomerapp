@@ -26,18 +26,9 @@ export default function TermsAndPrivacyScreen() {
         <View style={styles.card}>
           <PolicySection title="1. Introduction">
             <Paragraph>
-              Near&Now is a sub-application developed as an initiative by{" "}
-              <Bold>Synergy Subsystems Ltd</Bold>. The purpose of Near&Now is to
-              enable users to discover nearby stores, browse products, and place
-              delivery orders through a unified digital platform.
-            </Paragraph>
-
-            <Paragraph>
-              For clarity and legal distinction, <Bold>Near&Now</Bold> and{" "}
-              <Bold>Synergy Subsystems Ltd</Bold> operate as{" "}
-              <Bold>separate identities</Bold>. Synergy Subsystems Ltd acts
-              solely as the technology provider and developer of the platform
-              infrastructure.
+              Near&Now is a digital platform that enables users to discover
+              nearby stores, browse products, and place delivery orders through a
+              unified experience.
             </Paragraph>
           </PolicySection>
 
@@ -51,9 +42,9 @@ export default function TermsAndPrivacyScreen() {
             </Paragraph>
 
             <Paragraph>
-              Synergy Subsystems Ltd does not assume responsibility for product
-              quality, pricing accuracy, fulfillment delays, or service
-              availability offered by third-party merchants.
+              Near&Now does not assume responsibility for product quality,
+              pricing accuracy, fulfillment delays, or service availability
+              offered by third-party merchants.
             </Paragraph>
           </PolicySection>
 
@@ -133,9 +124,9 @@ export default function TermsAndPrivacyScreen() {
 
           <PolicySection title="7. Limitation of Liability">
             <Paragraph>
-              Under no circumstances shall Near&Now or Synergy Subsystems Ltd be
-              liable for indirect, incidental, or consequential damages arising
-              from use of the platform.
+              Under no circumstances shall Near&Now be liable for indirect,
+              incidental, or consequential damages arising from use of the
+              platform.
             </Paragraph>
           </PolicySection>
 
@@ -155,8 +146,8 @@ export default function TermsAndPrivacyScreen() {
         </View>
 
         <View style={styles.footer}>
-          <Text style={styles.companyName}>Synergy Subsystems Ltd</Text>
-          <Text style={styles.companyNote}>Technology Partner</Text>
+          <Text style={styles.footerBrand}>Near & Now</Text>
+          <Text style={styles.footerTagline}>Digital Dukaan, local dil se</Text>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -235,7 +226,7 @@ const styles = StyleSheet.create({
 
   footerNote: { fontSize: 12, color: C.textLight, marginTop: 18, textAlign: "center", lineHeight: 18 },
   footer: { marginTop: 28, alignItems: "center" },
-  companyName: { fontSize: 14, fontWeight: "800", color: C.primary },
-  companyNote: { marginTop: 6, fontSize: 11, color: C.textLight },
+  footerBrand: { fontSize: 16, fontWeight: "800", color: C.primary },
+  footerTagline: { fontSize: 12, color: C.textSub, marginTop: 4 },
   bold: { fontWeight: "700", color: C.text },
 });

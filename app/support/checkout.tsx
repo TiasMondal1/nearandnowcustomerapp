@@ -1,3 +1,4 @@
+import { useRazorpay } from "@codearcade/expo-razorpay/src/hooks/useRazorpay";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -21,8 +22,11 @@ import { useCart } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
 import { getProductStoreDistance } from "../../lib/distanceUtils";
 import { createOrder } from "../../lib/orderService";
+import { createRazorpayOrder } from "../../lib/razorpayService";
 
 type PaymentMode = "upi" | "cod";
+
+const RAZORPAY_KEY = process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID || "";
 
 export default function CheckoutScreen() {
   const { items, appliedCoupon, removeCoupon, discount, clearCart } = useCart();
@@ -34,6 +38,7 @@ export default function CheckoutScreen() {
   const [loadingDistance, setLoadingDistance] = useState(false);
 
   const [payment, setPayment] = useState<PaymentMode>("upi");
+  const { openCheckout, closeCheckout, RazorpayUI } = useRazorpay();
 
   useEffect(() => {
     if (!location || items.length === 0) {
@@ -82,6 +87,34 @@ export default function CheckoutScreen() {
     [projected, discount],
   );
 
+  const doCreateOrder = async (paymentStatus: "pending" | "paid") => {
+    if (!user?.id || !location) return;
+    await createOrder({
+      user_id: user.id,
+      customer_name: user.name || "Customer",
+      customer_phone: user.phone || customer?.phone || "",
+      customer_email: user.email || undefined,
+      payment_method: payment,
+      payment_status: paymentStatus,
+      subtotal,
+      delivery_fee: deliveryFee,
+      order_total: finalPayable,
+      delivery_address: location.address ?? location.label ?? "",
+      delivery_latitude: location.latitude,
+      delivery_longitude: location.longitude,
+      items: items.map((i) => ({
+        product_id: i.product_id,
+        name: i.name,
+        price: i.price,
+        quantity: i.quantity,
+        image: i.image_url,
+        unit: i.unit,
+      })),
+    });
+    clearCart();
+    setShowSuccess(true);
+  };
+
   const placeOrder = async () => {
     if (!location) {
       Alert.alert("No location", "Please select a delivery location.");
@@ -97,36 +130,63 @@ export default function CheckoutScreen() {
     }
     setPlacing(true);
     try {
-      await createOrder({
-        user_id: user.id,
-        customer_name: user.name || "Customer",
-        customer_phone: user.phone || customer?.phone || "",
-        customer_email: user.email || undefined,
-        payment_method: payment,
-        payment_status: "pending",
-        subtotal,
-        delivery_fee: deliveryFee,
-        order_total: finalPayable,
-        delivery_address: location.address ?? location.label ?? "",
-        delivery_latitude: location.latitude,
-        delivery_longitude: location.longitude,
-        items: items.map((i) => ({
-          product_id: i.product_id,
-          name: i.name,
-          price: i.price,
-          quantity: i.quantity,
-          image: i.image_url,
-          unit: i.unit,
-        })),
-      });
-      clearCart();
-      setShowSuccess(true);
+      if (payment === "cod") {
+        await doCreateOrder("pending");
+      } else {
+        if (!RAZORPAY_KEY) {
+          Alert.alert("Payment not configured", "Razorpay keys are missing. Please contact support.");
+          Animated.spring(slideX, { toValue: 0, useNativeDriver: false }).start();
+          return;
+        }
+        const amountPaise = Math.round(finalPayable * 100);
+        const { order_id } = await createRazorpayOrder(amountPaise);
+        closeCheckout?.();
+        openCheckout(
+          {
+            key: RAZORPAY_KEY,
+            amount: amountPaise,
+            currency: "INR",
+            order_id,
+            name: "Near & Now",
+            description: "Order payment",
+            prefill: {
+              name: user.name || "Customer",
+              email: user.email || "",
+              contact: user.phone || customer?.phone || "",
+            },
+            theme: { color: C.primary },
+          },
+          {
+            onSuccess: async () => {
+              closeCheckout?.();
+              try {
+                await doCreateOrder("paid");
+              } catch (err: any) {
+                Alert.alert("Order failed", err?.message || "Payment succeeded but order could not be created. Please contact support.");
+              } finally {
+                setPlacing(false);
+              }
+            },
+            onFailure: (error: { description?: string }) => {
+              closeCheckout?.();
+              setPlacing(false);
+              Alert.alert("Payment failed", error?.description || "Payment could not be completed.");
+              Animated.spring(slideX, { toValue: 0, useNativeDriver: false }).start();
+            },
+            onClose: () => {
+              setPlacing(false);
+              Animated.spring(slideX, { toValue: 0, useNativeDriver: false }).start();
+            },
+          },
+        );
+        return;
+      }
     } catch (err: any) {
       console.error("PLACE_ORDER_ERROR", err);
       Alert.alert("Order failed", err?.message || "Something went wrong. Please try again.");
       Animated.spring(slideX, { toValue: 0, useNativeDriver: false }).start();
     } finally {
-      setPlacing(false);
+      if (payment === "cod") setPlacing(false);
     }
   };
 
@@ -276,12 +336,11 @@ export default function CheckoutScreen() {
           <Text style={styles.sectionTitle}>Payment Method</Text>
 
           <PaymentOption
-            label="Pay via UPI"
-            sublabel="Coming soon (Razorpay)"
-            icon="qrcode-scan"
-            selected={false}
-            disabled
-            onPress={() => {}}
+            label="Pay via UPI / Card"
+            sublabel="Razorpay — UPI, cards & wallets"
+            icon="credit-card-outline"
+            selected={payment === "upi"}
+            onPress={() => setPayment("upi")}
           />
 
           <PaymentOption
@@ -319,6 +378,8 @@ export default function CheckoutScreen() {
           )}
         </View>
       </View>
+
+      {RazorpayUI}
 
       {showSuccess && (
         <View style={styles.successOverlay}>

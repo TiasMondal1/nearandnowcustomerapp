@@ -126,6 +126,11 @@ export default function ProfileMenu({ visible, onClose }: ProfileMenuProps) {
               <MaterialCommunityIcons name="logout" size={20} color={C.danger} />
               <Text style={styles.logoutText}>Logout</Text>
             </TouchableOpacity>
+
+            <View style={styles.footer}>
+              <Text style={styles.footerBrand}>Near & Now</Text>
+              <Text style={styles.footerTagline}>Digital Dukaan, local dil se</Text>
+            </View>
           </ScrollView>
         </Pressable>
       </Pressable>
@@ -284,4 +289,12 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   logoutText: { color: C.danger, fontWeight: "800", fontSize: 15 },
+  footer: {
+    marginTop: 28,
+    marginBottom: 24,
+    alignItems: "center",
+    paddingHorizontal: 20,
+  },
+  footerBrand: { fontSize: 16, fontWeight: "800", color: C.primary },
+  footerTagline: { fontSize: 12, color: C.textSub, marginTop: 4 },
 });
