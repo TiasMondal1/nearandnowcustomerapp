@@ -3,15 +3,16 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-    Alert,
-    Animated,
-    Image,
-    PanResponder,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  Alert,
+  Animated,
+  Image,
+  PanResponder,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -23,6 +24,7 @@ import { useLocation } from "../../context/LocationContext";
 import { getProductStoreDistance } from "../../lib/distanceUtils";
 import { createOrder } from "../../lib/orderService";
 import { createRazorpayOrder } from "../../lib/razorpayService";
+import { getAllProducts, type Product } from "../../lib/productService";
 
 type PaymentMode = "upi" | "cod";
 
@@ -36,6 +38,21 @@ export default function CheckoutScreen() {
   const { location } = useLocation();
   const [maxDistance, setMaxDistance] = useState<number>(2);
   const [loadingDistance, setLoadingDistance] = useState(false);
+
+  const [gstinClaim, setGstinClaim] = useState(false);
+  const [gstin, setGstin] = useState("");
+  const [invoiceName, setInvoiceName] = useState("");
+  const [deliveryInstructions, setDeliveryInstructions] = useState("");
+  const [tipPreset, setTipPreset] = useState<20 | 30 | 50 | "custom" | null>(null);
+  const [customTip, setCustomTip] = useState("");
+  const [giftPackaging, setGiftPackaging] = useState(false);
+  const [orderingForSomeoneElse, setOrderingForSomeoneElse] = useState(false);
+  const [recipientName, setRecipientName] = useState("");
+  const [recipientPhone, setRecipientPhone] = useState("");
+  const [acceptCancellation, setAcceptCancellation] = useState(false);
+
+  const [recommended, setRecommended] = useState<Product[]>([]);
+  const [loadingRecommended, setLoadingRecommended] = useState(false);
 
   const [payment, setPayment] = useState<PaymentMode>("upi");
   const { openCheckout, closeCheckout, RazorpayUI } = useRazorpay();
@@ -70,6 +87,40 @@ export default function CheckoutScreen() {
     calculateMaxDistance();
   }, [location, items]);
 
+  useEffect(() => {
+    const loadRecommended = async () => {
+      if (!location || items.length === 0) {
+        setRecommended([]);
+        return;
+      }
+      try {
+        setLoadingRecommended(true);
+        const products = await getAllProducts({
+          lat: location.latitude,
+          lng: location.longitude,
+        });
+        const cartIds = new Set(items.map((i) => i.product_id));
+        const cartCategories = new Set(
+          products
+            .filter((p) => cartIds.has(p.id))
+            .map((p) => p.category)
+            .filter(Boolean),
+        );
+        const recos = products
+          .filter((p) => !cartIds.has(p.id))
+          .filter((p) => cartCategories.size === 0 || cartCategories.has(p.category))
+          .slice(0, 9);
+        setRecommended(recos);
+      } catch {
+        setRecommended([]);
+      } finally {
+        setLoadingRecommended(false);
+      }
+    };
+
+    loadRecommended();
+  }, [items, location]);
+
   const subtotal = useMemo(
     () => items.reduce((s, i) => s + i.price * i.quantity, 0),
     [items],
@@ -82,13 +133,52 @@ export default function CheckoutScreen() {
     () => calcOrderTotal(subtotal, totalItems, maxDistance),
     [subtotal, totalItems, maxDistance],
   );
-  const finalPayable = useMemo(
+  const baseFinalPayable = useMemo(
     () => Math.max(projected - discount, 0),
     [projected, discount],
   );
 
+  const tipAmount = useMemo(() => {
+    if (!tipPreset) return 0;
+    if (tipPreset === "custom") {
+      const val = parseFloat(customTip.replace(/[^0-9.]/g, ""));
+      if (Number.isNaN(val) || !Number.isFinite(val)) return 0;
+      return Math.max(val, 0);
+    }
+    return tipPreset;
+  }, [tipPreset, customTip]);
+
+  const finalPayable = useMemo(
+    () => baseFinalPayable + tipAmount,
+    [baseFinalPayable, tipAmount],
+  );
+
   const doCreateOrder = async (paymentStatus: "pending" | "paid") => {
     if (!user?.id || !location) return;
+    const notesParts: string[] = [];
+    if (gstinClaim && gstin.trim()) {
+      notesParts.push(
+        `GSTIN: ${gstin.trim()}${
+          invoiceName ? ` (Name: ${invoiceName.trim()})` : ""
+        }`,
+      );
+    }
+    if (deliveryInstructions.trim()) {
+      notesParts.push(`Delivery Instructions: ${deliveryInstructions.trim()}`);
+    }
+    if (orderingForSomeoneElse) {
+      if (recipientName.trim() || recipientPhone.trim()) {
+        notesParts.push(
+          `Recipient: ${recipientName.trim() || "N/A"}${
+            recipientPhone.trim() ? `, Phone: ${recipientPhone.trim()}` : ""
+          }`,
+        );
+      }
+    }
+    if (tipAmount > 0) {
+      notesParts.push(`Tip for delivery partner: ₹${tipAmount.toFixed(2)}`);
+    }
+
     await createOrder({
       user_id: user.id,
       customer_name: user.name || "Customer",
@@ -110,6 +200,9 @@ export default function CheckoutScreen() {
         image: i.image_url,
         unit: i.unit,
       })),
+      notes: notesParts.length ? notesParts.join(" | ") : undefined,
+      gstin: gstinClaim && gstin.trim() ? gstin.trim() : undefined,
+      tip_amount: tipAmount > 0 ? tipAmount : undefined,
     });
     clearCart();
     setShowSuccess(true);
@@ -126,6 +219,13 @@ export default function CheckoutScreen() {
     }
     if (!user?.id) {
       Alert.alert("Session expired", "Please login again.");
+      return;
+    }
+    if (!acceptCancellation) {
+      Alert.alert(
+        "Cancellation policy",
+        "Please review and accept the cancellation & policy information before placing your order.",
+      );
       return;
     }
     setPlacing(true);
@@ -295,13 +395,60 @@ export default function CheckoutScreen() {
           ))}
         </View>
 
+        {recommended.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>You might also like</Text>
+            <View style={styles.recoGrid}>
+              {recommended.map((p) => (
+                <View key={p.id} style={styles.recoCard}>
+                  {p.image_url ? (
+                    <Image source={{ uri: p.image_url }} style={styles.recoImage} />
+                  ) : (
+                    <View style={styles.recoPlaceholder} />
+                  )}
+                  <Text style={styles.recoName} numberOfLines={2}>
+                    {p.name}
+                  </Text>
+                  <Text style={styles.recoPrice}>
+                    ₹{p.price} <Text style={styles.recoUnit}>/{p.unit}</Text>
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.recoAddBtn}
+                    activeOpacity={0.85}
+                    onPress={() =>
+                      addItem({
+                        product_id: p.id,
+                        name: p.name,
+                        price: p.price,
+                        unit: p.unit,
+                        image_url: p.image_url,
+                      })
+                    }
+                  >
+                    <Text style={styles.recoAddText}>ADD</Text>
+                    <MaterialCommunityIcons
+                      name="plus"
+                      size={14}
+                      color="#fff"
+                    />
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
+
         <TouchableOpacity
           style={styles.couponCard}
           activeOpacity={0.85}
           onPress={() => router.push("../product/coupons")}
         >
           <View style={styles.couponLeft}>
-            <MaterialCommunityIcons name="ticket-percent-outline" size={20} color={C.primary} />
+            <MaterialCommunityIcons
+              name="ticket-percent-outline"
+              size={20}
+              color={C.primary}
+            />
             <Text style={styles.couponText}>
               {appliedCoupon ? `Applied: ${appliedCoupon.code}` : "Apply Coupon"}
             </Text>
@@ -311,25 +458,330 @@ export default function CheckoutScreen() {
               <Text style={styles.removeCoupon}>Remove</Text>
             </TouchableOpacity>
           ) : (
-            <MaterialCommunityIcons name="chevron-right" size={20} color={C.textSub} />
+            <MaterialCommunityIcons
+              name="chevron-right"
+              size={20}
+              color={C.textSub}
+            />
           )}
         </TouchableOpacity>
 
         <View style={styles.billCard}>
-          <Text style={styles.billTitle}>Bill Details</Text>
+          <Text style={styles.billTitle}>Invoice & Bill Details</Text>
           <BillRow label="Items subtotal" value={subtotal} />
           <BillRow label="Platform fee" value={platformFee} />
           <BillRow label="Handling fee" value={handlingFee} />
           {convFee > 0 && <BillRow label="Convenience fee" value={convFee} />}
-          <BillRow label={`Delivery fee (${maxDistance.toFixed(1)} km)`} value={deliveryFee} />
+          <BillRow
+            label={`Delivery fee (${maxDistance.toFixed(1)} km)`}
+            value={deliveryFee}
+          />
           {appliedCoupon && (
-            <BillRow label={`Discount (${appliedCoupon.code})`} value={-discount} highlight />
+            <BillRow
+              label={`Discount (${appliedCoupon.code})`}
+              value={-discount}
+              highlight
+            />
+          )}
+          {tipAmount > 0 && (
+            <BillRow label="Tip for delivery partner" value={tipAmount} />
           )}
           <View style={styles.divider} />
           <View style={styles.totalRow}>
             <Text style={styles.totalLabel}>Total Payable</Text>
             <Text style={styles.totalValue}>₹{finalPayable.toFixed(2)}</Text>
           </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Claim GST Input (Optional)</Text>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            style={[styles.toggleRow, gstinClaim && styles.toggleRowActive]}
+            onPress={() => setGstinClaim((v) => !v)}
+          >
+            <View style={styles.toggleLeft}>
+              <View style={styles.toggleIconWrap}>
+                <MaterialCommunityIcons
+                  name="file-document-outline"
+                  size={18}
+                  color={gstinClaim ? "#fff" : C.textSub}
+                />
+              </View>
+              <View>
+                <Text
+                  style={[
+                    styles.toggleTitle,
+                    gstinClaim && { color: C.primary },
+                  ]}
+                >
+                  Add GSTIN details for credit claim
+                </Text>
+                <Text style={styles.toggleSub}>
+                  Get a GST-compliant invoice for eligible business purchases.
+                </Text>
+              </View>
+            </View>
+            <View
+              style={[
+                styles.radioOuter,
+                gstinClaim && styles.radioOuterActive,
+              ]}
+            >
+              {gstinClaim && <View style={styles.radioInner} />}
+            </View>
+          </TouchableOpacity>
+
+          {gstinClaim && (
+            <View style={styles.fieldGroup}>
+              <Text style={styles.fieldLabel}>GSTIN</Text>
+              <TextInput
+                placeholder="Enter 15-digit GSTIN"
+                placeholderTextColor={C.textLight}
+                value={gstin}
+                onChangeText={setGstin}
+                style={styles.textInput}
+                autoCapitalize="characters"
+              />
+              <Text style={styles.fieldLabel}>Registered business name</Text>
+              <TextInput
+                placeholder="Name as per GST registration"
+                placeholderTextColor={C.textLight}
+                value={invoiceName}
+                onChangeText={setInvoiceName}
+                style={styles.textInput}
+              />
+            </View>
+          )}
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Delivery Instructions</Text>
+          <TextInput
+            placeholder="e.g. Don't ring the bell, call on arrival, gate code, etc."
+            placeholderTextColor={C.textLight}
+            value={deliveryInstructions}
+            onChangeText={setDeliveryInstructions}
+            style={[styles.textInput, styles.multilineInput]}
+            multiline
+            numberOfLines={3}
+          />
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Tip your delivery partner</Text>
+          <View style={styles.tipRow}>
+            {[20, 30, 50].map((val) => (
+              <TouchableOpacity
+                key={val}
+                style={[
+                  styles.tipChip,
+                  tipPreset === val && styles.tipChipActive,
+                ]}
+                activeOpacity={0.8}
+                onPress={() => setTipPreset(tipPreset === val ? null : val)}
+              >
+                <Text
+                  style={[
+                    styles.tipChipText,
+                    tipPreset === val && styles.tipChipTextActive,
+                  ]}
+                >
+                  ₹{val}
+                </Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity
+              style={[
+                styles.tipChip,
+                tipPreset === "custom" && styles.tipChipActive,
+              ]}
+              activeOpacity={0.8}
+              onPress={() => setTipPreset("custom")}
+            >
+              <Text
+                style={[
+                  styles.tipChipText,
+                  tipPreset === "custom" && styles.tipChipTextActive,
+                ]}
+              >
+                Custom
+              </Text>
+            </TouchableOpacity>
+          </View>
+          {tipPreset === "custom" && (
+            <View style={styles.fieldGroup}>
+              <Text style={styles.fieldLabel}>Custom tip amount</Text>
+              <TextInput
+                placeholder="Enter amount in ₹"
+                placeholderTextColor={C.textLight}
+                keyboardType="numeric"
+                value={customTip}
+                onChangeText={setCustomTip}
+                style={styles.textInput}
+              />
+            </View>
+          )}
+          <Text style={styles.tipNote}>
+            100% of your tip goes to the delivery partner.
+          </Text>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Extras</Text>
+
+          <TouchableOpacity
+            style={[
+              styles.toggleRow,
+              giftPackaging && styles.toggleRowActive,
+            ]}
+            activeOpacity={0.8}
+            onPress={() => setGiftPackaging((v) => !v)}
+          >
+            <View style={styles.toggleLeft}>
+              <View style={styles.toggleIconWrap}>
+                <MaterialCommunityIcons
+                  name="gift-outline"
+                  size={18}
+                  color={giftPackaging ? "#fff" : C.textSub}
+                />
+              </View>
+              <View>
+                <Text
+                  style={[
+                    styles.toggleTitle,
+                    giftPackaging && { color: C.primary },
+                  ]}
+                >
+                  Gift packaging
+                </Text>
+                <Text style={styles.toggleSub}>
+                  Make it look special. Currently optional and may vary by store.
+                </Text>
+              </View>
+            </View>
+            <View
+              style={[
+                styles.radioOuter,
+                giftPackaging && styles.radioOuterActive,
+              ]}
+            >
+              {giftPackaging && <View style={styles.radioInner} />}
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.toggleRow,
+              orderingForSomeoneElse && styles.toggleRowActive,
+            ]}
+            activeOpacity={0.8}
+            onPress={() => setOrderingForSomeoneElse((v) => !v)}
+          >
+            <View style={styles.toggleLeft}>
+              <View style={styles.toggleIconWrap}>
+                <MaterialCommunityIcons
+                  name="account-heart-outline"
+                  size={18}
+                  color={orderingForSomeoneElse ? "#fff" : C.textSub}
+                />
+              </View>
+              <View>
+                <Text
+                  style={[
+                    styles.toggleTitle,
+                    orderingForSomeoneElse && { color: C.primary },
+                  ]}
+                >
+                  Ordering for someone else?
+                </Text>
+                <Text style={styles.toggleSub}>
+                  Add their details so the partner can contact them if needed.
+                </Text>
+              </View>
+            </View>
+            <View
+              style={[
+                styles.radioOuter,
+                orderingForSomeoneElse && styles.radioOuterActive,
+              ]}
+            >
+              {orderingForSomeoneElse && <View style={styles.radioInner} />}
+            </View>
+          </TouchableOpacity>
+
+          {orderingForSomeoneElse && (
+            <View style={styles.fieldGroup}>
+              <Text style={styles.fieldLabel}>Recipient name</Text>
+              <TextInput
+                placeholder="Who will receive the order?"
+                placeholderTextColor={C.textLight}
+                value={recipientName}
+                onChangeText={setRecipientName}
+                style={styles.textInput}
+              />
+              <Text style={styles.fieldLabel}>Recipient phone</Text>
+              <TextInput
+                placeholder="10-digit mobile number"
+                placeholderTextColor={C.textLight}
+                keyboardType="phone-pad"
+                value={recipientPhone}
+                onChangeText={setRecipientPhone}
+                style={styles.textInput}
+              />
+            </View>
+          )}
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Cancellation & Policies</Text>
+
+          <View style={styles.policyCard}>
+            <Text style={styles.policyTitle}>Cancellation policy</Text>
+            <Text style={styles.policyText}>
+              Orders can usually be cancelled before the store accepts them. After
+              acceptance, cancellation may not be possible and charges may apply.
+            </Text>
+          </View>
+
+          <View style={styles.policyCard}>
+            <Text style={styles.policyTitle}>System policy & FAQs</Text>
+            <Text style={styles.policyText}>
+              Learn more about refunds, delivery, order issues and more in our
+              help section.
+            </Text>
+            <TouchableOpacity
+              style={styles.policyLinkBtn}
+              onPress={() => router.push("/settings/support")}
+            >
+              <Text style={styles.policyLinkText}>View FAQs & Support</Text>
+              <MaterialCommunityIcons
+                name="arrow-right"
+                size={16}
+                color={C.primary}
+              />
+            </TouchableOpacity>
+          </View>
+
+          <TouchableOpacity
+            style={[
+              styles.acceptRow,
+              acceptCancellation && styles.acceptRowActive,
+            ]}
+            activeOpacity={0.8}
+            onPress={() => setAcceptCancellation((v) => !v)}
+          >
+            <MaterialCommunityIcons
+              name={
+                acceptCancellation ? "checkbox-marked" : "checkbox-blank-outline"
+              }
+              size={20}
+              color={acceptCancellation ? C.primary : C.textSub}
+            />
+            <Text style={styles.acceptText}>
+              I’ve reviewed the cancellation policy and FAQs.
+            </Text>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.section}>
@@ -588,6 +1040,67 @@ const styles = StyleSheet.create({
   totalLabel: { color: C.text, fontSize: 16, fontWeight: "800" },
   totalValue: { color: C.primary, fontSize: 22, fontWeight: "900" },
 
+  recoGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+  },
+  recoCard: {
+    width: "31%",
+    backgroundColor: C.card,
+    borderRadius: 12,
+    padding: 8,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  recoImage: {
+    width: "100%",
+    height: 70,
+    borderRadius: 8,
+    marginBottom: 6,
+  },
+  recoPlaceholder: {
+    width: "100%",
+    height: 70,
+    borderRadius: 8,
+    backgroundColor: C.bgSoft,
+    marginBottom: 6,
+  },
+  recoName: {
+    color: C.text,
+    fontSize: 11,
+    fontWeight: "600",
+    minHeight: 28,
+  },
+  recoPrice: {
+    color: C.primary,
+    fontSize: 12,
+    fontWeight: "800",
+    marginTop: 2,
+  },
+  recoUnit: {
+    color: C.textSub,
+    fontSize: 10,
+    fontWeight: "500",
+  },
+  recoAddBtn: {
+    marginTop: 6,
+    backgroundColor: C.primary,
+    borderRadius: 999,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+  },
+  recoAddText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+
   paymentRow: {
     backgroundColor: C.card,
     padding: 14,
@@ -626,6 +1139,144 @@ const styles = StyleSheet.create({
   radioOuterActive: { borderColor: C.primary },
   radioDisabled: { borderColor: C.border },
   radioInner: { width: 10, height: 10, borderRadius: 5, backgroundColor: C.primary },
+
+  toggleRow: {
+    backgroundColor: C.card,
+    padding: 12,
+    borderRadius: 14,
+    marginBottom: 10,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  toggleRowActive: {
+    borderColor: C.primary,
+    backgroundColor: C.primaryXLight,
+  },
+  toggleLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    flex: 1,
+  },
+  toggleIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: C.bgSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  toggleTitle: {
+    color: C.text,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  toggleSub: {
+    color: C.textLight,
+    fontSize: 11,
+    marginTop: 2,
+  },
+
+  fieldGroup: {
+    marginTop: 10,
+    gap: 6,
+  },
+  fieldLabel: {
+    color: C.textSub,
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  textInput: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: C.border,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: C.card,
+    color: C.text,
+    fontSize: 13,
+  },
+  multilineInput: {
+    minHeight: 80,
+    textAlignVertical: "top",
+  },
+
+  tipRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 8,
+  },
+  tipChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: C.border,
+    backgroundColor: C.card,
+  },
+  tipChipActive: {
+    borderColor: C.primary,
+    backgroundColor: C.primaryXLight,
+  },
+  tipChipText: {
+    fontSize: 12,
+    color: C.textSub,
+    fontWeight: "600",
+  },
+  tipChipTextActive: {
+    color: C.primary,
+  },
+  tipNote: {
+    color: C.textLight,
+    fontSize: 11,
+  },
+
+  policyCard: {
+    backgroundColor: C.card,
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: C.border,
+    marginBottom: 10,
+  },
+  policyTitle: {
+    color: C.text,
+    fontSize: 13,
+    fontWeight: "700",
+    marginBottom: 4,
+  },
+  policyText: {
+    color: C.textSub,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  policyLinkBtn: {
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  policyLinkText: {
+    color: C.primary,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  acceptRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 8,
+  },
+  acceptRowActive: {},
+  acceptText: {
+    color: C.textSub,
+    fontSize: 12,
+    flex: 1,
+  },
 
   slideDock: {
     position: "absolute",

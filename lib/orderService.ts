@@ -30,8 +30,8 @@ export interface CreateOrderInput {
   customer_name: string;
   customer_phone: string;
   customer_email?: string;
-  payment_method: 'upi' | 'cod';
-  payment_status: 'pending' | 'paid';
+  payment_method: "upi" | "cod";
+  payment_status: "pending" | "paid";
   subtotal: number;
   delivery_fee: number;
   order_total: number;
@@ -39,6 +39,9 @@ export interface CreateOrderInput {
   delivery_latitude: number;
   delivery_longitude: number;
   items: OrderItem[];
+  notes?: string;
+  gstin?: string;
+  tip_amount?: number;
 }
 
 type BackendOrderItem = {
@@ -154,7 +157,9 @@ export async function createOrder(input: CreateOrderInput): Promise<Order> {
     delivery_latitude: input.delivery_latitude,
     delivery_longitude: input.delivery_longitude,
     payment_method: input.payment_method,
-    notes: undefined,
+    notes: input.notes,
+    gstin: input.gstin,
+    tip_amount: input.tip_amount,
     coupon_id: undefined,
     cart_items: (input.items || []).map((it) => ({
       product_id: it.product_id || '',

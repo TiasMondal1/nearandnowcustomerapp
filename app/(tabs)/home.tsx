@@ -534,7 +534,7 @@ export default function HomeScreen() {
           style={styles.cartPillWrap}
         >
           <Pressable
-            onPress={() => router.push("/cart")}
+            onPress={() => router.push("/support/checkout")}
             style={({ pressed }) => [
               styles.cartPill,
               pressed && { opacity: 0.95 },
@@ -542,7 +542,7 @@ export default function HomeScreen() {
           >
             <View style={styles.cartPillContent}>
               <Text style={styles.cartTitle} numberOfLines={1}>
-                View cart
+                Go to checkout
               </Text>
               <Text style={styles.cartSubtitle} numberOfLines={1}>
                 {items.reduce((sum, it) => sum + it.quantity, 0)} item
