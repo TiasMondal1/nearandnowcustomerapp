@@ -31,6 +31,7 @@ import Animated, {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import ProfileMenu from "../../components/ProfileMenu";
+import StarRating from "../../components/StarRating";
 import { C } from "../../constants/colors";
 import { useCart } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
@@ -290,7 +291,7 @@ export default function HomeScreen() {
       <FlatList
         data={filteredProducts}
         keyExtractor={(item) => item.id}
-        numColumns={2}
+        numColumns={3}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -475,7 +476,11 @@ export default function HomeScreen() {
                       ₹{p.original_price}
                     </Text>
                   )}
-                  <Text style={styles.priceUnit}>/{p.unit}</Text>
+                  <Text style={styles.priceUnit}>{p.unit}</Text>
+                </View>
+
+                <View style={styles.ratingWrap}>
+                  <StarRating rating={p.avgRating ?? 0} reviewCount={p.reviewCount} />
                 </View>
 
                 {p.in_stock ? (
@@ -827,7 +832,7 @@ const styles = StyleSheet.create({
   columnWrap: { justifyContent: "space-between", marginBottom: 12 },
 
   card: {
-    width: "48.5%",
+    width: "32%",
     backgroundColor: C.card,
     borderRadius: 16,
     overflow: "hidden",
@@ -898,7 +903,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "baseline",
     gap: 6,
-    marginBottom: 10,
+    marginBottom: 6,
     flexWrap: "wrap",
   },
   priceValue: {
@@ -914,6 +919,10 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
   priceUnit: { color: C.textSub, fontSize: 12, fontWeight: "500" },
+
+  ratingWrap: {
+    marginBottom: 4,
+  },
 
   addBtn: {
     flexDirection: "row",

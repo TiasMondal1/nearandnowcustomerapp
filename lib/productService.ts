@@ -12,13 +12,17 @@ export interface Product {
   unit: string;
   isLoose?: boolean;
   created_at?: string;
+  avgRating?: number;
+  reviewCount?: number;
 }
 
 interface ProductRow {
   id: string;
   store_id: string;
   master_product_id: string;
-  quantity: number;
+  // `products.quantity` may not exist in your current Supabase schema yet.
+  // Keep it optional so the app doesn't crash when it's missing.
+  quantity?: unknown;
   is_active: boolean;
   master_products?: {
     id: string;
@@ -32,6 +36,8 @@ interface ProductRow {
     is_loose?: boolean;
     is_active: boolean;
     created_at?: string;
+    avg_rating?: number | string | null;
+    review_count?: number | string | null;
     [key: string]: unknown;
   } | null;
 }
@@ -42,6 +48,13 @@ function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
+}
+
+function coerceQuantity(value: unknown): number | undefined {
+  if (value == null) return undefined;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  const n = parseFloat(String(value));
+  return Number.isFinite(n) ? n : undefined;
 }
 
 async function getNearbyStoreIds(lat: number, lng: number, radiusKm = 4): Promise<string[]> {
@@ -66,7 +79,7 @@ async function fetchProductRows(storeIds: string[] | null): Promise<ProductRow[]
     for (const ids of storeChunks) {
       const { data, error } = await supabaseAdmin
         .from('products')
-        .select('id, store_id, master_product_id, quantity, is_active, master_products(*)')
+        .select('id, store_id, master_product_id, is_active, master_products(*)')
         .eq('is_active', true)
         .in('store_id', ids);
       if (error) throw new Error(`Database error: ${error.message}`);
@@ -81,7 +94,7 @@ async function fetchProductRows(storeIds: string[] | null): Promise<ProductRow[]
   while (hasMore) {
     const { data, error } = await supabaseAdmin
       .from('products')
-      .select('id, store_id, master_product_id, quantity, is_active, master_products(*)')
+      .select('id, store_id, master_product_id, is_active, master_products(*)')
       .eq('is_active', true)
       .range(from, from + batchSize - 1);
     if (error) throw new Error(`Database error: ${error.message}`);
@@ -102,10 +115,16 @@ function productRowsToProducts(rows: ProductRow[]): Product[] {
     const mp = row.master_products;
     if (!mp || !mp.is_active) continue;
     const existing = byMaster.get(row.master_product_id);
-    const q = typeof row.quantity === 'number' ? row.quantity : parseFloat(String(row.quantity)) || 0;
-    if (!existing || (typeof existing.quantity === 'number' ? existing.quantity : 0) < q) {
+    if (!existing) {
       byMaster.set(row.master_product_id, row);
+      continue;
     }
+
+    // If `quantity` exists in the row, prefer the highest-quantity store row per master product.
+    // If quantity is missing, keep the first-seen row to avoid unstable behavior.
+    const q = coerceQuantity(row.quantity);
+    const existingQ = coerceQuantity(existing.quantity);
+    if (q != null && (existingQ == null || existingQ < q)) byMaster.set(row.master_product_id, row);
   }
   return Array.from(byMaster.values()).map(transformRow);
 }
@@ -124,8 +143,21 @@ function transformRow(row: ProductRow): Product {
         ? parseFloat(mp.base_price)
         : mp.base_price
       : undefined;
-  const q =
-    typeof row.quantity === 'number' ? row.quantity : parseFloat(String(row.quantity)) || 0;
+  const q = coerceQuantity(row.quantity);
+
+  const avgRating =
+    mp.avg_rating == null
+      ? undefined
+      : typeof mp.avg_rating === "string"
+        ? parseFloat(mp.avg_rating)
+        : mp.avg_rating;
+
+  const reviewCount =
+    mp.review_count == null
+      ? undefined
+      : typeof mp.review_count === "string"
+        ? Number(mp.review_count)
+        : mp.review_count;
 
   return {
     id: mp.id,
@@ -135,10 +167,13 @@ function transformRow(row: ProductRow): Product {
     original_price: originalPrice,
     image_url: mp.image_url,
     description: mp.description,
-    in_stock: row.is_active && q > 0,
+    // When quantity isn't available, treat "active" as in-stock.
+    in_stock: row.is_active && (q == null || q > 0),
     unit: mp.unit ?? 'piece',
     isLoose: mp.is_loose ?? false,
     created_at: mp.created_at,
+    avgRating: Number.isFinite(avgRating as number) ? (avgRating as number) : undefined,
+    reviewCount: Number.isFinite(reviewCount as number) ? (reviewCount as number) : undefined,
   };
 }
 
@@ -211,6 +246,18 @@ export async function getProductById(masterProductId: string): Promise<Product |
       unit: data.unit ?? 'piece',
       isLoose: data.is_loose ?? false,
       created_at: data.created_at,
+      avgRating:
+        data.avg_rating == null
+          ? undefined
+          : typeof data.avg_rating === "string"
+            ? parseFloat(data.avg_rating)
+            : data.avg_rating,
+      reviewCount:
+        data.review_count == null
+          ? undefined
+          : typeof data.review_count === "string"
+            ? Number(data.review_count)
+            : data.review_count,
     };
   } catch {
     return null;

@@ -19,6 +19,7 @@ import { getCategoryBySlug, type Category } from "../../lib/categoryService";
 import { useCart } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
 import { getProductsByCategory, type Product as ServiceProduct } from "../../lib/productService";
+import StarRating from "../../components/StarRating";
 
 const FALLBACK_COLORS = [
   "#FF6B6B", "#51CF66", "#FFD43B", "#845EF7", 
@@ -147,7 +148,14 @@ export default function CategorySlugScreen() {
             {hasDiscount && (
               <Text style={styles.originalPrice}>₹{item.original_price}</Text>
             )}
-            <Text style={styles.unit}>/{item.unit}</Text>
+            <Text style={styles.unit}>{item.unit}</Text>
+          </View>
+
+          <View style={styles.ratingWrap}>
+            <StarRating
+              rating={item.avgRating ?? 0}
+              reviewCount={item.reviewCount}
+            />
           </View>
 
           {item.in_stock ? (
@@ -242,7 +250,7 @@ export default function CategorySlugScreen() {
           data={products}
           keyExtractor={(item) => item.id}
           renderItem={renderItem}
-          numColumns={2}
+        numColumns={3}
           columnWrapperStyle={styles.columnWrap}
           contentContainerStyle={styles.list}
           removeClippedSubviews={true}
@@ -303,7 +311,7 @@ const styles = StyleSheet.create({
   },
 
   card: {
-    width: "48.5%",
+    width: "32%",
     backgroundColor: C.card,
     borderRadius: 16,
     overflow: "hidden",
@@ -393,7 +401,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "baseline",
     gap: 6,
-    marginBottom: 10,
+    marginBottom: 6,
     flexWrap: "wrap",
   },
 
@@ -414,6 +422,10 @@ const styles = StyleSheet.create({
     color: C.textSub, 
     fontSize: 12, 
     fontWeight: "500",
+  },
+
+  ratingWrap: {
+    marginBottom: 4,
   },
 
   addBtn: {

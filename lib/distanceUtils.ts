@@ -58,7 +58,6 @@ export async function getProductStoreDistance(
       .select('store_id, stores(latitude, longitude)')
       .eq('master_product_id', productId)
       .eq('is_active', true)
-      .order('quantity', { ascending: false })
       .limit(1)
       .single();
 

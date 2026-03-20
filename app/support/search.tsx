@@ -17,6 +17,7 @@ import { C } from "../../constants/colors";
 import { useCart } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
 import { searchProducts, type Product } from "../../lib/productService";
+import StarRating from "../../components/StarRating";
 
 export default function SearchScreen() {
   const { location } = useLocation();
@@ -128,8 +129,17 @@ export default function SearchScreen() {
                     {hasDiscount && (
                       <Text style={styles.originalPrice}>₹{item.original_price}</Text>
                     )}
-                    <Text style={styles.unit}>/ {item.unit}</Text>
+                    <Text style={styles.unit}>{item.unit}</Text>
                   </View>
+
+                  <View style={styles.ratingWrap}>
+                    <StarRating
+                      rating={item.avgRating ?? 0}
+                      reviewCount={item.reviewCount}
+                      starSize={12}
+                    />
+                  </View>
+
                   <Text style={styles.category}>{item.category}</Text>
                 </View>
 
@@ -261,6 +271,7 @@ const styles = StyleSheet.create({
   price: { color: C.primary, fontSize: 15, fontWeight: "800" },
   originalPrice: { color: C.textLight, fontSize: 12, textDecorationLine: "line-through" },
   unit: { color: C.textSub, fontSize: 12 },
+  ratingWrap: { marginTop: 6 },
   category: { color: C.textLight, fontSize: 11, marginTop: 3 },
 
   soldOutTag: {
