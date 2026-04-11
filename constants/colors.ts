@@ -16,6 +16,7 @@ export const C = {
 
   danger: '#ef4444',
   dangerLight: '#fee2e2',
+  error: '#e53e3e',
   warning: '#f59e0b',
   warningLight: '#fef3c7',
   success: '#10b981',

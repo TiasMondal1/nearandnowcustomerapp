@@ -1,62 +1,57 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
-  ActivityIndicator,
-  FlatList,
-  Image,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    FlatList,
+    Image,
+    RefreshControl,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { C } from "../../constants/colors";
-import { useLocation } from "../../context/LocationContext";
 import { getAllCategories, type Category } from "../../lib/categoryService";
-import { getAllProducts } from "../../lib/productService";
+import { getAllProductsByCategory, type Product } from "../../lib/productService";
 
 const FALLBACK_COLORS = [
-  "#FF6B6B", "#51CF66", "#FFD43B", "#845EF7", 
+  "#FF6B6B", "#51CF66", "#FFD43B", "#845EF7",
   "#339AF0", "#FAB005", "#E599F7", "#74C0FC"
 ];
 
 const FALLBACK_ICONS = [
-  "apple", "leaf", "cow", "cookie", 
+  "apple", "leaf", "cow", "cookie",
   "cup", "sack", "face-woman-shimmer", "home-outline"
 ];
 
 export default function CategoriesScreen() {
-  const { location } = useLocation();
   const [categories, setCategories] = useState<Category[]>([]);
-  const [products, setProducts] = useState<{ category?: string }[]>([]);
+  const [productsByCategory, setProductsByCategory] = useState<Record<string, Product[]>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const fetchData = useCallback(async (isRefresh = false) => {
     try {
       if (!isRefresh) setLoading(true);
-      const loc = location ?? undefined;
-      const [categoriesData, productsData] = await Promise.all([
+      const [categoriesData, productsByCategoryData] = await Promise.all([
         getAllCategories(),
-        getAllProducts(
-          loc ? { lat: loc.latitude, lng: loc.longitude } : undefined,
-        ),
+        getAllProductsByCategory(),
       ]);
       setCategories(categoriesData);
-      setProducts(productsData);
+      setProductsByCategory(productsByCategoryData);
     } catch (error) {
       console.error("Failed to fetch data:", error);
       setCategories([]);
-      setProducts([]);
+      setProductsByCategory({});
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [location?.latitude, location?.longitude]);
+  }, []);
 
   useEffect(() => {
     fetchData();
@@ -67,17 +62,6 @@ export default function CategoriesScreen() {
     fetchData(true);
   }, [fetchData]);
 
-  const categoriesForProducts = useMemo(() => {
-    const categoryNames = new Set(
-      products
-        .map((p) => p.category?.trim())
-        .filter((name): name is string => !!name)
-        .map((name) => name.toLowerCase()),
-    );
-    return categories.filter((cat) =>
-      categoryNames.has(cat.name?.toLowerCase() ?? ""),
-    );
-  }, [products, categories]);
 
   if (loading) {
     return (
@@ -102,7 +86,7 @@ export default function CategoriesScreen() {
       </View>
 
       <FlatList
-        data={categoriesForProducts}
+        data={categories}
         numColumns={2}
         keyExtractor={(item) => item.id}
         columnWrapperStyle={styles.row}
@@ -140,8 +124,8 @@ export default function CategoriesScreen() {
                 style={styles.tile}
               >
                 {item.image_url ? (
-                  <Image 
-                    source={{ uri: item.image_url }} 
+                  <Image
+                    source={{ uri: item.image_url }}
                     style={styles.categoryImage}
                     resizeMode="cover"
                   />
@@ -163,7 +147,9 @@ export default function CategoriesScreen() {
                 <Text style={styles.label}>{item.name}</Text>
 
                 <View style={styles.ctaRow}>
-                  <Text style={styles.ctaText}>Browse</Text>
+                  <Text style={styles.ctaText}>
+                    {productsByCategory[item.name]?.length || 0} items
+                  </Text>
                   <MaterialCommunityIcons
                     name="arrow-right"
                     size={14}

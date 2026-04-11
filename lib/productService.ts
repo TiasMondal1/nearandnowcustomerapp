@@ -83,7 +83,7 @@ async function fetchProductRows(storeIds: string[] | null): Promise<ProductRow[]
         .eq('is_active', true)
         .in('store_id', ids);
       if (error) throw new Error(`Database error: ${error.message}`);
-      if (data?.length) allRows.push(...(data as ProductRow[]));
+      if (data?.length) allRows.push(...(data as unknown as ProductRow[]));
     }
     return allRows;
   }
@@ -99,7 +99,7 @@ async function fetchProductRows(storeIds: string[] | null): Promise<ProductRow[]
       .range(from, from + batchSize - 1);
     if (error) throw new Error(`Database error: ${error.message}`);
     if (data && data.length > 0) {
-      allRows.push(...(data as ProductRow[]));
+      allRows.push(...(data as unknown as ProductRow[]));
       from += batchSize;
       hasMore = data.length === batchSize;
     } else {
@@ -113,7 +113,12 @@ function productRowsToProducts(rows: ProductRow[]): Product[] {
   const byMaster = new Map<string, ProductRow>();
   for (const row of rows) {
     const mp = row.master_products;
-    if (!mp || !mp.is_active) continue;
+    if (!mp) continue;
+
+    // Handle master_products as either single object or array
+    const masterProduct = Array.isArray(mp) ? mp[0] : mp;
+    if (!masterProduct || !masterProduct.is_active) continue;
+
     const existing = byMaster.get(row.master_product_id);
     if (!existing) {
       byMaster.set(row.master_product_id, row);
@@ -131,47 +136,50 @@ function productRowsToProducts(rows: ProductRow[]): Product[] {
 
 function transformRow(row: ProductRow): Product {
   const mp = row.master_products!;
+  // Handle master_products as either single object or array
+  const masterProduct = Array.isArray(mp) ? mp[0] : mp;
+
   const price =
-    mp.discounted_price != null
-      ? typeof mp.discounted_price === 'string'
-        ? parseFloat(mp.discounted_price)
-        : mp.discounted_price
+    masterProduct.discounted_price != null
+      ? typeof masterProduct.discounted_price === 'string'
+        ? parseFloat(masterProduct.discounted_price)
+        : masterProduct.discounted_price
       : 0;
   const originalPrice =
-    mp.base_price != null
-      ? typeof mp.base_price === 'string'
-        ? parseFloat(mp.base_price)
-        : mp.base_price
+    masterProduct.base_price != null
+      ? typeof masterProduct.base_price === 'string'
+        ? parseFloat(masterProduct.base_price)
+        : masterProduct.base_price
       : undefined;
   const q = coerceQuantity(row.quantity);
 
   const avgRating =
-    mp.avg_rating == null
+    masterProduct.avg_rating == null
       ? undefined
-      : typeof mp.avg_rating === "string"
-        ? parseFloat(mp.avg_rating)
-        : mp.avg_rating;
+      : typeof masterProduct.avg_rating === "string"
+        ? parseFloat(masterProduct.avg_rating)
+        : masterProduct.avg_rating;
 
   const reviewCount =
-    mp.review_count == null
+    masterProduct.review_count == null
       ? undefined
-      : typeof mp.review_count === "string"
-        ? Number(mp.review_count)
-        : mp.review_count;
+      : typeof masterProduct.review_count === "string"
+        ? Number(masterProduct.review_count)
+        : masterProduct.review_count;
 
   return {
-    id: mp.id,
-    name: mp.name,
-    category: mp.category,
+    id: masterProduct.id,
+    name: masterProduct.name,
+    category: masterProduct.category,
     price,
     original_price: originalPrice,
-    image_url: mp.image_url,
-    description: mp.description,
+    image_url: masterProduct.image_url,
+    description: masterProduct.description,
     // When quantity isn't available, treat "active" as in-stock.
     in_stock: row.is_active && (q == null || q > 0),
-    unit: mp.unit ?? 'piece',
-    isLoose: mp.is_loose ?? false,
-    created_at: mp.created_at,
+    unit: masterProduct.unit ?? 'piece',
+    isLoose: masterProduct.is_loose ?? false,
+    created_at: masterProduct.created_at,
     avgRating: Number.isFinite(avgRating as number) ? (avgRating as number) : undefined,
     reviewCount: Number.isFinite(reviewCount as number) ? (reviewCount as number) : undefined,
   };
@@ -186,7 +194,12 @@ export async function getAllProducts(options?: {
   const nearbyStoreIds =
     lat != null && lng != null ? await getNearbyStoreIds(lat, lng, radiusKm) : null;
   const storeIdsToUse = nearbyStoreIds?.length ? nearbyStoreIds : null;
-  const rows = await fetchProductRows(storeIdsToUse);
+
+  // If no nearby stores found but location was provided, fetch all products
+  // This ensures products are still shown even if location filtering fails
+  const rows = await fetchProductRows(
+    (lat != null && lng != null && !storeIdsToUse) ? null : storeIdsToUse
+  );
   return productRowsToProducts(rows);
 }
 
@@ -198,8 +211,18 @@ export async function getProductsByCategory(
   const nearbyStoreIds =
     lat != null && lng != null ? await getNearbyStoreIds(lat, lng, radiusKm) : null;
   const storeIdsToUse = nearbyStoreIds?.length ? nearbyStoreIds : null;
-  const rows = await fetchProductRows(storeIdsToUse);
-  const filtered = rows.filter((r) => r.master_products?.category === categoryName);
+
+  // If no nearby stores found but location was provided, fetch all products
+  const rows = await fetchProductRows(
+    (lat != null && lng != null && !storeIdsToUse) ? null : storeIdsToUse
+  );
+
+  const filtered = rows.filter((r) => {
+    const mp = r.master_products;
+    if (!mp) return false;
+    const masterProduct = Array.isArray(mp) ? mp[0] : mp;
+    return masterProduct?.category === categoryName;
+  });
   return productRowsToProducts(filtered);
 }
 
@@ -211,10 +234,50 @@ export async function searchProducts(
   const nearbyStoreIds =
     lat != null && lng != null ? await getNearbyStoreIds(lat, lng, radiusKm) : null;
   const storeIdsToUse = nearbyStoreIds?.length ? nearbyStoreIds : null;
-  const rows = await fetchProductRows(storeIdsToUse);
+
+  // If no nearby stores found but location was provided, fetch all products
+  const rows = await fetchProductRows(
+    (lat != null && lng != null && !storeIdsToUse) ? null : storeIdsToUse
+  );
+
   const q = query.trim().toLowerCase();
-  const matching = q ? rows.filter((r) => r.master_products?.name?.toLowerCase().includes(q)) : rows;
+  const matching = q ? rows.filter((r) => {
+    const mp = r.master_products;
+    if (!mp) return false;
+    const masterProduct = Array.isArray(mp) ? mp[0] : mp;
+    return masterProduct?.name?.toLowerCase().includes(q);
+  }) : rows;
   return productRowsToProducts(matching);
+}
+
+export async function getAllProductsByCategory(options?: {
+  lat?: number;
+  lng?: number;
+  radiusKm?: number;
+}): Promise<Record<string, Product[]>> {
+  const { lat, lng, radiusKm = 4 } = options || {};
+  const nearbyStoreIds =
+    lat != null && lng != null ? await getNearbyStoreIds(lat, lng, radiusKm) : null;
+  const storeIdsToUse = nearbyStoreIds?.length ? nearbyStoreIds : null;
+
+  // If no nearby stores found but location was provided, fetch all products
+  const rows = await fetchProductRows(
+    (lat != null && lng != null && !storeIdsToUse) ? null : storeIdsToUse
+  );
+  const products = productRowsToProducts(rows);
+
+  // Group products by category
+  const productsByCategory: Record<string, Product[]> = {};
+
+  products.forEach(product => {
+    const category = product.category || 'Uncategorized';
+    if (!productsByCategory[category]) {
+      productsByCategory[category] = [];
+    }
+    productsByCategory[category].push(product);
+  });
+
+  return productsByCategory;
 }
 
 export async function getProductById(masterProductId: string): Promise<Product | null> {
