@@ -370,113 +370,82 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.safe} edges={["top"]}>
       {/* ── Header ───────────────────────────────────────────────────────── */}
       <Animated.View entering={FadeIn.duration(300)} style={styles.header}>
-        {/* Warm gradient wash behind header */}
         <LinearGradient
-          colors={[T.cream, "rgba(250,250,247,0)"]}
+          colors={[T.greenXLight, T.cream]}
           start={{ x: 0, y: 0 }}
           end={{ x: 0, y: 1 }}
           style={StyleSheet.absoluteFillObject}
           pointerEvents="none"
         />
 
-        {/* App bar row */}
+        {/* App bar row: delivery time left + icons right */}
         <Animated.View
           entering={FadeInDown.duration(420).springify()}
           style={styles.appBar}
         >
-          {/* Logo + Name */}
-          <View style={styles.brandRow}>
-            <View style={styles.logoWrap}>
-              <LinearGradient
-                colors={[T.greenXLight, T.white]}
-                style={StyleSheet.absoluteFillObject}
-              />
-              <Image
-                source={require("../../Logo.png")}
-                style={styles.logoImage}
-                resizeMode="contain"
-              />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.appName}>Near & Now</Text>
-              <Text style={styles.appTagline} numberOfLines={1}>
-                Digital dukaan, local dil se
+          {/* Delivery time + location (Zepto/Blinkit style) */}
+          <Pressable
+            style={{ flex: 1 }}
+            onPress={() => router.push("/location")}
+          >
+            <View style={styles.deliveryTimeRow}>
+              <MaterialCommunityIcons name="lightning-bolt" size={18} color={T.green} />
+              <Text style={styles.deliveryTimeText}>
+                {location ? "Delivering in" : "Set location"}
               </Text>
             </View>
-          </View>
-
-          {/* Profile button */}
-          <Animated.View style={profileAnimatedStyle}>
-            <Pressable
-              onPressIn={() => {
-                profileScale.value = withSpring(0.93, {
-                  damping: 16,
-                  stiffness: 260,
-                });
-              }}
-              onPressOut={() => {
-                profileScale.value = withSpring(1, {
-                  damping: 16,
-                  stiffness: 260,
-                });
-              }}
-              onPress={() => setShowProfileMenu(true)}
-              style={styles.profileBtn}
-            >
-              <LinearGradient
-                colors={[T.greenLight, T.green]}
-                style={styles.profileAvatar}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-              >
-                <MaterialCommunityIcons
-                  name="account-outline"
-                  size={20}
-                  color={T.white}
-                />
-              </LinearGradient>
-            </Pressable>
-          </Animated.View>
-        </Animated.View>
-
-        {/* Location pill */}
-        {!hasScrolled && (
-          <Animated.View
-            entering={FadeInDown.delay(80).duration(400).springify()}
-            style={styles.locationBar}
-          >
+            <Text style={styles.deliveryMinutes}>
+              {location ? "20 minutes" : "Near & Now"}
+            </Text>
             <Pressable
               onPress={() => router.push("/location")}
-              style={({ pressed }) => [
-                styles.locationPill,
-                pressed && { opacity: 0.88 },
-              ]}
+              style={styles.locationInlineRow}
             >
-              <View style={styles.locationIconCircle}>
-                <MaterialCommunityIcons
-                  name="map-marker"
-                  size={16}
-                  color={T.green}
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.locationTag}>DELIVERING TO</Text>
-                <Text style={styles.locationText} numberOfLines={1}>
-                  {location
-                    ? location.address
-                      ? `${(location.label || "Home").toUpperCase()} · ${location.address}`
-                      : location.label || "Selected location"
-                    : "Set your delivery location"}
-                </Text>
-              </View>
-              <MaterialCommunityIcons
-                name="chevron-down"
-                size={18}
-                color={T.barkLight}
-              />
+              <Text style={styles.locationInlineText} numberOfLines={1}>
+                {location
+                  ? location.address
+                    ? `${(location.label || "Home").toUpperCase()} · ${location.address}`
+                    : location.label || "Selected location"
+                  : "Tap to set delivery address"}
+              </Text>
+              <MaterialCommunityIcons name="chevron-down" size={14} color={T.bark} />
             </Pressable>
-          </Animated.View>
-        )}
+          </Pressable>
+
+          {/* Right side: wallet + profile */}
+          <View style={styles.headerActions}>
+            <TouchableOpacity style={styles.walletBtn} activeOpacity={0.8}>
+              <LinearGradient
+                colors={[T.greenXLight, "#d4edda"]}
+                style={StyleSheet.absoluteFillObject}
+              />
+              <MaterialCommunityIcons name="wallet-outline" size={16} color={T.green} />
+              <Text style={styles.walletText}>₹0</Text>
+            </TouchableOpacity>
+
+            <Animated.View style={profileAnimatedStyle}>
+              <Pressable
+                onPressIn={() => {
+                  profileScale.value = withSpring(0.93, { damping: 16, stiffness: 260 });
+                }}
+                onPressOut={() => {
+                  profileScale.value = withSpring(1, { damping: 16, stiffness: 260 });
+                }}
+                onPress={() => setShowProfileMenu(true)}
+                style={styles.profileBtn}
+              >
+                <LinearGradient
+                  colors={[T.greenLight, T.green]}
+                  style={styles.profileAvatar}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                >
+                  <MaterialCommunityIcons name="account-outline" size={20} color={T.white} />
+                </LinearGradient>
+              </Pressable>
+            </Animated.View>
+          </View>
+        </Animated.View>
 
         {/* Sticky search bar (appears on scroll) */}
         {hasScrolled && (
@@ -489,11 +458,7 @@ export default function HomeScreen() {
               activeOpacity={0.88}
               onPress={() => router.push("../support/search")}
             >
-              <MaterialCommunityIcons
-                name="magnify"
-                size={19}
-                color={T.barkLight}
-              />
+              <MaterialCommunityIcons name="magnify" size={19} color={T.barkLight} />
               <Text style={styles.searchPlaceholder}>
                 Search groceries, dairy, snacks…
               </Text>
@@ -733,43 +698,66 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 18,
-    paddingTop: 6,
-    paddingBottom: 8,
+    paddingTop: 10,
+    paddingBottom: 12,
+    gap: 12,
   },
-  brandRow: {
+
+  // Delivery time (Zepto/Blinkit style)
+  deliveryTimeRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 11,
+    gap: 4,
+    marginBottom: 1,
+  },
+  deliveryTimeText: {
+    fontSize: 13,
+    color: T.barkMid,
+    fontWeight: "500",
+  },
+  deliveryMinutes: {
+    fontSize: 26,
+    fontWeight: "900",
+    color: T.bark,
+    letterSpacing: -0.8,
+    lineHeight: 30,
+    marginBottom: 3,
+  },
+  locationInlineRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    maxWidth: "90%",
+  },
+  locationInlineText: {
+    fontSize: 12.5,
+    color: T.bark,
+    fontWeight: "700",
     flex: 1,
   },
-  logoWrap: {
-    width: 46,
-    height: 46,
-    borderRadius: 14,
+
+  // Right actions: wallet + profile
+  headerActions: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    gap: 8,
+  },
+  walletBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    borderRadius: 20,
     overflow: "hidden",
     borderWidth: 1.5,
-    borderColor: T.greenXLight,
-    shadowColor: T.green,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.12,
-    shadowRadius: 6,
-    elevation: 4,
+    borderColor: "rgba(45,122,79,0.18)",
+    backgroundColor: T.greenXLight,
   },
-  logoImage: { width: 34, height: 34 },
-  appName: {
-    fontSize: 18,
+  walletText: {
+    fontSize: 13,
     fontWeight: "800",
-    color: T.bark,
-    letterSpacing: -0.3,
-  },
-  appTagline: {
-    fontSize: 11.5,
-    color: T.barkLight,
-    fontWeight: "600",
-    marginTop: 1,
-    letterSpacing: 0.15,
+    color: T.green,
   },
 
   profileBtn: { padding: 3 },
@@ -784,49 +772,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.28,
     shadowRadius: 8,
     elevation: 6,
-  },
-
-  // ── Location bar ─────────────────────────────────────────────────────────
-  locationBar: {
-    paddingHorizontal: 18,
-    paddingBottom: 12,
-    paddingTop: 2,
-  },
-  locationPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    backgroundColor: T.white,
-    borderRadius: 14,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderWidth: 1.5,
-    borderColor: T.cardBorder,
-    shadowColor: T.shadowDark,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 1,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  locationIconCircle: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: T.greenXLight,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  locationTag: {
-    fontSize: 10,
-    color: T.green,
-    fontWeight: "800",
-    letterSpacing: 0.9,
-  },
-  locationText: {
-    fontSize: 13.5,
-    color: T.bark,
-    fontWeight: "700",
-    marginTop: 1,
   },
 
   // ── Sticky search ─────────────────────────────────────────────────────────
