@@ -24,6 +24,14 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+function safeParse<T>(raw: string): T | null {
+  try {
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AppUser | null>(null);
   const [customer, setCustomer] = useState<Customer | null>(null);
@@ -36,39 +44,83 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     restoreSession();
   }, []);
 
+  /**
+   * Optimistic hydrate: if cached user exists, render as authenticated immediately
+   * and revalidate against the backend in the background. Network failure alone
+   * does NOT log the user out; only an explicit "user not found" response does.
+   */
   const restoreSession = async () => {
     try {
-      setIsLoading(true);
-      const [storedUserId, storedToken] = await Promise.all([
+      const [storedUserId, storedToken, rawUser, rawCustomer] = await Promise.all([
         AsyncStorage.getItem('userId'),
         AsyncStorage.getItem('userToken'),
+        AsyncStorage.getItem('userData'),
+        AsyncStorage.getItem('customerData'),
       ]);
 
-      if (storedUserId && storedToken) {
-        const fresh = await getCurrentUserFromSession(storedUserId);
-        if (fresh) {
-          setUser(fresh.user);
-          setCustomer(fresh.customer || null);
-          setUserId(storedUserId);
-          setUserToken(storedToken);
-          setIsAuthenticated(true);
-          await Promise.all([
-            AsyncStorage.setItem('userData', JSON.stringify(fresh.user)),
-            AsyncStorage.setItem(
-              'customerData',
-              fresh.customer ? JSON.stringify(fresh.customer) : '',
-            ),
-          ]);
-        } else {
-          await clearStoredSession();
-        }
-      } else {
+      if (!storedUserId || !storedToken) {
         setIsAuthenticated(false);
+        setIsLoading(false);
+        return;
+      }
+
+      const cachedUser: AppUser | null = rawUser ? safeParse<AppUser>(rawUser) : null;
+      const cachedCustomer: Customer | null = rawCustomer ? safeParse<Customer>(rawCustomer) : null;
+
+      if (cachedUser) {
+        setUser(cachedUser);
+        setCustomer(cachedCustomer);
+        setUserId(storedUserId);
+        setUserToken(storedToken);
+        setIsAuthenticated(true);
+        setIsLoading(false);
+        revalidateSession(storedUserId);
+        return;
+      }
+
+      const fresh = await getCurrentUserFromSession(storedUserId);
+      if (fresh) {
+        setUser(fresh.user);
+        setCustomer(fresh.customer || null);
+        setUserId(storedUserId);
+        setUserToken(storedToken);
+        setIsAuthenticated(true);
+        await Promise.all([
+          AsyncStorage.setItem('userData', JSON.stringify(fresh.user)),
+          AsyncStorage.setItem(
+            'customerData',
+            fresh.customer ? JSON.stringify(fresh.customer) : '',
+          ),
+        ]);
+      } else {
+        await clearStoredSession();
       }
     } catch {
       setIsAuthenticated(false);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const revalidateSession = async (id: string) => {
+    try {
+      const fresh = await getCurrentUserFromSession(id);
+      if (fresh) {
+        setUser(fresh.user);
+        setCustomer(fresh.customer || null);
+        await Promise.all([
+          AsyncStorage.setItem('userData', JSON.stringify(fresh.user)),
+          AsyncStorage.setItem(
+            'customerData',
+            fresh.customer ? JSON.stringify(fresh.customer) : '',
+          ),
+        ]);
+      } else if (fresh === null) {
+        // Only log out on a definitive "user not found" (null); network errors throw.
+        await clearStoredSession();
+      }
+    } catch {
+      // Offline / transient error: keep optimistic session as-is.
     }
   };
 

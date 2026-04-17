@@ -1,4 +1,17 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+import type { Category } from './categoryService';
 import { supabaseAdmin } from './supabase';
+
+const MASTER_PRODUCT_FIELDS =
+  'id,name,category,base_price,discounted_price,unit,image_url,description,is_loose,is_active,created_at';
+
+/** Default page size for incremental home load. */
+export const HOME_PAGE_SIZE = 20;
+
+const HOME_CACHE_KEY = 'nn_home_catalog_v1';
+const HOME_PAGE_CACHE_KEY = 'nn_home_page_v2';
+const HOME_CACHE_TTL_MS = 1000 * 60 * 60 * 24; // 24h; UI re-fetches in background anyway.
 
 export interface Product {
   id: string;
@@ -42,7 +55,7 @@ async function fetchAllMasterProductRows(): Promise<MasterProductRow[]> {
   while (hasMore) {
     const { data, error } = await supabaseAdmin
       .from('master_products')
-      .select('*')
+      .select(MASTER_PRODUCT_FIELDS)
       .eq('is_active', true)
       .range(from, from + batchSize - 1);
     if (error) throw new Error(`Database error: ${error.message}`);
@@ -187,11 +200,82 @@ export function getProductsForCategoryName(
   return out;
 }
 
+/* ───────────── Fast boot helpers (paginated) ───────────── */
+
+/**
+ * Fetches only the `category` column for all active master products and tallies per-category
+ * counts in memory. One small round-trip (category strings only) → no DB aggregation needed.
+ */
+export async function getCategoryCounts(): Promise<{
+  counts: Record<string, number>;
+  total: number;
+}> {
+  const counts: Record<string, number> = {};
+  let total = 0;
+  let from = 0;
+  const batchSize = 1000;
+  let hasMore = true;
+  while (hasMore) {
+    const { data, error } = await supabaseAdmin
+      .from('master_products')
+      .select('category')
+      .eq('is_active', true)
+      .range(from, from + batchSize - 1);
+    if (error) throw new Error(`Database error: ${error.message}`);
+    if (data && data.length > 0) {
+      for (const row of data as { category: string | null }[]) {
+        const key = (row.category || 'Uncategorized').toLowerCase().trim();
+        counts[key] = (counts[key] || 0) + 1;
+        total += 1;
+      }
+      from += batchSize;
+      hasMore = data.length === batchSize;
+    } else {
+      hasMore = false;
+    }
+  }
+  return { counts, total };
+}
+
+/** Case-insensitive lookup helper for `getCategoryCounts().counts`. */
+export function getCountForCategoryName(
+  counts: Record<string, number>,
+  categoryName: string,
+): number {
+  return counts[categoryName.toLowerCase().trim()] || 0;
+}
+
+/**
+ * Paginated fetch from master_products. Returns exactly `limit` rows at a given offset.
+ * If `category` is provided, filters case-insensitively on `master_products.category`.
+ */
+export async function getProductsPage(
+  category: string | null,
+  offset: number,
+  limit: number = HOME_PAGE_SIZE,
+): Promise<Product[]> {
+  let query = supabaseAdmin
+    .from('master_products')
+    .select(MASTER_PRODUCT_FIELDS)
+    .eq('is_active', true);
+
+  if (category) {
+    query = query.ilike('category', category.trim());
+  }
+
+  const { data, error } = await query
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (error) throw new Error(`Database error: ${error.message}`);
+  return (data as MasterProductRow[]).map(masterRowToProduct);
+}
+
 export async function getProductById(masterProductId: string): Promise<Product | null> {
   try {
     const { data, error } = await supabaseAdmin
       .from('master_products')
-      .select('*')
+      .select(MASTER_PRODUCT_FIELDS)
       .eq('id', masterProductId)
       .single();
 
@@ -199,5 +283,75 @@ export async function getProductById(masterProductId: string): Promise<Product |
     return masterRowToProduct(data as MasterProductRow);
   } catch {
     return null;
+  }
+}
+
+/* ───────────── Home screen SWR cache ───────────── */
+
+export interface HomeCatalogCache {
+  products: Product[];
+  productsByCategory: Record<string, Product[]>;
+  categories: Category[];
+  savedAt: number;
+}
+
+export async function readHomeCatalogCache(): Promise<HomeCatalogCache | null> {
+  try {
+    const raw = await AsyncStorage.getItem(HOME_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as HomeCatalogCache;
+    if (!parsed?.products || !parsed?.categories) return null;
+    if (Date.now() - (parsed.savedAt || 0) > HOME_CACHE_TTL_MS) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export async function writeHomeCatalogCache(
+  data: Omit<HomeCatalogCache, 'savedAt'>,
+): Promise<void> {
+  try {
+    await AsyncStorage.setItem(
+      HOME_CACHE_KEY,
+      JSON.stringify({ ...data, savedAt: Date.now() }),
+    );
+  } catch {
+    // cache write is best-effort
+  }
+}
+
+/* ─── Lightweight home cache: categories + counts + first page ─── */
+
+export interface HomePageCache {
+  categories: Category[];
+  categoryCounts: { counts: Record<string, number>; total: number };
+  firstPage: Product[];
+  savedAt: number;
+}
+
+export async function readHomePageCache(): Promise<HomePageCache | null> {
+  try {
+    const raw = await AsyncStorage.getItem(HOME_PAGE_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as HomePageCache;
+    if (!parsed?.firstPage || !parsed?.categories || !parsed?.categoryCounts) return null;
+    if (Date.now() - (parsed.savedAt || 0) > HOME_CACHE_TTL_MS) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export async function writeHomePageCache(
+  data: Omit<HomePageCache, 'savedAt'>,
+): Promise<void> {
+  try {
+    await AsyncStorage.setItem(
+      HOME_PAGE_CACHE_KEY,
+      JSON.stringify({ ...data, savedAt: Date.now() }),
+    );
+  } catch {
+    // cache write is best-effort
   }
 }

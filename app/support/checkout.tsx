@@ -7,13 +7,11 @@ import {
   Animated,
   Image,
   LayoutAnimation,
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  UIManager,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -27,11 +25,6 @@ import { getProductStoreDistance } from "../../lib/distanceUtils";
 import { createOrder } from "../../lib/orderService";
 import { getAllProducts, type Product } from "../../lib/productService";
 import { createRazorpayOrder } from "../../lib/razorpayService";
-
-// Enable LayoutAnimation on Android
-if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
 
 type PaymentMode = "upi" | "cod";
 

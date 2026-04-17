@@ -4,21 +4,15 @@ import React, { useState } from "react";
 import {
     LayoutAnimation,
     Linking,
-    Platform,
     ScrollView,
     StyleSheet,
     Text,
     TouchableOpacity,
-    UIManager,
     View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { C } from "../../constants/colors";
-
-if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
 
 export default function SupportScreen() {
   return (

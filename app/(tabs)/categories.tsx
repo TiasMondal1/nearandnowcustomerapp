@@ -17,7 +17,12 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { C } from "../../constants/colors";
 import { useLocation } from "../../context/LocationContext";
 import { getAllCategories, type Category } from "../../lib/categoryService";
-import { getProductsForCategoryName, loadMasterCatalog, type Product } from "../../lib/productService";
+import {
+    getCategoryCounts,
+    getCountForCategoryName,
+    readHomePageCache,
+    writeHomePageCache,
+} from "../../lib/productService";
 
 const FALLBACK_COLORS = [
   "#FF6B6B", "#51CF66", "#FFD43B", "#845EF7",
@@ -30,33 +35,47 @@ const FALLBACK_ICONS = [
 ];
 
 export default function CategoriesScreen() {
-  const { location, isHydrated } = useLocation();
+  const { isHydrated } = useLocation();
   const [categories, setCategories] = useState<Category[]>([]);
-  const [productsByCategory, setProductsByCategory] = useState<Record<string, Product[]>>({});
+  const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetchData = useCallback(async (isRefresh = false) => {
+  const fetchData = useCallback(async (_isRefresh = false) => {
     try {
-      if (!isRefresh) setLoading(true);
-      const loc = location;
-      const opts = loc ? { lat: loc.latitude, lng: loc.longitude } : undefined;
-      const [categoriesData, catalog] = await Promise.all([
+      const [categoriesData, countsData] = await Promise.all([
         getAllCategories(),
-        loadMasterCatalog(opts),
+        getCategoryCounts(),
       ]);
-      const productsByCategoryData = catalog.productsByCategory;
       setCategories(categoriesData);
-      setProductsByCategory(productsByCategoryData);
+      setCategoryCounts(countsData.counts);
+      writeHomePageCache({
+        categories: categoriesData,
+        categoryCounts: countsData,
+        firstPage: [],
+      });
     } catch (error) {
       console.error("Failed to fetch data:", error);
-      setCategories([]);
-      setProductsByCategory({});
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [location]);
+  }, []);
+
+  // Paint from cache ASAP.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const cached = await readHomePageCache();
+      if (cancelled || !cached) return;
+      setCategories(cached.categories);
+      setCategoryCounts(cached.categoryCounts.counts);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!isHydrated) return;
@@ -65,10 +84,8 @@ export default function CategoriesScreen() {
 
   const categoriesWithProducts = useMemo(
     () =>
-      categories.filter(
-        (c) => getProductsForCategoryName(productsByCategory, c.name).length > 0,
-      ),
-    [categories, productsByCategory],
+      categories.filter((c) => getCountForCategoryName(categoryCounts, c.name) > 0),
+    [categories, categoryCounts],
   );
 
   const onRefresh = useCallback(() => {
@@ -162,7 +179,7 @@ export default function CategoriesScreen() {
 
                 <View style={styles.ctaRow}>
                   <Text style={styles.ctaText}>
-                    {productsByCategory[item.name]?.length || 0} items
+                    {getCountForCategoryName(categoryCounts, item.name)} items
                   </Text>
                   <MaterialCommunityIcons
                     name="arrow-right"

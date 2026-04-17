@@ -10,9 +10,11 @@ import React, {
 import * as ExpoLocation from "expo-location";
 import {
   ActivityIndicator,
+  BackHandler,
   FlatList,
   Image,
   InteractionManager,
+  Platform,
   Pressable,
   RefreshControl,
   StyleSheet,
@@ -20,6 +22,7 @@ import {
   TouchableOpacity,
   View
 } from "react-native";
+import { useFocusEffect } from "expo-router";
 import Animated, {
   FadeIn,
   FadeInDown,
@@ -36,8 +39,12 @@ import { useCart } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
 import { getAllCategories, type Category } from "../../lib/categoryService";
 import {
-  getProductsForCategoryName,
-  loadMasterCatalog,
+  getCategoryCounts,
+  getCountForCategoryName,
+  getProductsPage,
+  HOME_PAGE_SIZE,
+  readHomePageCache,
+  writeHomePageCache,
   type Product,
 } from "../../lib/productService";
 
@@ -49,14 +56,6 @@ function shuffleArray<T>(items: T[]): T[] {
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr;
-}
-
-function shuffleProductGroups(record: Record<string, Product[]>): Record<string, Product[]> {
-  const out: Record<string, Product[]> = {};
-  for (const k of Object.keys(record)) {
-    out[k] = shuffleArray([...record[k]]);
-  }
-  return out;
 }
 
 // ─── Design tokens (override / extend your C palette) ───────────────────────
@@ -240,11 +239,13 @@ function CategoryChip({
   item,
   index,
   active,
+  count,
   onPress,
 }: {
   item: any;
   index: number;
   active: boolean;
+  count: number;
   onPress: () => void;
 }) {
   const icon =
@@ -279,6 +280,13 @@ function CategoryChip({
         {active && (
           <View style={styles.categoryActiveRing} pointerEvents="none" />
         )}
+        {count > 0 && (
+          <View style={styles.categoryCountBadge} pointerEvents="none">
+            <Text style={styles.categoryCountText}>
+              {count > 99 ? "99+" : count}
+            </Text>
+          </View>
+        )}
       </View>
       <Text
         style={[styles.categoryLabel, active && styles.categoryLabelActive]}
@@ -292,10 +300,18 @@ function CategoryChip({
 
 // ─── Main Screen ─────────────────────────────────────────────────────────────
 export default function HomeScreen() {
+  // `loading` only blocks on cold cache. If we have cached data, render it immediately.
   const [loading, setLoading] = useState(true);
-  const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [productsByCategory, setProductsByCategory] = useState<Record<string, Product[]>>({});
+  const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({});
+  const [totalCount, setTotalCount] = useState(0);
+
+  // Paginated product list for the *currently active* category (or All).
+  const [pageItems, setPageItems] = useState<Product[]>([]);
+  const [pageOffset, setPageOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+
   const [activeCategory, setActiveCategory] = useState("All");
   const [refreshing, setRefreshing] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -308,34 +324,108 @@ export default function HomeScreen() {
   const { location, isHydrated } = useLocation();
   const { addItem, items, updateQty } = useCart();
 
-  const fetchData = useCallback(async (isRefresh = false) => {
+  // Android: on Home tab, hardware back should close the app, never go back to auth/signup.
+  useFocusEffect(
+    useCallback(() => {
+      if (Platform.OS !== "android") return;
+      const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+        BackHandler.exitApp();
+        return true;
+      });
+      return () => sub.remove();
+    }, []),
+  );
+
+  /** Loads categories + counts + first page fresh and replaces state. */
+  const fetchInitial = useCallback(async () => {
     try {
-      if (!isRefresh) setLoading(true);
-      const loc = location;
-      const [catalog, categoriesData] = await Promise.all([
-        loadMasterCatalog(
-          loc ? { lat: loc.latitude, lng: loc.longitude } : undefined,
-        ),
+      const [categoriesData, countsData, firstPage] = await Promise.all([
         getAllCategories(),
+        getCategoryCounts(),
+        getProductsPage(null, 0, HOME_PAGE_SIZE),
       ]);
-      setProducts(shuffleArray(catalog.products));
+      const shuffled = shuffleArray(firstPage);
       setCategories(categoriesData);
-      setProductsByCategory(shuffleProductGroups(catalog.productsByCategory));
+      setCategoryCounts(countsData.counts);
+      setTotalCount(countsData.total);
+      setActiveCategory((prev) => (prev === "All" ? prev : "All"));
+      setPageItems(shuffled);
+      setPageOffset(firstPage.length);
+      setHasMore(firstPage.length >= HOME_PAGE_SIZE);
+      writeHomePageCache({
+        categories: categoriesData,
+        categoryCounts: countsData,
+        firstPage,
+      });
     } catch (error) {
-      console.error("Failed to fetch data:", error);
-      setProducts([]);
-      setCategories([]);
-      setProductsByCategory({});
+      console.error("Failed to load home:", error);
     } finally {
       setLoading(false);
     }
-  }, [location]);
+  }, []);
+
+  /** Paint from cache ASAP so the UI is never blank. */
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const cached = await readHomePageCache();
+      if (cancelled || !cached) return;
+      setCategories(cached.categories);
+      setCategoryCounts(cached.categoryCounts.counts);
+      setTotalCount(cached.categoryCounts.total);
+      setPageItems(shuffleArray(cached.firstPage));
+      setPageOffset(cached.firstPage.length);
+      setHasMore(cached.firstPage.length >= HOME_PAGE_SIZE);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!isHydrated) return;
-    const task = InteractionManager.runAfterInteractions(() => fetchData());
+    const task = InteractionManager.runAfterInteractions(() => fetchInitial());
     return () => task.cancel();
-  }, [isHydrated, fetchData]);
+  }, [isHydrated, fetchInitial]);
+
+  /** Fetch the first page for the active category (called when user taps a chip). */
+  const loadCategoryFirstPage = useCallback(async (categoryName: string) => {
+    try {
+      setLoadingMore(true);
+      const cat = categoryName === "All" ? null : categoryName;
+      const rows = await getProductsPage(cat, 0, HOME_PAGE_SIZE);
+      setPageItems(shuffleArray(rows));
+      setPageOffset(rows.length);
+      setHasMore(rows.length >= HOME_PAGE_SIZE);
+    } catch (e) {
+      console.error("Failed to load category page:", e);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, []);
+
+  /** Appends the next page on scroll-to-end. */
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    try {
+      setLoadingMore(true);
+      const cat = activeCategory === "All" ? null : activeCategory;
+      const rows = await getProductsPage(cat, pageOffset, HOME_PAGE_SIZE);
+      const shuffled = shuffleArray(rows);
+      setPageItems((prev) => {
+        const seen = new Set(prev.map((p) => p.id));
+        const add = shuffled.filter((p) => !seen.has(p.id));
+        return [...prev, ...add];
+      });
+      setPageOffset((o) => o + rows.length);
+      setHasMore(rows.length >= HOME_PAGE_SIZE);
+    } catch (e) {
+      console.error("Failed to load more:", e);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [activeCategory, pageOffset, loadingMore, hasMore]);
 
   // ── Live reverse-geocode from device GPS ──────────────────────────────────
   useEffect(() => {
@@ -370,19 +460,17 @@ export default function HomeScreen() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchData(true);
+    await fetchInitial();
     setRefreshing(false);
-  }, [fetchData]);
+  }, [fetchInitial]);
 
-  /** Categories from `categories` that have at least one catalog product; order shuffled on each data load. */
+  /** Only show chips for categories that have products (uses counts, not a full product scan). */
   const categoriesWithProducts = useMemo(
     () =>
       shuffleArray(
-        categories.filter(
-          (c) => getProductsForCategoryName(productsByCategory, c.name).length > 0,
-        ),
+        categories.filter((c) => getCountForCategoryName(categoryCounts, c.name) > 0),
       ),
-    [categories, productsByCategory],
+    [categories, categoryCounts],
   );
 
   useEffect(() => {
@@ -391,15 +479,20 @@ export default function HomeScreen() {
     if (!stillValid) setActiveCategory("All");
   }, [activeCategory, categoriesWithProducts]);
 
-  const filteredProducts = useMemo(() => {
-    if (activeCategory === "All") return products;
-    const fromMap = getProductsForCategoryName(productsByCategory, activeCategory);
-    if (fromMap.length > 0) return fromMap;
-    return products.filter(
-      (p) =>
-        p.category?.toLowerCase().trim() === activeCategory.toLowerCase().trim(),
-    );
-  }, [products, activeCategory, productsByCategory]);
+  const handleSelectCategory = useCallback(
+    (name: string) => {
+      if (name === activeCategory) return;
+      setActiveCategory(name);
+      loadCategoryFirstPage(name);
+    },
+    [activeCategory, loadCategoryFirstPage],
+  );
+
+  const filteredProducts = pageItems;
+  const activeCountLabel =
+    activeCategory === "All"
+      ? totalCount
+      : getCountForCategoryName(categoryCounts, activeCategory);
 
   const profileScale = useSharedValue(1);
   const profileAnimatedStyle = useAnimatedStyle(() => ({
@@ -571,6 +664,21 @@ export default function HomeScreen() {
         updateCellsBatchingPeriod={50}
         columnWrapperStyle={styles.columnWrap}
         contentContainerStyle={styles.listContent}
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.4}
+        ListFooterComponent={
+          loadingMore && hasMore ? (
+            <View style={{ paddingVertical: 18, alignItems: "center" }}>
+              <ActivityIndicator size="small" color={T.green} />
+            </View>
+          ) : !hasMore && pageItems.length > 0 ? (
+            <View style={{ paddingVertical: 18, alignItems: "center" }}>
+              <Text style={{ color: T.barkLight, fontSize: 12, fontWeight: "600" }}>
+                You&apos;ve reached the end
+              </Text>
+            </View>
+          ) : null
+        }
         ListHeaderComponent={
           <>
             {/* Search bar (default, below fold) */}
@@ -601,14 +709,21 @@ export default function HomeScreen() {
               showsHorizontalScrollIndicator={false}
               keyExtractor={(c) => c.id}
               contentContainerStyle={styles.categoryStrip}
-              renderItem={({ item, index }) => (
-                <CategoryChip
-                  item={item}
-                  index={index}
-                  active={activeCategory === item.name}
-                  onPress={() => setActiveCategory(item.name)}
-                />
-              )}
+              renderItem={({ item, index }) => {
+                const count =
+                  item.id === "all"
+                    ? totalCount
+                    : getCountForCategoryName(categoryCounts, item.name);
+                return (
+                  <CategoryChip
+                    item={item}
+                    index={index}
+                    count={count}
+                    active={activeCategory === item.name}
+                    onPress={() => handleSelectCategory(item.name)}
+                  />
+                );
+              }}
             />
 
             {/* Section header */}
@@ -617,9 +732,7 @@ export default function HomeScreen() {
                 {activeCategory === "All" ? "All Products" : activeCategory}
               </Text>
               <View style={styles.sectionBadge}>
-                <Text style={styles.sectionCount}>
-                  {filteredProducts.length}
-                </Text>
+                <Text style={styles.sectionCount}>{activeCountLabel}</Text>
               </View>
             </View>
           </>
@@ -962,6 +1075,26 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.35)",
   },
   categoryImage: { width: "100%", height: "100%" },
+  categoryCountBadge: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    paddingHorizontal: 5,
+    backgroundColor: T.badge,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: T.white,
+  },
+  categoryCountText: {
+    color: T.white,
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 0.2,
+  },
   categoryLabel: {
     fontSize: 11,
     color: T.barkMid,

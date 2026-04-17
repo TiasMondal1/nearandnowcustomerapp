@@ -6,9 +6,7 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.EXPO_PUBLIC_SUPABASE_SERVICE_ROLE_
 
 // Only the anon-key client lives in the app bundle.
 // All admin/privileged operations go through the Railway backend API.
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  realtime: { params: { eventsPerSecond: 10 } },
-});
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 export const supabaseAdmin = createClient(
   SUPABASE_URL,
