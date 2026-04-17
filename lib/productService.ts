@@ -16,90 +16,38 @@ export interface Product {
   reviewCount?: number;
 }
 
-interface ProductRow {
+/** Row shape from `master_products` (select *). */
+interface MasterProductRow {
   id: string;
-  store_id: string;
-  master_product_id: string;
-  // `products.quantity` may not exist in your current Supabase schema yet.
-  // Keep it optional so the app doesn't crash when it's missing.
-  quantity?: unknown;
-  is_active: boolean;
-  master_products?: {
-    id: string;
-    name: string;
-    category: string;
-    base_price: number;
-    discounted_price: number;
-    unit: string;
-    image_url?: string;
-    description?: string;
-    is_loose?: boolean;
-    is_active: boolean;
-    created_at?: string;
-    avg_rating?: number | string | null;
-    review_count?: number | string | null;
-    [key: string]: unknown;
-  } | null;
+  name: string;
+  category: string;
+  base_price?: number | string | null;
+  discounted_price?: number | string | null;
+  unit?: string | null;
+  image_url?: string | null;
+  description?: string | null;
+  is_loose?: boolean | null;
+  is_active?: boolean | null;
+  created_at?: string | null;
+  avg_rating?: number | string | null;
+  review_count?: number | string | null;
+  [key: string]: unknown;
 }
 
-const IN_FILTER_CHUNK_SIZE = 100;
-
-function chunk<T>(arr: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
-}
-
-function coerceQuantity(value: unknown): number | undefined {
-  if (value == null) return undefined;
-  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
-  const n = parseFloat(String(value));
-  return Number.isFinite(n) ? n : undefined;
-}
-
-async function getNearbyStoreIds(lat: number, lng: number, radiusKm = 4): Promise<string[]> {
-  try {
-    const { data: storeIds, error } = await supabaseAdmin.rpc('get_nearby_store_ids', {
-      cust_lat: lat,
-      cust_lng: lng,
-      radius_km: radiusKm,
-    });
-    if (error || !storeIds?.length) return [];
-    return storeIds as string[];
-  } catch {
-    return [];
-  }
-}
-
-async function fetchProductRows(storeIds: string[] | null): Promise<ProductRow[]> {
-  const allRows: ProductRow[] = [];
-
-  if (storeIds != null && storeIds.length > 0) {
-    const storeChunks = chunk(storeIds, IN_FILTER_CHUNK_SIZE);
-    for (const ids of storeChunks) {
-      const { data, error } = await supabaseAdmin
-        .from('products')
-        .select('id, store_id, master_product_id, is_active, master_products(*)')
-        .eq('is_active', true)
-        .in('store_id', ids);
-      if (error) throw new Error(`Database error: ${error.message}`);
-      if (data?.length) allRows.push(...(data as unknown as ProductRow[]));
-    }
-    return allRows;
-  }
-
+async function fetchAllMasterProductRows(): Promise<MasterProductRow[]> {
+  const allRows: MasterProductRow[] = [];
   let from = 0;
   const batchSize = 500;
   let hasMore = true;
   while (hasMore) {
     const { data, error } = await supabaseAdmin
-      .from('products')
-      .select('id, store_id, master_product_id, is_active, master_products(*)')
+      .from('master_products')
+      .select('*')
       .eq('is_active', true)
       .range(from, from + batchSize - 1);
     if (error) throw new Error(`Database error: ${error.message}`);
     if (data && data.length > 0) {
-      allRows.push(...(data as unknown as ProductRow[]));
+      allRows.push(...(data as MasterProductRow[]));
       from += batchSize;
       hasMore = data.length === batchSize;
     } else {
@@ -109,175 +57,134 @@ async function fetchProductRows(storeIds: string[] | null): Promise<ProductRow[]
   return allRows;
 }
 
-function productRowsToProducts(rows: ProductRow[]): Product[] {
-  const byMaster = new Map<string, ProductRow>();
-  for (const row of rows) {
-    const mp = row.master_products;
-    if (!mp) continue;
-
-    // Handle master_products as either single object or array
-    const masterProduct = Array.isArray(mp) ? mp[0] : mp;
-    if (!masterProduct || !masterProduct.is_active) continue;
-
-    const existing = byMaster.get(row.master_product_id);
-    if (!existing) {
-      byMaster.set(row.master_product_id, row);
-      continue;
-    }
-
-    // If `quantity` exists in the row, prefer the highest-quantity store row per master product.
-    // If quantity is missing, keep the first-seen row to avoid unstable behavior.
-    const q = coerceQuantity(row.quantity);
-    const existingQ = coerceQuantity(existing.quantity);
-    if (q != null && (existingQ == null || existingQ < q)) byMaster.set(row.master_product_id, row);
-  }
-  return Array.from(byMaster.values()).map(transformRow);
-}
-
-function transformRow(row: ProductRow): Product {
-  const mp = row.master_products!;
-  // Handle master_products as either single object or array
-  const masterProduct = Array.isArray(mp) ? mp[0] : mp;
-
+function masterRowToProduct(data: MasterProductRow): Product {
   const price =
-    masterProduct.discounted_price != null
-      ? typeof masterProduct.discounted_price === 'string'
-        ? parseFloat(masterProduct.discounted_price)
-        : masterProduct.discounted_price
+    data.discounted_price != null
+      ? typeof data.discounted_price === 'string'
+        ? parseFloat(data.discounted_price)
+        : Number(data.discounted_price)
       : 0;
   const originalPrice =
-    masterProduct.base_price != null
-      ? typeof masterProduct.base_price === 'string'
-        ? parseFloat(masterProduct.base_price)
-        : masterProduct.base_price
+    data.base_price != null
+      ? typeof data.base_price === 'string'
+        ? parseFloat(data.base_price)
+        : Number(data.base_price)
       : undefined;
-  const q = coerceQuantity(row.quantity);
 
   const avgRating =
-    masterProduct.avg_rating == null
+    data.avg_rating == null
       ? undefined
-      : typeof masterProduct.avg_rating === "string"
-        ? parseFloat(masterProduct.avg_rating)
-        : masterProduct.avg_rating;
+      : typeof data.avg_rating === 'string'
+        ? parseFloat(data.avg_rating)
+        : data.avg_rating;
 
   const reviewCount =
-    masterProduct.review_count == null
+    data.review_count == null
       ? undefined
-      : typeof masterProduct.review_count === "string"
-        ? Number(masterProduct.review_count)
-        : masterProduct.review_count;
+      : typeof data.review_count === 'string'
+        ? Number(data.review_count)
+        : data.review_count;
 
   return {
-    id: masterProduct.id,
-    name: masterProduct.name,
-    category: masterProduct.category,
+    id: data.id,
+    name: data.name,
+    category: data.category,
     price,
     original_price: originalPrice,
-    image_url: masterProduct.image_url,
-    description: masterProduct.description,
-    // When quantity isn't available, treat "active" as in-stock.
-    in_stock: row.is_active && (q == null || q > 0),
-    unit: masterProduct.unit ?? 'piece',
-    isLoose: masterProduct.is_loose ?? false,
-    created_at: masterProduct.created_at,
+    image_url: data.image_url ?? undefined,
+    description: data.description ?? undefined,
+    in_stock: data.is_active !== false,
+    unit: data.unit ?? 'piece',
+    isLoose: data.is_loose ?? false,
+    created_at: data.created_at ?? undefined,
     avgRating: Number.isFinite(avgRating as number) ? (avgRating as number) : undefined,
     reviewCount: Number.isFinite(reviewCount as number) ? (reviewCount as number) : undefined,
   };
 }
 
-export async function getAllProducts(options?: {
+/**
+ * Single DB pass for home / categories: all active master products + group by category string.
+ * Options kept for API compatibility; catalog is no longer filtered by store location.
+ */
+export async function loadMasterCatalog(_options?: {
+  lat?: number;
+  lng?: number;
+  radiusKm?: number;
+}): Promise<{ products: Product[]; productsByCategory: Record<string, Product[]> }> {
+  const rows = await fetchAllMasterProductRows();
+  const products = rows.map(masterRowToProduct);
+  const productsByCategory: Record<string, Product[]> = {};
+  for (const p of products) {
+    const c = p.category || 'Uncategorized';
+    if (!productsByCategory[c]) productsByCategory[c] = [];
+    productsByCategory[c].push(p);
+  }
+  return { products, productsByCategory };
+}
+
+export async function getAllProducts(_options?: {
   lat?: number;
   lng?: number;
   radiusKm?: number;
 }): Promise<Product[]> {
-  const { lat, lng, radiusKm = 4 } = options || {};
-  const nearbyStoreIds =
-    lat != null && lng != null ? await getNearbyStoreIds(lat, lng, radiusKm) : null;
-  const storeIdsToUse = nearbyStoreIds?.length ? nearbyStoreIds : null;
-
-  // If no nearby stores found but location was provided, fetch all products
-  // This ensures products are still shown even if location filtering fails
-  const rows = await fetchProductRows(
-    (lat != null && lng != null && !storeIdsToUse) ? null : storeIdsToUse
-  );
-  return productRowsToProducts(rows);
+  const rows = await fetchAllMasterProductRows();
+  return rows.map(masterRowToProduct);
 }
 
 export async function getProductsByCategory(
   categoryName: string,
-  options?: { lat?: number; lng?: number; radiusKm?: number },
+  _options?: { lat?: number; lng?: number; radiusKm?: number },
 ): Promise<Product[]> {
-  const { lat, lng, radiusKm = 4 } = options || {};
-  const nearbyStoreIds =
-    lat != null && lng != null ? await getNearbyStoreIds(lat, lng, radiusKm) : null;
-  const storeIdsToUse = nearbyStoreIds?.length ? nearbyStoreIds : null;
-
-  // If no nearby stores found but location was provided, fetch all products
-  const rows = await fetchProductRows(
-    (lat != null && lng != null && !storeIdsToUse) ? null : storeIdsToUse
+  const want = categoryName.toLowerCase().trim();
+  const rows = await fetchAllMasterProductRows();
+  const filtered = rows.filter(
+    (r) => r.category != null && r.category.toLowerCase().trim() === want,
   );
-
-  const filtered = rows.filter((r) => {
-    const mp = r.master_products;
-    if (!mp) return false;
-    const masterProduct = Array.isArray(mp) ? mp[0] : mp;
-    return masterProduct?.category === categoryName;
-  });
-  return productRowsToProducts(filtered);
+  return filtered.map(masterRowToProduct);
 }
 
 export async function searchProducts(
   query: string,
-  options?: { lat?: number; lng?: number; radiusKm?: number },
+  _options?: { lat?: number; lng?: number; radiusKm?: number },
 ): Promise<Product[]> {
-  const { lat, lng, radiusKm = 4 } = options || {};
-  const nearbyStoreIds =
-    lat != null && lng != null ? await getNearbyStoreIds(lat, lng, radiusKm) : null;
-  const storeIdsToUse = nearbyStoreIds?.length ? nearbyStoreIds : null;
-
-  // If no nearby stores found but location was provided, fetch all products
-  const rows = await fetchProductRows(
-    (lat != null && lng != null && !storeIdsToUse) ? null : storeIdsToUse
-  );
-
+  const rows = await fetchAllMasterProductRows();
   const q = query.trim().toLowerCase();
-  const matching = q ? rows.filter((r) => {
-    const mp = r.master_products;
-    if (!mp) return false;
-    const masterProduct = Array.isArray(mp) ? mp[0] : mp;
-    return masterProduct?.name?.toLowerCase().includes(q);
-  }) : rows;
-  return productRowsToProducts(matching);
+  const matching = q
+    ? rows.filter((r) => r.name?.toLowerCase().includes(q))
+    : rows;
+  return matching.map(masterRowToProduct);
 }
 
-export async function getAllProductsByCategory(options?: {
+export async function getAllProductsByCategory(_options?: {
   lat?: number;
   lng?: number;
   radiusKm?: number;
 }): Promise<Record<string, Product[]>> {
-  const { lat, lng, radiusKm = 4 } = options || {};
-  const nearbyStoreIds =
-    lat != null && lng != null ? await getNearbyStoreIds(lat, lng, radiusKm) : null;
-  const storeIdsToUse = nearbyStoreIds?.length ? nearbyStoreIds : null;
-
-  // If no nearby stores found but location was provided, fetch all products
-  const rows = await fetchProductRows(
-    (lat != null && lng != null && !storeIdsToUse) ? null : storeIdsToUse
-  );
-  const products = productRowsToProducts(rows);
-
-  // Group products by category
-  const productsByCategory: Record<string, Product[]> = {};
-
-  products.forEach(product => {
-    const category = product.category || 'Uncategorized';
-    if (!productsByCategory[category]) {
-      productsByCategory[category] = [];
-    }
-    productsByCategory[category].push(product);
-  });
-
+  const { productsByCategory } = await loadMasterCatalog(_options);
   return productsByCategory;
+}
+
+/**
+ * Looks up grouped products by `master_products.category`, matching category rows by name
+ * with case-insensitive comparison (handles "Dairy" vs "dairy").
+ */
+export function getProductsForCategoryName(
+  productsByCategory: Record<string, Product[]>,
+  categoryName: string,
+): Product[] {
+  const t = categoryName.toLowerCase().trim();
+  const out: Product[] = [];
+  const seen = new Set<string>();
+  for (const [k, v] of Object.entries(productsByCategory)) {
+    if (k.toLowerCase().trim() !== t) continue;
+    for (const p of v) {
+      if (!seen.has(p.id)) {
+        seen.add(p.id);
+        out.push(p);
+      }
+    }
+  }
+  return out;
 }
 
 export async function getProductById(masterProductId: string): Promise<Product | null> {
@@ -289,39 +196,7 @@ export async function getProductById(masterProductId: string): Promise<Product |
       .single();
 
     if (error || !data) return null;
-
-    const price =
-      data.discounted_price != null
-        ? typeof data.discounted_price === 'string'
-          ? parseFloat(data.discounted_price)
-          : data.discounted_price
-        : 0;
-
-    return {
-      id: data.id,
-      name: data.name,
-      category: data.category,
-      price,
-      original_price: data.base_price ? Number(data.base_price) : undefined,
-      image_url: data.image_url,
-      description: data.description,
-      in_stock: data.is_active ?? true,
-      unit: data.unit ?? 'piece',
-      isLoose: data.is_loose ?? false,
-      created_at: data.created_at,
-      avgRating:
-        data.avg_rating == null
-          ? undefined
-          : typeof data.avg_rating === "string"
-            ? parseFloat(data.avg_rating)
-            : data.avg_rating,
-      reviewCount:
-        data.review_count == null
-          ? undefined
-          : typeof data.review_count === "string"
-            ? Number(data.review_count)
-            : data.review_count,
-    };
+    return masterRowToProduct(data as MasterProductRow);
   } catch {
     return null;
   }

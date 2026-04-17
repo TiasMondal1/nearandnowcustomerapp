@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
     ActivityIndicator,
     FlatList,
@@ -40,29 +40,25 @@ export default function CategorySlugScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const { addItem, items, updateQty } = useCart();
-  const { location } = useLocation();
-
-  const locationRef = useRef(location);
-  useEffect(() => { locationRef.current = location; }, [location]);
+  const { location, isHydrated } = useLocation();
 
   const fetchData = useCallback(async (isRefresh = false) => {
     if (!slug) return;
     try {
       setError(null);
       if (!isRefresh) setLoading(true);
-      
-      const [categoryData, productsData] = await Promise.all([
-        getCategoryBySlug(slug),
-        (async () => {
-          const cat = await getCategoryBySlug(slug);
-          if (!cat) return [];
-          const loc = locationRef.current;
-          return getProductsByCategory(
-            cat.name,
-            loc ? { lat: loc.latitude, lng: loc.longitude } : undefined,
-          );
-        })()
-      ]);
+
+      const categoryData = await getCategoryBySlug(slug);
+      if (!categoryData) {
+        setCategory(null);
+        setProducts([]);
+        return;
+      }
+      const loc = location;
+      const productsData = await getProductsByCategory(
+        categoryData.name,
+        loc ? { lat: loc.latitude, lng: loc.longitude } : undefined,
+      );
 
       setCategory(categoryData);
       setProducts(productsData);
@@ -73,14 +69,15 @@ export default function CategorySlugScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [slug]);
+  }, [slug, location]);
 
   useEffect(() => {
+    if (!isHydrated) return;
     const task = InteractionManager.runAfterInteractions(() => {
       fetchData();
     });
     return () => task.cancel();
-  }, [fetchData]);
+  }, [isHydrated, fetchData]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);

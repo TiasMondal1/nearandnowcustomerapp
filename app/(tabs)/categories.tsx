@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
     ActivityIndicator,
     FlatList,
@@ -15,8 +15,9 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { C } from "../../constants/colors";
+import { useLocation } from "../../context/LocationContext";
 import { getAllCategories, type Category } from "../../lib/categoryService";
-import { getAllProductsByCategory, type Product } from "../../lib/productService";
+import { getProductsForCategoryName, loadMasterCatalog, type Product } from "../../lib/productService";
 
 const FALLBACK_COLORS = [
   "#FF6B6B", "#51CF66", "#FFD43B", "#845EF7",
@@ -29,6 +30,7 @@ const FALLBACK_ICONS = [
 ];
 
 export default function CategoriesScreen() {
+  const { location, isHydrated } = useLocation();
   const [categories, setCategories] = useState<Category[]>([]);
   const [productsByCategory, setProductsByCategory] = useState<Record<string, Product[]>>({});
   const [loading, setLoading] = useState(true);
@@ -37,10 +39,13 @@ export default function CategoriesScreen() {
   const fetchData = useCallback(async (isRefresh = false) => {
     try {
       if (!isRefresh) setLoading(true);
-      const [categoriesData, productsByCategoryData] = await Promise.all([
+      const loc = location;
+      const opts = loc ? { lat: loc.latitude, lng: loc.longitude } : undefined;
+      const [categoriesData, catalog] = await Promise.all([
         getAllCategories(),
-        getAllProductsByCategory(),
+        loadMasterCatalog(opts),
       ]);
+      const productsByCategoryData = catalog.productsByCategory;
       setCategories(categoriesData);
       setProductsByCategory(productsByCategoryData);
     } catch (error) {
@@ -51,11 +56,20 @@ export default function CategoriesScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [location]);
 
   useEffect(() => {
+    if (!isHydrated) return;
     fetchData();
-  }, [fetchData]);
+  }, [isHydrated, fetchData]);
+
+  const categoriesWithProducts = useMemo(
+    () =>
+      categories.filter(
+        (c) => getProductsForCategoryName(productsByCategory, c.name).length > 0,
+      ),
+    [categories, productsByCategory],
+  );
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -86,7 +100,7 @@ export default function CategoriesScreen() {
       </View>
 
       <FlatList
-        data={categories}
+        data={categoriesWithProducts}
         numColumns={2}
         keyExtractor={(item) => item.id}
         columnWrapperStyle={styles.row}

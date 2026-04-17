@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabaseAdmin } from './supabase';
 
 export interface Category {
   id: string;
@@ -14,9 +14,9 @@ export interface Category {
 
 export async function getAllCategories(): Promise<Category[]> {
   try {
-    // First try with is_active filter, fallback without it if column doesn't exist
-    let query = supabase.from('categories').select('*');
-    
+    // Use service role for reliable reads (matches product fetches; avoids RLS gaps on categories).
+    const query = supabaseAdmin.from('categories').select('*');
+
     const { data, error } = await query.order('display_order', { ascending: true });
 
     if (error) {
@@ -35,7 +35,7 @@ export async function getAllCategories(): Promise<Category[]> {
 
 export async function getCategoryBySlug(slug: string): Promise<Category | null> {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('categories')
       .select('*')
       .eq('slug', slug)

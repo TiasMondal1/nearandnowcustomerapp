@@ -5,7 +5,6 @@ import React, {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
 import * as ExpoLocation from "expo-location";
@@ -36,7 +35,29 @@ import StarRating from "../../components/StarRating";
 import { useCart } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
 import { getAllCategories, type Category } from "../../lib/categoryService";
-import { getAllProducts, getAllProductsByCategory, type Product } from "../../lib/productService";
+import {
+  getProductsForCategoryName,
+  loadMasterCatalog,
+  type Product,
+} from "../../lib/productService";
+
+/** Fisher–Yates shuffle (new array). */
+function shuffleArray<T>(items: T[]): T[] {
+  const arr = [...items];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function shuffleProductGroups(record: Record<string, Product[]>): Record<string, Product[]> {
+  const out: Record<string, Product[]> = {};
+  for (const k of Object.keys(record)) {
+    out[k] = shuffleArray([...record[k]]);
+  }
+  return out;
+}
 
 // ─── Design tokens (override / extend your C palette) ───────────────────────
 const T = {
@@ -284,30 +305,22 @@ export default function HomeScreen() {
   const [liveAddress, setLiveAddress] = useState<string | null>(null);
   const [locationFetching, setLocationFetching] = useState(false);
 
-  const { location } = useLocation();
+  const { location, isHydrated } = useLocation();
   const { addItem, items, updateQty } = useCart();
-
-  const locationRef = useRef(location);
-  useEffect(() => {
-    locationRef.current = location;
-  }, [location]);
 
   const fetchData = useCallback(async (isRefresh = false) => {
     try {
       if (!isRefresh) setLoading(true);
-      const loc = locationRef.current;
-      const [productsData, categoriesData, productsByCategoryData] = await Promise.all([
-        getAllProducts(
+      const loc = location;
+      const [catalog, categoriesData] = await Promise.all([
+        loadMasterCatalog(
           loc ? { lat: loc.latitude, lng: loc.longitude } : undefined,
         ),
         getAllCategories(),
-        getAllProductsByCategory(
-          loc ? { lat: loc.latitude, lng: loc.longitude } : undefined,
-        ),
       ]);
-      setProducts(productsData);
+      setProducts(shuffleArray(catalog.products));
       setCategories(categoriesData);
-      setProductsByCategory(productsByCategoryData);
+      setProductsByCategory(shuffleProductGroups(catalog.productsByCategory));
     } catch (error) {
       console.error("Failed to fetch data:", error);
       setProducts([]);
@@ -316,12 +329,13 @@ export default function HomeScreen() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [location]);
 
   useEffect(() => {
+    if (!isHydrated) return;
     const task = InteractionManager.runAfterInteractions(() => fetchData());
     return () => task.cancel();
-  }, [fetchData]);
+  }, [isHydrated, fetchData]);
 
   // ── Live reverse-geocode from device GPS ──────────────────────────────────
   useEffect(() => {
@@ -360,12 +374,32 @@ export default function HomeScreen() {
     setRefreshing(false);
   }, [fetchData]);
 
+  /** Categories from `categories` that have at least one catalog product; order shuffled on each data load. */
+  const categoriesWithProducts = useMemo(
+    () =>
+      shuffleArray(
+        categories.filter(
+          (c) => getProductsForCategoryName(productsByCategory, c.name).length > 0,
+        ),
+      ),
+    [categories, productsByCategory],
+  );
+
+  useEffect(() => {
+    if (activeCategory === "All") return;
+    const stillValid = categoriesWithProducts.some((c) => c.name === activeCategory);
+    if (!stillValid) setActiveCategory("All");
+  }, [activeCategory, categoriesWithProducts]);
+
   const filteredProducts = useMemo(() => {
     if (activeCategory === "All") return products;
+    const fromMap = getProductsForCategoryName(productsByCategory, activeCategory);
+    if (fromMap.length > 0) return fromMap;
     return products.filter(
-      (p) => p.category?.toLowerCase() === activeCategory.toLowerCase(),
+      (p) =>
+        p.category?.toLowerCase().trim() === activeCategory.toLowerCase().trim(),
     );
-  }, [products, activeCategory]);
+  }, [products, activeCategory, productsByCategory]);
 
   const profileScale = useSharedValue(1);
   const profileAnimatedStyle = useAnimatedStyle(() => ({
@@ -561,7 +595,7 @@ export default function HomeScreen() {
             <FlatList
               data={[
                 { id: "all", name: "All", icon: "apps" },
-                ...categories,
+                ...categoriesWithProducts,
               ]}
               horizontal
               showsHorizontalScrollIndicator={false}
