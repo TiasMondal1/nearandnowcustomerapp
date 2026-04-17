@@ -178,9 +178,6 @@ export default function CategoriesScreen() {
                 <Text style={styles.label}>{item.name}</Text>
 
                 <View style={styles.ctaRow}>
-                  <Text style={styles.ctaText}>
-                    {getCountForCategoryName(categoryCounts, item.name)} items
-                  </Text>
                   <MaterialCommunityIcons
                     name="arrow-right"
                     size={14}

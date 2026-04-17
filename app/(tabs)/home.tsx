@@ -115,10 +115,13 @@ function ProductCard({
   }));
 
   return (
+    // Outer wrapper owns the layout/entering animation so Reanimated doesn't warn
+    // about `transform` on the same node being overwritten by the layout animation.
     <Animated.View
       entering={FadeInDown.delay(index * 40).duration(300)}
-      style={[animStyle, styles.card, !p.in_stock && styles.cardOutOfStock]}
+      style={styles.cardOuter}
     >
+      <Animated.View style={[animStyle, styles.card, !p.in_stock && styles.cardOutOfStock]}>
       <Pressable
         onPressIn={() => {
           scale.value = withSpring(0.97, { damping: 18, stiffness: 280 });
@@ -230,6 +233,7 @@ function ProductCard({
           </View>
         )}
       </View>
+      </Animated.View>
     </Animated.View>
   );
 }
@@ -1136,8 +1140,11 @@ const styles = StyleSheet.create({
   },
 
   // ── Product card ──────────────────────────────────────────────────────────
-  card: {
+  cardOuter: {
     width: "48.5%",
+  },
+  card: {
+    flex: 1,
     backgroundColor: T.card,
     borderRadius: 18,
     overflow: "hidden",
