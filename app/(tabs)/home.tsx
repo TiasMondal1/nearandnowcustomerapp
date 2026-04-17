@@ -8,6 +8,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import * as ExpoLocation from "expo-location";
 import {
   ActivityIndicator,
   FlatList,
@@ -279,6 +280,10 @@ export default function HomeScreen() {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [hasScrolled, setHasScrolled] = useState(false);
 
+  // Live location state
+  const [liveAddress, setLiveAddress] = useState<string | null>(null);
+  const [locationFetching, setLocationFetching] = useState(false);
+
   const { location } = useLocation();
   const { addItem, items, updateQty } = useCart();
 
@@ -317,6 +322,37 @@ export default function HomeScreen() {
     const task = InteractionManager.runAfterInteractions(() => fetchData());
     return () => task.cancel();
   }, [fetchData]);
+
+  // ── Live reverse-geocode from device GPS ──────────────────────────────────
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLocationFetching(true);
+        const { status } = await ExpoLocation.requestForegroundPermissionsAsync();
+        if (status !== "granted" || cancelled) return;
+        const pos = await ExpoLocation.getCurrentPositionAsync({
+          accuracy: ExpoLocation.Accuracy.Balanced,
+        });
+        if (cancelled) return;
+        const [result] = await ExpoLocation.reverseGeocodeAsync({
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+        });
+        if (cancelled) return;
+        if (result) {
+          const parts = [result.name, result.street, result.district, result.city]
+            .filter(Boolean);
+          setLiveAddress(parts.slice(0, 2).join(", ") || result.city || "Your location");
+        }
+      } catch {
+        // silently fall back to context location
+      } finally {
+        if (!cancelled) setLocationFetching(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -378,38 +414,46 @@ export default function HomeScreen() {
           pointerEvents="none"
         />
 
-        {/* App bar row: delivery time left + icons right */}
+        {/* App bar row: delivery location left + icons right */}
         <Animated.View
           entering={FadeInDown.duration(420).springify()}
           style={styles.appBar}
         >
-          {/* Delivery time + location (Zepto/Blinkit style) */}
+          {/* "Delivery to…" location block */}
           <Pressable
             style={{ flex: 1 }}
             onPress={() => router.push("/location")}
           >
-            <View style={styles.deliveryTimeRow}>
-              <MaterialCommunityIcons name="lightning-bolt" size={18} color={T.green} />
-              <Text style={styles.deliveryTimeText}>
-                {location ? "Delivering in" : "Set location"}
-              </Text>
+            {/* Label row */}
+            <View style={styles.deliveryLabelRow}>
+              <MaterialCommunityIcons
+                name="map-marker-outline"
+                size={14}
+                color={T.green}
+              />
+              <Text style={styles.deliveryLabelText}>Delivery to</Text>
+              {locationFetching && (
+                <ActivityIndicator size="small" color={T.green} style={{ marginLeft: 4 }} />
+              )}
             </View>
-            <Text style={styles.deliveryMinutes}>
-              {location ? "20 minutes" : "Near & Now"}
-            </Text>
-            <Pressable
-              onPress={() => router.push("/location")}
-              style={styles.locationInlineRow}
-            >
-              <Text style={styles.locationInlineText} numberOfLines={1}>
-                {location
+
+            {/* Address line */}
+            <View style={styles.locationInlineRow}>
+              <Text style={styles.deliveryAddressText} numberOfLines={1}>
+                {liveAddress
+                  ? liveAddress
+                  : location
                   ? location.address
-                    ? `${(location.label || "Home").toUpperCase()} · ${location.address}`
-                    : location.label || "Selected location"
-                  : "Tap to set delivery address"}
+                    ? `${location.label ? location.label + " · " : ""}${location.address}`
+                    : location.label || "Your location"
+                  : "Set delivery address"}
               </Text>
-              <MaterialCommunityIcons name="chevron-down" size={14} color={T.bark} />
-            </Pressable>
+              <MaterialCommunityIcons
+                name="chevron-down"
+                size={16}
+                color={T.bark}
+              />
+            </View>
           </Pressable>
 
           {/* Right side: wallet + profile */}
@@ -703,37 +747,32 @@ const styles = StyleSheet.create({
     gap: 12,
   },
 
-  // Delivery time (Zepto/Blinkit style)
-  deliveryTimeRow: {
+  // Delivery to… header block
+  deliveryLabelRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    marginBottom: 1,
-  },
-  deliveryTimeText: {
-    fontSize: 13,
-    color: T.barkMid,
-    fontWeight: "500",
-  },
-  deliveryMinutes: {
-    fontSize: 26,
-    fontWeight: "900",
-    color: T.bark,
-    letterSpacing: -0.8,
-    lineHeight: 30,
     marginBottom: 3,
+  },
+  deliveryLabelText: {
+    fontSize: 12,
+    color: T.green,
+    fontWeight: "700",
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+  },
+  deliveryAddressText: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: T.bark,
+    letterSpacing: -0.3,
+    flex: 1,
   },
   locationInlineRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 3,
-    maxWidth: "90%",
-  },
-  locationInlineText: {
-    fontSize: 12.5,
-    color: T.bark,
-    fontWeight: "700",
-    flex: 1,
+    gap: 4,
+    maxWidth: "95%",
   },
 
   // Right actions: wallet + profile

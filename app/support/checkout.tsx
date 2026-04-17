@@ -50,7 +50,7 @@ export default function CheckoutScreen() {
   const [gstin, setGstin] = useState("");
   const [invoiceName, setInvoiceName] = useState("");
   const [deliveryInstructions, setDeliveryInstructions] = useState("");
-  const [tipPreset, setTipPreset] = useState<20 | 30 | 50 | "custom" | null>(null);
+  const [tipPreset, setTipPreset] = useState<10 | 20 | 30 | 50 | "custom" | null>(null);
   const [customTip, setCustomTip] = useState("");
 
   // "Ordering for someone else" — toggle + expandable details
@@ -383,8 +383,16 @@ export default function CheckoutScreen() {
           <MaterialCommunityIcons name="arrow-left" size={20} color={C.text} />
         </TouchableOpacity>
         <View style={styles.headerCenter}>
-          <Text style={styles.headerTitle}>Checkout</Text>
-          <Text style={styles.headerSub}>{totalItems} item{totalItems !== 1 ? "s" : ""}</Text>
+          <Text style={styles.headerTitle} numberOfLines={1} ellipsizeMode="tail">
+            {location
+              ? location.address
+                ? `${(location.label || "Home").toUpperCase()} · ${location.address}`
+                : location.label || "Selected location"
+              : "Delivery Address"}
+          </Text>
+          <Text style={styles.headerSub}>
+            {totalItems} item{totalItems !== 1 ? "s" : ""}
+          </Text>
         </View>
         <View style={{ width: 38 }} />
       </View>
@@ -394,24 +402,165 @@ export default function CheckoutScreen() {
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
-        {/* ─── You May Also Like ─── */}
+        {/* ─── Items Card ─── */}
+        <View style={styles.card}>
+          {items.map((item, idx) => (
+            <View key={item.product_id}>
+              <View style={styles.itemRow}>
+                {item.image_url ? (
+                  <Image source={{ uri: item.image_url }} style={styles.itemImage} />
+                ) : (
+                  <View style={styles.imagePlaceholder}>
+                    <MaterialCommunityIcons name="leaf" size={20} color={C.border} />
+                  </View>
+                )}
+                <View style={styles.itemDetails}>
+                  <Text style={styles.itemName} numberOfLines={2}>{item.name}</Text>
+                  <Text style={styles.itemUnit}>{item.unit}</Text>
+                </View>
+                <View style={styles.quantityControls}>
+                  <TouchableOpacity
+                    style={styles.quantityBtn}
+                    onPress={() => updateQty(item.product_id, item.quantity - 1)}
+                    activeOpacity={0.7}
+                  >
+                    <MaterialCommunityIcons name="minus" size={14} color={C.primary} />
+                  </TouchableOpacity>
+                  <Text style={styles.quantityText}>{item.quantity}</Text>
+                  <TouchableOpacity
+                    style={styles.quantityBtn}
+                    onPress={() => updateQty(item.product_id, item.quantity + 1)}
+                    activeOpacity={0.7}
+                  >
+                    <MaterialCommunityIcons name="plus" size={14} color={C.primary} />
+                  </TouchableOpacity>
+                </View>
+                <View style={styles.itemPriceCol}>
+                  <Text style={styles.itemTotal}>₹{(item.price * item.quantity).toFixed(0)}</Text>
+                </View>
+              </View>
+              {idx < items.length - 1 && <View style={styles.itemDivider} />}
+            </View>
+          ))}
+
+          {/* Add more items row */}
+          <TouchableOpacity
+            style={styles.addMoreRow}
+            onPress={() => router.back()}
+            activeOpacity={0.7}
+          >
+            <MaterialCommunityIcons name="plus-circle-outline" size={16} color={C.primary} />
+            <Text style={styles.addMoreText}>Add more items</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* ─── Savings Corner ─── */}
+        <View style={styles.card}>
+          <View style={styles.savingsHeader}>
+            <MaterialCommunityIcons name="tag-outline" size={15} color={C.primary} />
+            <Text style={styles.savingsTitle}>SAVINGS CORNER</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.savingsRow}
+            activeOpacity={0.85}
+            onPress={() => router.push("../product/coupons")}
+          >
+            <View style={styles.savingsLeft}>
+              <MaterialCommunityIcons name="shield-check-outline" size={20} color="#2563eb" />
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Text style={styles.savingsText}>
+                  {appliedCoupon
+                    ? `${appliedCoupon.code} applied · −₹${discount.toFixed(0)} saved`
+                    : "View all coupons & offers"}
+                </Text>
+              </View>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={18} color={C.textSub} />
+          </TouchableOpacity>
+        </View>
+
+        {/* ─── Add GSTIN ─── */}
+        <View style={styles.card}>
+          <View style={styles.gstinRow}>
+            <View style={styles.gstinLeft}>
+              <View style={styles.gstinIconWrap}>
+                <Text style={styles.gstinIconText}>GST</Text>
+              </View>
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Text style={styles.gstinTitle}>Add GSTIN</Text>
+                <Text style={styles.gstinSub}>Claim GST credit up to 18% on the order</Text>
+              </View>
+            </View>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => {
+                LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                setGstinClaim((v) => !v);
+              }}
+            >
+              <Text style={styles.gstinAddBtn}>{gstinClaim ? "Done" : "Add"}</Text>
+            </TouchableOpacity>
+          </View>
+          {gstinClaim && (
+            <View style={styles.gstinExpanded}>
+              <TextInput
+                placeholder="Enter 15-digit GSTIN"
+                placeholderTextColor={C.textLight}
+                value={gstin}
+                onChangeText={setGstin}
+                style={styles.textInput}
+                autoCapitalize="characters"
+                maxLength={15}
+              />
+              <TextInput
+                placeholder="Registered Business Name"
+                placeholderTextColor={C.textLight}
+                value={invoiceName}
+                onChangeText={setInvoiceName}
+                style={[styles.textInput, { marginTop: 8 }]}
+              />
+            </View>
+          )}
+        </View>
+
+        {/* ─── Did you forget? (Recommended) ─── */}
         {recommended.length > 0 && (
-          <View style={styles.section}>
-            <SectionHeader title="You may also like" />
+          <View style={styles.card}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.recoTabsScroll}>
+              {["Did you forget?", "Chips & Muchies", "Hungry? Grab"].map((tab, i) => (
+                <View key={i} style={[styles.recoTab, i === 0 && styles.recoTabActive]}>
+                  <Text style={[styles.recoTabText, i === 0 && styles.recoTabTextActive]}>{tab}</Text>
+                </View>
+              ))}
+            </ScrollView>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.recoScroll}>
               {recommended.map((p) => (
                 <View key={p.id} style={styles.recoCard}>
+                  <TouchableOpacity
+                    style={styles.recoBookmark}
+                    hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+                  >
+                    <MaterialCommunityIcons name="bookmark-outline" size={14} color={C.textSub} />
+                  </TouchableOpacity>
                   {p.image_url ? (
-                    <Image source={{ uri: p.image_url }} style={styles.recoImage} />
+                    <Image source={{ uri: p.image_url }} style={styles.recoImage} resizeMode="contain" />
                   ) : (
                     <View style={styles.recoPlaceholder}>
                       <MaterialCommunityIcons name="image-outline" size={22} color={C.border} />
                     </View>
                   )}
+                  <Text style={styles.recoDelivery}>6 MINS</Text>
                   <Text style={styles.recoName} numberOfLines={2}>{p.name}</Text>
-                  <Text style={styles.recoPrice}>
-                    ₹{p.price} <Text style={styles.recoUnit}>/{p.unit}</Text>
-                  </Text>
+                  <Text style={styles.recoWeight}>{p.unit}</Text>
+                  {p.original_price && p.original_price > p.price && (
+                    <Text style={styles.recoDiscount}>{Math.round(((p.original_price - p.price) / p.original_price) * 100)}% OFF</Text>
+                  )}
+                  <View style={styles.recoPriceRow}>
+                    <Text style={styles.recoPrice}>₹{p.price}</Text>
+                    {p.original_price && p.original_price > p.price && (
+                      <Text style={styles.recoMrp}>₹{p.original_price}</Text>
+                    )}
+                  </View>
                   <TouchableOpacity
                     style={styles.recoAddBtn}
                     activeOpacity={0.85}
@@ -425,8 +574,7 @@ export default function CheckoutScreen() {
                       })
                     }
                   >
-                    <MaterialCommunityIcons name="plus" size={14} color="#fff" />
-                    <Text style={styles.recoAddText}>Add</Text>
+                    <MaterialCommunityIcons name="plus" size={18} color={C.primary} />
                   </TouchableOpacity>
                 </View>
               ))}
@@ -434,161 +582,43 @@ export default function CheckoutScreen() {
           </View>
         )}
 
-        {/* ─── Delivery Location ─── */}
-        <View style={styles.section}>
-          <SectionHeader title="Delivery Location" />
-          <TouchableOpacity style={styles.locationCard} onPress={() => router.push("/location")} activeOpacity={0.7}>
-            <View style={styles.locationIconWrap}>
-              <MaterialCommunityIcons name="map-marker" size={22} color={C.primary} />
-            </View>
+        {/* ─── No Bag Toggle ─── */}
+        <View style={styles.card}>
+          <View style={styles.noBagRow}>
             <View style={{ flex: 1 }}>
-              {location ? (
-                <>
-                  <Text style={styles.locationLabel}>{location.label || "Delivery Address"}</Text>
-                  <Text style={styles.locationAddress} numberOfLines={2}>
-                    {location.address || "No address details"}
-                  </Text>
-                </>
-              ) : (
-                <>
-                  <Text style={[styles.locationLabel, { color: C.textSub }]}>No location selected</Text>
-                  <Text style={styles.locationAddress}>Tap to select delivery address</Text>
-                </>
-              )}
-            </View>
-            <View style={styles.locationChevron}>
-              <MaterialCommunityIcons name="pencil-outline" size={16} color={C.primary} />
-            </View>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.addAddressBtn}
-            onPress={() => router.push("/location/add")}
-            activeOpacity={0.8}
-          >
-            <MaterialCommunityIcons name="plus-circle-outline" size={16} color={C.primary} />
-            <Text style={styles.addAddressText}>Add new address</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* ─── Items ─── */}
-        <View style={styles.section}>
-          <SectionHeader title="Your Items" />
-          <View style={styles.itemsCard}>
-            {items.map((item, idx) => (
-              <View key={item.product_id}>
-                <View style={styles.itemRow}>
-                  {item.image_url ? (
-                    <Image source={{ uri: item.image_url }} style={styles.itemImage} />
-                  ) : (
-                    <View style={styles.imagePlaceholder}>
-                      <MaterialCommunityIcons name="leaf" size={20} color={C.border} />
-                    </View>
-                  )}
-                  <View style={styles.itemDetails}>
-                    <Text style={styles.itemName} numberOfLines={2}>{item.name}</Text>
-                    <Text style={styles.itemMeta}>
-                      ₹{item.price} {item.unit}
-                    </Text>
-                  </View>
-                  <View style={styles.quantityControls}>
-                    <TouchableOpacity
-                      style={styles.quantityBtn}
-                      onPress={() => updateQty(item.product_id, item.quantity - 1)}
-                      activeOpacity={0.7}
-                    >
-                      <MaterialCommunityIcons name="minus" size={16} color={C.primary} />
-                    </TouchableOpacity>
-                    <Text style={styles.quantityText}>{item.quantity}</Text>
-                    <TouchableOpacity
-                      style={styles.quantityBtn}
-                      onPress={() => updateQty(item.product_id, item.quantity + 1)}
-                      activeOpacity={0.7}
-                    >
-                      <MaterialCommunityIcons name="plus" size={16} color={C.primary} />
-                    </TouchableOpacity>
-                  </View>
-                  <Text style={styles.itemTotal}>₹{(item.price * item.quantity).toFixed(0)}</Text>
-                </View>
-                {idx < items.length - 1 && <View style={styles.itemDivider} />}
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Text style={styles.noBagTitle}>I don't need a bag!</Text>
+                <Text style={styles.noBagEmoji}>♻️</Text>
               </View>
-            ))}
+              <Text style={styles.noBagSub}>
+                Take the pledge for a greener future – opt{"\n"}for a no bag delivery!
+              </Text>
+            </View>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={toggleOrderingForSomeoneElse}
+            >
+              <View style={[styles.toggleSwitch, orderingForSomeoneElse && styles.toggleSwitchOn]}>
+                <View style={[styles.toggleKnob, orderingForSomeoneElse && styles.toggleKnobOn]} />
+              </View>
+            </TouchableOpacity>
           </View>
         </View>
 
-        {/* ─── Coupon ─── */}
-        <View style={styles.section}>
-          <TouchableOpacity
-            style={styles.couponCard}
-            activeOpacity={0.85}
-            onPress={() => router.push("../product/coupons")}
-          >
-            <View style={styles.couponLeft}>
-              <View style={styles.couponIconWrap}>
-                <MaterialCommunityIcons name="ticket-percent-outline" size={18} color={C.primary} />
-              </View>
-              <View>
-                <Text style={styles.couponText}>
-                  {appliedCoupon ? `${appliedCoupon.code} applied` : "Apply Coupon"}
-                </Text>
-                {appliedCoupon && (
-                  <Text style={styles.couponSavings}>−₹{discount.toFixed(0)} saved</Text>
-                )}
-              </View>
-            </View>
-            {appliedCoupon ? (
-              <TouchableOpacity
-                style={styles.removeCouponBtn}
-                onPress={(e) => { e.stopPropagation(); removeCoupon(); }}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Text style={styles.removeCoupon}>Remove</Text>
-              </TouchableOpacity>
-            ) : (
-              <MaterialCommunityIcons name="chevron-right" size={18} color={C.primary} />
-            )}
-          </TouchableOpacity>
-        </View>
-
-        {/* ─── Bill Details ─── */}
-        <View style={styles.section}>
-          <SectionHeader title="Bill Details" />
-          <View style={styles.billCard}>
-            <BillRow label="Items subtotal" value={subtotal} />
-            <BillRow label="Platform fee" value={platformFee} />
-            <BillRow label="Handling fee" value={handlingFee} />
-            {convFee > 0 && <BillRow label="Convenience fee" value={convFee} />}
-            <BillRow label={`Delivery fee (${maxDistance.toFixed(1)} km)`} value={deliveryFee} />
-            {appliedCoupon && (
-              <BillRow label={`Discount (${appliedCoupon.code})`} value={-discount} highlight />
-            )}
-            {tipAmount > 0 && <BillRow label="Tip for delivery partner" value={tipAmount} />}
-            <View style={styles.billDivider} />
-            <View style={styles.totalRow}>
-              <Text style={styles.totalLabel}>Total Payable</Text>
-              <Text style={styles.totalValue}>₹{finalPayable.toFixed(0)}</Text>
-            </View>
+        {/* ─── Delivery Tip ─── */}
+        <View style={styles.card}>
+          <View style={styles.tipHeaderRow}>
+            <Text style={styles.tipTitle}>DELIVERY TIP</Text>
+            <MaterialCommunityIcons name="information-outline" size={14} color={C.textSub} />
           </View>
-        </View>
-
-        {/* ─── Delivery Instructions ─── */}
-        <View style={styles.section}>
-          <SectionHeader title="Delivery Instructions" optional />
-          <TextInput
-            placeholder="e.g. Don't ring the bell, call on arrival, gate code…"
-            placeholderTextColor={C.textLight}
-            value={deliveryInstructions}
-            onChangeText={setDeliveryInstructions}
-            style={[styles.textInput, styles.multilineInput]}
-            multiline
-            numberOfLines={3}
-          />
-        </View>
-
-        {/* ─── Tip ─── */}
-        <View style={styles.section}>
-          <SectionHeader title="Tip Your Delivery Partner" optional />
-          <View style={styles.tipRow}>
-            {([20, 30, 50] as const).map((val) => (
+          <Text style={styles.tipSubtitle}>
+            A small tip, a big gesture! Tip your delivery{"\n"}partner to show your appreciation for{"\n"}their hard work.
+          </Text>
+          <View style={styles.tipDeliveryImage}>
+            {/* Decorative delivery icon area */}
+          </View>
+          <View style={styles.tipChipsRow}>
+            {([10, 20, 30] as const).map((val) => (
               <TouchableOpacity
                 key={val}
                 style={[styles.tipChip, tipPreset === val && styles.tipChipActive]}
@@ -598,6 +628,7 @@ export default function CheckoutScreen() {
                   setTipPreset(tipPreset === val ? null : val);
                 }}
               >
+                {val === 20 && <Text style={styles.tipMostTipped}>Most tipped</Text>}
                 <Text style={[styles.tipChipText, tipPreset === val && styles.tipChipTextActive]}>
                   ₹{val}
                 </Text>
@@ -612,7 +643,7 @@ export default function CheckoutScreen() {
               }}
             >
               <Text style={[styles.tipChipText, tipPreset === "custom" && styles.tipChipTextActive]}>
-                Custom
+                Other
               </Text>
             </TouchableOpacity>
           </View>
@@ -623,40 +654,57 @@ export default function CheckoutScreen() {
               keyboardType="numeric"
               value={customTip}
               onChangeText={setCustomTip}
-              style={[styles.textInput, { marginTop: 8 }]}
+              style={[styles.textInput, { marginTop: 10 }]}
             />
           )}
-          <Text style={styles.tipNote}>100% of your tip goes directly to delivery partner</Text>
+        </View>
+
+        {/* ─── Bill Details ─── */}
+        <View style={styles.card}>
+          <Text style={styles.billSectionTitle}>BILL DETAILS</Text>
+          <BillRow label="Item Total" value={subtotal} strikeValue={subtotal + (discount > 0 ? discount : 0)} showStrike={false} />
+          <BillRow label="Handling Fee" value={handlingFee} strikeValue={Math.ceil(handlingFee * 1.6)} showStrike={handlingFee < 10} />
+          {convFee > 0 && <BillRow label="Small Cart Fee" value={convFee} note="No small cart fee on orders above ₹99" />}
+          {tipAmount > 0 && <BillRow label="Delivery Partner Tip" value={tipAmount} />}
+          <View style={styles.deliveryFeeRow}>
+            <Text style={styles.billLabel}>Delivery Partner Fee</Text>
+            <Text style={styles.billValue}>₹{deliveryFee.toFixed(0)}</Text>
+          </View>
+          {deliveryFee === 0 && (
+            <Text style={styles.freeDeliveryNote}>
+              Add items worth ₹80 to avail your Free Delivery on this order
+            </Text>
+          )}
+          <View style={styles.billGstRow}>
+            <Text style={styles.billLabel}>GST and Charges</Text>
+            <Text style={styles.billValue}>₹{platformFee.toFixed(2)}</Text>
+          </View>
+          <View style={styles.billDivider} />
+          <View style={styles.totalRow}>
+            <Text style={styles.totalLabel}>To Pay</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              {discount > 0 && (
+                <Text style={styles.totalStrike}>₹{(finalPayable + discount).toFixed(0)}</Text>
+              )}
+              <Text style={styles.totalValue}>₹{finalPayable.toFixed(0)}</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* ─── Cancellation Note ─── */}
+        <View style={styles.noteCard}>
+          <Text style={styles.noteText}>
+            <Text style={styles.noteBold}>NOTE: </Text>
+            Orders cannot be cancelled and are non-refundable once packed for delivery.{" "}
+          </Text>
+          <TouchableOpacity onPress={() => router.push("/settings/support")}>
+            <Text style={styles.noteLink}>Read cancellation policy</Text>
+          </TouchableOpacity>
         </View>
 
         {/* ─── Ordering for Someone Else ─── */}
-        <View style={styles.section}>
-          <TouchableOpacity
-            style={[styles.someoneElseToggle, orderingForSomeoneElse && styles.someoneElseToggleActive]}
-            onPress={toggleOrderingForSomeoneElse}
-            activeOpacity={0.8}
-          >
-            <View style={[styles.someoneElseIconWrap, orderingForSomeoneElse && styles.someoneElseIconActive]}>
-              <MaterialCommunityIcons
-                name="account-heart-outline"
-                size={18}
-                color={orderingForSomeoneElse ? "#fff" : C.textSub}
-              />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.someoneElseLabel, orderingForSomeoneElse && styles.someoneElseLabelActive]}>
-                Ordering for someone else?
-              </Text>
-              <Text style={styles.someoneElseSublabel}>
-                Add recipient details for the delivery partner
-              </Text>
-            </View>
-            <View style={[styles.someoneElseSwitch, orderingForSomeoneElse && styles.someoneElseSwitchActive]}>
-              <View style={[styles.someoneElseSwitchKnob, orderingForSomeoneElse && styles.someoneElseSwitchKnobActive]} />
-            </View>
-          </TouchableOpacity>
-
-          {orderingForSomeoneElse && (
+        {orderingForSomeoneElse && (
+          <View style={styles.card}>
             <View style={styles.recipientBox}>
               <View style={styles.recipientBoxHeader}>
                 <MaterialCommunityIcons name="gift-outline" size={15} color={C.primary} />
@@ -736,134 +784,37 @@ export default function CheckoutScreen() {
                 </View>
               )}
             </View>
-          )}
-        </View>
-
-        {/* ─── GST ─── */}
-        <View style={styles.section}>
-          <TouchableOpacity
-            activeOpacity={0.8}
-            style={[styles.toggleRow, gstinClaim && styles.toggleRowActive]}
-            onPress={() => {
-              LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-              setGstinClaim((v) => !v);
-            }}
-          >
-            <View style={styles.toggleLeft}>
-              <View style={[styles.toggleIconWrap, gstinClaim && styles.toggleIconActive]}>
-                <MaterialCommunityIcons
-                  name="file-document-outline"
-                  size={16}
-                  color={gstinClaim ? "#fff" : C.textSub}
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.toggleTitle, gstinClaim && { color: C.primary }]}>
-                  Claim GST Input
-                </Text>
-                <Text style={styles.toggleSub}>Get GST-compliant invoice for business purchases</Text>
-              </View>
-            </View>
-            <MaterialCommunityIcons
-              name={gstinClaim ? "check-circle" : "circle-outline"}
-              size={20}
-              color={gstinClaim ? C.primary : C.border}
-            />
-          </TouchableOpacity>
-
-          {gstinClaim && (
-            <View style={styles.expandedCard}>
-              <View style={styles.inputGroup}>
-                <Text style={styles.fieldLabel}>GSTIN</Text>
-                <TextInput
-                  placeholder="Enter 15-digit GSTIN"
-                  placeholderTextColor={C.textLight}
-                  value={gstin}
-                  onChangeText={setGstin}
-                  style={styles.textInput}
-                  autoCapitalize="characters"
-                  maxLength={15}
-                />
-              </View>
-              <View style={styles.inputGroup}>
-                <Text style={styles.fieldLabel}>Registered Business Name</Text>
-                <TextInput
-                  placeholder="Name as per GST registration"
-                  placeholderTextColor={C.textLight}
-                  value={invoiceName}
-                  onChangeText={setInvoiceName}
-                  style={styles.textInput}
-                />
-              </View>
-            </View>
-          )}
-        </View>
-
-        {/* ─── Cancellation Policy ─── */}
-        <View style={styles.section}>
-          <SectionHeader title="Policies" />
-          <View style={styles.policyCard}>
-            <View style={styles.policyItem}>
-              <MaterialCommunityIcons name="cancel" size={16} color={C.textSub} style={{ marginTop: 2 }} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.policyTitle}>Cancellation Policy</Text>
-                <Text style={styles.policyText}>
-                  Orders can be cancelled before the store accepts them. After acceptance, cancellation
-                  may not be possible and charges may apply.
-                </Text>
-              </View>
-            </View>
-            <View style={styles.policyDivider} />
-            <View style={styles.policyItem}>
-              <MaterialCommunityIcons name="help-circle-outline" size={16} color={C.textSub} style={{ marginTop: 2 }} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.policyTitle}>FAQs & Support</Text>
-                <Text style={styles.policyText}>
-                  Learn about refunds, delivery issues, and more.
-                </Text>
-                <TouchableOpacity
-                  style={styles.policyLink}
-                  onPress={() => router.push("/settings/support")}
-                >
-                  <Text style={styles.policyLinkText}>View Support →</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
           </View>
+        )}
 
-          <TouchableOpacity
-            style={styles.acceptRow}
-            activeOpacity={0.8}
-            onPress={() => setAcceptCancellation((v) => !v)}
-          >
-            <View style={[styles.checkbox, acceptCancellation && styles.checkboxActive]}>
-              {acceptCancellation && (
-                <MaterialCommunityIcons name="check" size={13} color="#fff" />
-              )}
-            </View>
-            <Text style={styles.acceptText}>
-              I've reviewed and accept the cancellation policy & FAQs.
-            </Text>
-          </TouchableOpacity>
+        {/* ─── Delivery Instructions ─── */}
+        <View style={styles.card}>
+          <Text style={styles.billSectionTitle}>DELIVERY INSTRUCTIONS</Text>
+          <TextInput
+            placeholder="e.g. Don't ring the bell, call on arrival, gate code…"
+            placeholderTextColor={C.textLight}
+            value={deliveryInstructions}
+            onChangeText={setDeliveryInstructions}
+            style={[styles.textInput, styles.multilineInput]}
+            multiline
+            numberOfLines={3}
+          />
         </View>
 
-        {/* ─── Payment Method ─── */}
-        <View style={styles.section}>
-          <SectionHeader title="Payment Method" />
-          <PaymentOption
-            label="UPI / Card / Wallet"
-            sublabel="Pay securely via Razorpay"
-            icon="credit-card-outline"
-            selected={payment === "upi"}
-            onPress={() => setPayment("upi")}
-          />
-          <PaymentOption
-            label="Cash on Delivery"
-            sublabel="Pay when your order arrives"
-            icon="cash-multiple"
-            selected={payment === "cod"}
-            onPress={() => setPayment("cod")}
-          />
+        {/* ─── Accept Policy ─── */}
+        <View style={[styles.card, { flexDirection: "row", alignItems: "flex-start", gap: 10 }]}>
+          <TouchableOpacity
+            style={[styles.checkbox, acceptCancellation && styles.checkboxActive]}
+            onPress={() => setAcceptCancellation((v) => !v)}
+            activeOpacity={0.8}
+          >
+            {acceptCancellation && (
+              <MaterialCommunityIcons name="check" size={13} color="#fff" />
+            )}
+          </TouchableOpacity>
+          <Text style={styles.acceptText}>
+            I've reviewed and accept the cancellation policy & FAQs.
+          </Text>
         </View>
 
         <View style={{ height: 16 }} />
@@ -871,20 +822,46 @@ export default function CheckoutScreen() {
 
       {/* ─── Pay Dock ─── */}
       <View style={styles.payDock}>
-        <View style={styles.payDockSummary}>
-          <View>
-            <Text style={styles.payDockLabel}>Total to pay</Text>
-            <Text style={styles.payDockAmount}>₹{finalPayable.toFixed(0)}</Text>
-          </View>
-          {location && (
-            <View style={styles.payDockLocation}>
-              <MaterialCommunityIcons name="map-marker" size={12} color={C.primary} />
-              <Text style={styles.payDockLocationText} numberOfLines={1}>
-                {location.label || "Delivery address"}
+        {/* Payment method row */}
+        <TouchableOpacity style={styles.payMethodRow} activeOpacity={0.8}>
+          <View style={styles.payMethodLeft}>
+            <MaterialCommunityIcons name="cellphone" size={18} color={C.text} />
+            <View style={{ marginLeft: 8 }}>
+              <Text style={styles.payMethodLabel}>Pay using</Text>
+              <Text style={styles.payMethodValue}>
+                {payment === "cod" ? "Cash on Delivery" : "Paytm UPI"}
               </Text>
             </View>
-          )}
+          </View>
+          <View style={styles.payMethodChange}>
+            <Text style={styles.payMethodChangeText}>Change</Text>
+            <MaterialCommunityIcons name="chevron-right" size={16} color={C.primary} />
+          </View>
+        </TouchableOpacity>
+
+        {/* Payment toggle */}
+        <View style={styles.paymentToggleRow}>
+          <TouchableOpacity
+            style={[styles.paymentToggleBtn, payment === "upi" && styles.paymentToggleBtnActive]}
+            onPress={() => setPayment("upi")}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.paymentToggleText, payment === "upi" && styles.paymentToggleTextActive]}>
+              UPI / Card
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.paymentToggleBtn, payment === "cod" && styles.paymentToggleBtnActive]}
+            onPress={() => setPayment("cod")}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.paymentToggleText, payment === "cod" && styles.paymentToggleTextActive]}>
+              Cash on Delivery
+            </Text>
+          </TouchableOpacity>
         </View>
+
+        {/* Slide to Pay button */}
         <TouchableOpacity
           style={[styles.payButton, placing && styles.payButtonPlacing]}
           onPress={placeOrder}
@@ -898,10 +875,12 @@ export default function CheckoutScreen() {
             </>
           ) : (
             <>
+              <View style={styles.paySlideArrow}>
+                <MaterialCommunityIcons name="chevron-double-right" size={22} color="#fff" />
+              </View>
               <Text style={styles.payButtonText}>
-                {payment === "cod" ? "Place Order" : "Pay Now"}
+                {payment === "cod" ? "Place Order" : `Slide to Pay | ₹${finalPayable.toFixed(0)}`}
               </Text>
-              <MaterialCommunityIcons name="arrow-right" size={20} color="#fff" />
             </>
           )}
         </TouchableOpacity>
@@ -948,73 +927,43 @@ export default function CheckoutScreen() {
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
-function SectionHeader({ title, optional }: { title: string; optional?: boolean }) {
-  return (
-    <View style={styles.sectionHeader}>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      {optional && <Text style={styles.optionalTag}>Optional</Text>}
-    </View>
-  );
-}
-
-function BillRow({ label, value, highlight }: { label: string; value: number; highlight?: boolean }) {
-  return (
-    <View style={styles.billRow}>
-      <Text style={[styles.billLabel, highlight && { color: C.success }]}>{label}</Text>
-      <Text style={[styles.billValue, highlight && { color: C.success, fontWeight: "700" }]}>
-        {value < 0 ? `−₹${Math.abs(value).toFixed(0)}` : `₹${value.toFixed(0)}`}
-      </Text>
-    </View>
-  );
-}
-
-function PaymentOption({
+function BillRow({
   label,
-  sublabel,
-  icon,
-  selected,
-  disabled,
-  onPress,
+  value,
+  highlight,
+  strikeValue,
+  showStrike,
+  note,
 }: {
   label: string;
-  sublabel?: string;
-  icon: any;
-  selected: boolean;
-  disabled?: boolean;
-  onPress: () => void;
+  value: number;
+  highlight?: boolean;
+  strikeValue?: number;
+  showStrike?: boolean;
+  note?: string;
 }) {
   return (
-    <TouchableOpacity
-      style={[styles.paymentRow, selected && styles.paymentActive, disabled && styles.paymentDisabled]}
-      onPress={disabled ? undefined : onPress}
-      activeOpacity={disabled ? 1 : 0.7}
-    >
-      <View style={styles.paymentLeft}>
-        <View style={[styles.paymentIconWrap, selected && styles.paymentIconActive]}>
-          <MaterialCommunityIcons
-            name={icon}
-            size={18}
-            color={selected ? "#fff" : disabled ? C.textLight : C.textSub}
-          />
-        </View>
-        <View>
-          <Text style={[styles.paymentText, selected && { color: C.primary }, disabled && { color: C.textLight }]}>
-            {label}
+    <View style={{ marginBottom: 10 }}>
+      <View style={styles.billRow}>
+        <Text style={[styles.billLabel, highlight && { color: C.success }]}>{label}</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          {showStrike && strikeValue !== undefined && (
+            <Text style={styles.billStrike}>₹{strikeValue.toFixed(0)}</Text>
+          )}
+          <Text style={[styles.billValue, highlight && { color: C.success, fontWeight: "700" }]}>
+            {value < 0 ? `−₹${Math.abs(value).toFixed(0)}` : `₹${value.toFixed(2)}`}
           </Text>
-          {sublabel && <Text style={styles.paymentSublabel}>{sublabel}</Text>}
         </View>
       </View>
-      <View style={[styles.radioOuter, selected && styles.radioOuterActive]}>
-        {selected && <View style={styles.radioInner} />}
-      </View>
-    </TouchableOpacity>
+      {note && <Text style={styles.billNote}>{note}</Text>}
+    </View>
   );
 }
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
+  safe: { flex: 1, backgroundColor: "#f0f0f5" },
   scrollContent: { paddingBottom: 200 },
 
   // Header
@@ -1038,164 +987,293 @@ const styles = StyleSheet.create({
     borderColor: C.border,
   },
   headerCenter: { flex: 1, alignItems: "center" },
-  headerTitle: { color: C.text, fontSize: 18, fontWeight: "900", letterSpacing: -0.3 },
-  headerSub: { color: C.textSub, fontSize: 11, marginTop: 2 },
+  headerTitle: { color: C.text, fontSize: 15, fontWeight: "800", letterSpacing: -0.2 },
+  headerSub: { color: C.textSub, fontSize: 11, marginTop: 1 },
 
-  // Section
-  section: { paddingHorizontal: 16, marginTop: 22 },
-  sectionHeader: { flexDirection: "row", alignItems: "center", marginBottom: 12, gap: 8 },
-  sectionTitle: { color: C.text, fontSize: 13, fontWeight: "900", letterSpacing: 0.3, textTransform: "uppercase" },
-  optionalTag: {
-    color: C.textLight,
-    fontSize: 10,
-    fontWeight: "600",
-    backgroundColor: C.bgSoft,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 20,
-  },
-
-  // Location
-  locationCard: {
-    flexDirection: "row",
-    alignItems: "center",
+  // Card (Blinkit uses white cards separated by gray gaps)
+  card: {
     backgroundColor: C.card,
-    borderRadius: 14,
-    padding: 14,
-    borderWidth: 1.5,
-    borderColor: C.primaryLight,
-    gap: 12,
-    shadowColor: C.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    marginTop: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
   },
-  locationIconWrap: {
-    width: 42,
-    height: 42,
-    borderRadius: 12,
-    backgroundColor: C.primaryXLight,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  locationLabel: { fontSize: 14, fontWeight: "700", color: C.text, marginBottom: 3 },
-  locationAddress: { fontSize: 12, color: C.textSub, lineHeight: 17 },
-  locationChevron: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: C.primaryXLight,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  addAddressBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    marginTop: 10,
-    paddingVertical: 11,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: C.primaryLight,
-    borderStyle: "dashed",
-  },
-  addAddressText: { fontSize: 13, fontWeight: "700", color: C.primary },
 
   // Items
-  itemsCard: {
-    backgroundColor: C.card,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: C.border,
-    overflow: "hidden",
-  },
-  itemRow: { flexDirection: "row", alignItems: "center", padding: 12, gap: 10 },
-  itemDivider: { height: 1, backgroundColor: C.border, marginHorizontal: 12 },
-  itemImage: { width: 46, height: 46, borderRadius: 9 },
+  itemRow: { flexDirection: "row", alignItems: "center", paddingVertical: 10, gap: 10 },
+  itemDivider: { height: 1, backgroundColor: C.border, marginVertical: 2 },
+  itemImage: { width: 52, height: 52, borderRadius: 8 },
   imagePlaceholder: {
-    width: 46,
-    height: 46,
-    borderRadius: 9,
+    width: 52,
+    height: 52,
+    borderRadius: 8,
     backgroundColor: C.bgSoft,
     alignItems: "center",
     justifyContent: "center",
   },
   itemDetails: { flex: 1 },
   itemName: { color: C.text, fontSize: 13, fontWeight: "600", lineHeight: 18 },
-  itemMeta: { color: C.textSub, fontSize: 11, marginTop: 2 },
-  itemTotal: { color: C.primary, fontWeight: "800", fontSize: 14 },
+  itemUnit: { color: C.textSub, fontSize: 11, marginTop: 2 },
+  itemPriceCol: { alignItems: "flex-end", minWidth: 48 },
+  itemTotal: { color: C.text, fontWeight: "700", fontSize: 13 },
+  itemMrp: { color: C.textLight, fontSize: 11, textDecorationLine: "line-through", marginTop: 2 },
 
   // Quantity Controls
   quantityControls: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 4,
+    borderWidth: 1.5,
+    borderColor: C.primary,
+    borderRadius: 8,
+    overflow: "hidden",
   },
   quantityBtn: {
     width: 28,
     height: 28,
-    borderRadius: 8,
-    backgroundColor: C.primaryXLight,
-    borderWidth: 1.5,
-    borderColor: C.primaryLight,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: C.primaryXLight,
   },
   quantityText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "700",
-    color: C.text,
-    minWidth: 20,
+    color: C.primary,
+    minWidth: 24,
     textAlign: "center",
   },
 
-  // Coupon
-  couponCard: {
-    backgroundColor: C.primaryXLight,
-    borderRadius: 14,
-    padding: 14,
+  // Add more items
+  addMoreRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    borderWidth: 1.5,
-    borderColor: C.primaryLight,
+    gap: 6,
+    paddingTop: 12,
+    marginTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: C.border,
   },
-  couponLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
-  couponIconWrap: {
-    width: 34,
-    height: 34,
-    borderRadius: 9,
-    backgroundColor: C.card,
+  addMoreText: { color: C.primary, fontSize: 13, fontWeight: "700" },
+
+  // Savings corner
+  savingsHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 10,
+  },
+  savingsTitle: {
+    color: C.textSub,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+  },
+  savingsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  savingsLeft: { flexDirection: "row", alignItems: "center", flex: 1 },
+  savingsText: { color: C.text, fontSize: 13, fontWeight: "600" },
+
+  // GSTIN
+  gstinRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  gstinLeft: { flexDirection: "row", alignItems: "center", flex: 1 },
+  gstinIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: "#e8f0fe",
     alignItems: "center",
     justifyContent: "center",
   },
-  couponText: { color: C.primary, fontWeight: "700", fontSize: 13 },
-  couponSavings: { color: C.success, fontSize: 11, fontWeight: "600", marginTop: 1 },
-  removeCouponBtn: { paddingHorizontal: 4 },
-  removeCoupon: { color: C.danger, fontSize: 12, fontWeight: "700" },
+  gstinIconText: { color: "#2563eb", fontSize: 9, fontWeight: "900", letterSpacing: 0.3 },
+  gstinTitle: { color: C.text, fontSize: 13, fontWeight: "700" },
+  gstinSub: { color: C.textSub, fontSize: 11, marginTop: 1 },
+  gstinAddBtn: { color: C.primary, fontSize: 14, fontWeight: "800" },
+  gstinExpanded: { marginTop: 12 },
 
-  // Bill
-  billCard: {
-    backgroundColor: C.card,
-    borderRadius: 16,
-    padding: 16,
+  // Reco tabs
+  recoTabsScroll: { marginBottom: 12, marginHorizontal: -16, paddingHorizontal: 16 },
+  recoTab: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: C.border,
+    marginRight: 8,
+    backgroundColor: C.card,
   },
-  billRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 10 },
-  billLabel: { color: C.textSub, fontSize: 13 },
+  recoTabActive: { borderColor: C.primary, backgroundColor: C.primaryXLight },
+  recoTabText: { color: C.textSub, fontSize: 12, fontWeight: "600" },
+  recoTabTextActive: { color: C.primary },
+
+  // Reco cards
+  recoScroll: { marginHorizontal: -16, paddingHorizontal: 16 },
+  recoCard: {
+    width: 110,
+    backgroundColor: C.card,
+    borderRadius: 10,
+    padding: 8,
+    marginRight: 10,
+    borderWidth: 1,
+    borderColor: C.border,
+    position: "relative",
+  },
+  recoBookmark: { position: "absolute", top: 6, left: 6, zIndex: 1 },
+  recoImage: { width: "100%", height: 70, borderRadius: 8, marginBottom: 6 },
+  recoPlaceholder: {
+    width: "100%",
+    height: 70,
+    borderRadius: 8,
+    backgroundColor: C.bgSoft,
+    marginBottom: 6,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  recoDelivery: { color: C.textLight, fontSize: 9, fontWeight: "700", letterSpacing: 0.3 },
+  recoName: { color: C.text, fontSize: 11, fontWeight: "600", lineHeight: 15, minHeight: 30, marginTop: 2 },
+  recoWeight: { color: C.textSub, fontSize: 10, marginTop: 1 },
+  recoDiscount: { color: C.success, fontSize: 10, fontWeight: "800", marginTop: 2 },
+  recoPriceRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 },
+  recoPrice: { color: C.text, fontSize: 12, fontWeight: "800" },
+  recoMrp: { color: C.textLight, fontSize: 10, textDecorationLine: "line-through" },
+  recoAddBtn: {
+    marginTop: 7,
+    borderWidth: 1.5,
+    borderColor: C.primary,
+    borderRadius: 6,
+    paddingVertical: 4,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  // No bag toggle
+  noBagRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  noBagTitle: { color: C.text, fontSize: 14, fontWeight: "700" },
+  noBagEmoji: { fontSize: 14 },
+  noBagSub: { color: C.textSub, fontSize: 12, marginTop: 3, lineHeight: 17 },
+  toggleSwitch: {
+    width: 46,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: C.border,
+    padding: 2,
+    justifyContent: "center",
+  },
+  toggleSwitchOn: { backgroundColor: C.primary },
+  toggleKnob: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "#fff",
+    alignSelf: "flex-start",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  toggleKnobOn: { alignSelf: "flex-end" },
+
+  // Tip
+  tipHeaderRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 },
+  tipTitle: {
+    color: C.textSub,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+  },
+  tipSubtitle: { color: C.textSub, fontSize: 12, lineHeight: 17, marginBottom: 14 },
+  tipDeliveryImage: { height: 0 },
+  tipChipsRow: { flexDirection: "row", gap: 8 },
+  tipChip: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: C.border,
+    backgroundColor: C.card,
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+    paddingTop: 14,
+  },
+  tipChipActive: { borderColor: C.primary, backgroundColor: C.primaryXLight },
+  tipChipText: { fontSize: 13, color: C.text, fontWeight: "700" },
+  tipChipTextActive: { color: C.primary },
+  tipMostTipped: {
+    position: "absolute",
+    top: -9,
+    alignSelf: "center",
+    backgroundColor: C.primary,
+    color: "#fff",
+    fontSize: 8,
+    fontWeight: "800",
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+
+  // Bill Details
+  billSectionTitle: {
+    color: C.textSub,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+    marginBottom: 14,
+  },
+  billRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  billLabel: { color: C.text, fontSize: 13 },
   billValue: { color: C.text, fontSize: 13, fontWeight: "500" },
+  billStrike: { color: C.textLight, fontSize: 12, textDecorationLine: "line-through" },
+  billNote: { color: C.textSub, fontSize: 11, marginTop: 3 },
+  deliveryFeeRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  freeDeliveryNote: { color: C.textSub, fontSize: 11, marginBottom: 10, marginTop: -4 },
+  billGstRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 10,
+  },
   billDivider: { height: 1, backgroundColor: C.border, marginVertical: 12 },
   totalRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  totalLabel: { color: C.text, fontSize: 15, fontWeight: "900" },
-  totalValue: { color: C.primary, fontSize: 22, fontWeight: "900" },
+  totalLabel: { color: C.text, fontSize: 16, fontWeight: "900" },
+  totalStrike: { color: C.textLight, fontSize: 13, textDecorationLine: "line-through" },
+  totalValue: { color: C.text, fontSize: 18, fontWeight: "900" },
+
+  // Note card
+  noteCard: {
+    backgroundColor: "#fff8e1",
+    marginTop: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "#ffe082",
+  },
+  noteText: { color: C.text, fontSize: 12, lineHeight: 18 },
+  noteBold: { fontWeight: "800" },
+  noteLink: { color: C.primary, fontSize: 12, fontWeight: "700", marginTop: 4 },
 
   // Inputs
   textInput: {
-    borderRadius: 12,
+    borderRadius: 10,
     borderWidth: 1.5,
     borderColor: C.border,
     paddingHorizontal: 13,
@@ -1209,69 +1287,26 @@ const styles = StyleSheet.create({
   inputGroup: { marginBottom: 12 },
   inputIconRow: { flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 7 },
   fieldLabel: { color: C.textSub, fontSize: 12, fontWeight: "700" },
+  textInputFilled: { borderColor: C.primary },
+  fieldHint: { color: C.textLight, fontSize: 11, marginTop: 4, marginLeft: 2 },
 
-  // Tip
-  tipRow: { flexDirection: "row", gap: 8, flexWrap: "wrap", marginBottom: 8 },
-  tipChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1.5,
-    borderColor: C.border,
-    backgroundColor: C.card,
-  },
-  tipChipActive: { borderColor: C.primary, backgroundColor: C.primaryXLight },
-  tipChipText: { fontSize: 13, color: C.textSub, fontWeight: "600" },
-  tipChipTextActive: { color: C.primary },
-  tipNote: { color: C.textLight, fontSize: 11, marginTop: 4 },
-
-  // Ordering for someone else
-  someoneElseToggle: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: C.card,
-    borderRadius: 14,
-    padding: 14,
-    borderWidth: 1.5,
-    borderColor: C.border,
-    gap: 12,
-  },
-  someoneElseToggleActive: { borderColor: C.primary, backgroundColor: C.primaryXLight },
-  someoneElseIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
+  // Section
+  sectionHeader: { flexDirection: "row", alignItems: "center", marginBottom: 12, gap: 8 },
+  sectionTitle: { color: C.text, fontSize: 13, fontWeight: "900", letterSpacing: 0.3, textTransform: "uppercase" },
+  optionalTag: {
+    color: C.textLight,
+    fontSize: 10,
+    fontWeight: "600",
     backgroundColor: C.bgSoft,
-    alignItems: "center",
-    justifyContent: "center",
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 20,
   },
-  someoneElseIconActive: { backgroundColor: C.primary },
-  someoneElseLabel: { color: C.text, fontSize: 14, fontWeight: "700" },
-  someoneElseLabelActive: { color: C.primary },
-  someoneElseSublabel: { color: C.textLight, fontSize: 11, marginTop: 2 },
-  someoneElseSwitch: {
-    width: 42,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: C.border,
-    padding: 2,
-    justifyContent: "center",
-  },
-  someoneElseSwitchActive: { backgroundColor: C.primary },
-  someoneElseSwitchKnob: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: "#fff",
-    alignSelf: "flex-start",
-  },
-  someoneElseSwitchKnobActive: { alignSelf: "flex-end" },
 
+  // Recipient
   recipientBox: {
-    marginTop: 10,
     backgroundColor: C.card,
     borderRadius: 14,
-    padding: 16,
     borderWidth: 1.5,
     borderColor: C.primaryLight,
     gap: 2,
@@ -1285,12 +1320,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: C.border,
   },
-  recipientBoxTitle: {
-    color: C.text,
-    fontSize: 13,
-    fontWeight: "800",
-    flex: 1,
-  },
+  recipientBoxTitle: { color: C.text, fontSize: 13, fontWeight: "800", flex: 1 },
   recipientBoxNote: {
     color: C.textLight,
     fontSize: 10,
@@ -1314,8 +1344,6 @@ const styles = StyleSheet.create({
   },
   phonePrefixText: { fontSize: 13, fontWeight: "600", color: C.text },
   phoneInputField: { flex: 1, marginBottom: 0 },
-  textInputFilled: { borderColor: C.primary },
-  fieldHint: { color: C.textLight, fontSize: 11, marginTop: 4, marginLeft: 2 },
   recipientPreview: {
     flexDirection: "row",
     alignItems: "center",
@@ -1328,55 +1356,7 @@ const styles = StyleSheet.create({
   },
   recipientPreviewText: { color: C.textSub, fontSize: 12, flex: 1 },
 
-  // Toggle rows (GST)
-  toggleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: C.card,
-    borderRadius: 13,
-    padding: 13,
-    borderWidth: 1.5,
-    borderColor: C.border,
-    gap: 10,
-  },
-  toggleRowActive: { borderColor: C.primaryLight, backgroundColor: C.primaryXLight },
-  toggleLeft: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
-  toggleIconWrap: {
-    width: 30,
-    height: 30,
-    borderRadius: 9,
-    backgroundColor: C.bgSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  toggleIconActive: { backgroundColor: C.primary },
-  toggleTitle: { color: C.text, fontSize: 13, fontWeight: "700" },
-  toggleSub: { color: C.textLight, fontSize: 11, marginTop: 2, lineHeight: 15 },
-  expandedCard: {
-    marginTop: 8,
-    backgroundColor: C.card,
-    borderRadius: 13,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: C.primaryLight,
-  },
-
-  // Policy
-  policyCard: {
-    backgroundColor: C.card,
-    borderRadius: 14,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: C.border,
-    marginBottom: 10,
-  },
-  policyItem: { flexDirection: "row", gap: 10 },
-  policyDivider: { height: 1, backgroundColor: C.border, marginVertical: 12 },
-  policyTitle: { color: C.text, fontSize: 13, fontWeight: "700", marginBottom: 4 },
-  policyText: { color: C.textSub, fontSize: 12, lineHeight: 17 },
-  policyLink: { marginTop: 8 },
-  policyLinkText: { color: C.primary, fontSize: 12, fontWeight: "700" },
-
+  // Accept checkbox
   acceptRow: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   checkbox: {
     width: 20,
@@ -1391,44 +1371,6 @@ const styles = StyleSheet.create({
   checkboxActive: { backgroundColor: C.primary, borderColor: C.primary },
   acceptText: { color: C.textSub, fontSize: 12, flex: 1, lineHeight: 18 },
 
-  // Payment
-  paymentRow: {
-    backgroundColor: C.card,
-    padding: 13,
-    borderRadius: 13,
-    marginBottom: 8,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    borderWidth: 1.5,
-    borderColor: C.border,
-  },
-  paymentActive: { borderColor: C.primary, backgroundColor: C.primaryXLight },
-  paymentDisabled: { opacity: 0.45 },
-  paymentLeft: { flexDirection: "row", alignItems: "center", gap: 11 },
-  paymentIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: C.bgSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  paymentIconActive: { backgroundColor: C.primary },
-  paymentText: { color: C.text, fontSize: 14, fontWeight: "700" },
-  paymentSublabel: { color: C.textLight, fontSize: 11, marginTop: 2 },
-  radioOuter: {
-    width: 19,
-    height: 19,
-    borderRadius: 10,
-    borderWidth: 2,
-    borderColor: C.border,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  radioOuterActive: { borderColor: C.primary },
-  radioInner: { width: 9, height: 9, borderRadius: 5, backgroundColor: C.primary },
-
   // Pay dock
   payDock: {
     position: "absolute",
@@ -1437,76 +1379,69 @@ const styles = StyleSheet.create({
     right: 0,
     backgroundColor: C.card,
     paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 34,
+    paddingTop: 12,
+    paddingBottom: 30,
     borderTopWidth: 1,
     borderTopColor: C.border,
-    shadowColor: C.shadow,
-    shadowOffset: { width: 0, height: -6 },
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
     elevation: 16,
   },
-  payDockSummary: {
+  payMethodRow: {
     flexDirection: "row",
+    alignItems: "center",
     justifyContent: "space-between",
-    alignItems: "flex-end",
+    paddingBottom: 10,
+    marginBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+  },
+  payMethodLeft: { flexDirection: "row", alignItems: "center" },
+  payMethodLabel: { color: C.textSub, fontSize: 10, fontWeight: "600" },
+  payMethodValue: { color: C.text, fontSize: 13, fontWeight: "700" },
+  payMethodChange: { flexDirection: "row", alignItems: "center" },
+  payMethodChangeText: { color: C.primary, fontSize: 13, fontWeight: "700" },
+  paymentToggleRow: {
+    flexDirection: "row",
+    gap: 8,
     marginBottom: 12,
   },
-  payDockLabel: { color: C.textSub, fontSize: 11, fontWeight: "600", letterSpacing: 0.3 },
-  payDockAmount: { color: C.text, fontSize: 26, fontWeight: "900", letterSpacing: -0.5 },
-  payDockLocation: { flexDirection: "row", alignItems: "center", gap: 4, maxWidth: "55%" },
-  payDockLocationText: { color: C.textSub, fontSize: 11, flex: 1 },
+  paymentToggleBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: C.border,
+    alignItems: "center",
+    backgroundColor: C.bgSoft,
+  },
+  paymentToggleBtnActive: { borderColor: C.primary, backgroundColor: C.primaryXLight },
+  paymentToggleText: { color: C.textSub, fontSize: 12, fontWeight: "700" },
+  paymentToggleTextActive: { color: C.primary },
   payButton: {
     backgroundColor: C.primary,
-    borderRadius: 16,
+    borderRadius: 14,
     paddingVertical: 16,
     paddingHorizontal: 24,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
+    gap: 10,
   },
   payButtonPlacing: { opacity: 0.65 },
+  paySlideArrow: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: "rgba(255,255,255,0.25)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   payButtonText: { color: "#fff", fontSize: 16, fontWeight: "900", letterSpacing: 0.2 },
 
-  // Recommended
-  recoScroll: { marginHorizontal: -4 },
-  recoCard: {
-    width: 120,
-    backgroundColor: C.card,
-    borderRadius: 13,
-    padding: 9,
-    marginHorizontal: 4,
-    borderWidth: 1,
-    borderColor: C.border,
-  },
-  recoImage: { width: "100%", height: 72, borderRadius: 9, marginBottom: 6 },
-  recoPlaceholder: {
-    width: "100%",
-    height: 72,
-    borderRadius: 9,
-    backgroundColor: C.bgSoft,
-    marginBottom: 6,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  recoName: { color: C.text, fontSize: 11, fontWeight: "600", lineHeight: 15, minHeight: 30 },
-  recoPrice: { color: C.primary, fontSize: 12, fontWeight: "800", marginTop: 2 },
-  recoUnit: { color: C.textSub, fontSize: 10, fontWeight: "400" },
-  recoAddBtn: {
-    marginTop: 7,
-    backgroundColor: C.primary,
-    borderRadius: 999,
-    paddingVertical: 6,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 3,
-  },
-  recoAddText: { color: "#fff", fontSize: 11, fontWeight: "800" },
-
-  // Success
+  // Success overlay
   successOverlay: {
     position: "absolute",
     top: 0, left: 0, right: 0, bottom: 0,
