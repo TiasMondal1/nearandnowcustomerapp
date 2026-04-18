@@ -6,12 +6,20 @@ import { supabaseAdmin } from './supabase';
 const MASTER_PRODUCT_FIELDS =
   'id,name,category,base_price,discounted_price,unit,image_url,description,is_loose,is_active,created_at';
 
+// Lean field list used by the home catalog load. Excludes the potentially large `description`
+// field, which the home screen never renders — slashes payload size & parse time.
+// Only includes columns that actually exist on `master_products`.
+const HOME_PRODUCT_FIELDS =
+  'id,name,category,base_price,discounted_price,unit,image_url,is_loose,is_active,created_at';
+
 /** Default page size for incremental home load. */
 export const HOME_PAGE_SIZE = 20;
 
 const HOME_CACHE_KEY = 'nn_home_catalog_v1';
 const HOME_PAGE_CACHE_KEY = 'nn_home_page_v2';
 const HOME_CACHE_TTL_MS = 1000 * 60 * 60 * 24; // 24h; UI re-fetches in background anyway.
+/** How recent the cache must be to skip a background refresh entirely. */
+export const HOME_CACHE_FRESH_MS = 1000 * 60 * 5; // 5 min
 
 export interface Product {
   id: string;
@@ -47,15 +55,19 @@ interface MasterProductRow {
   [key: string]: unknown;
 }
 
-async function fetchAllMasterProductRows(): Promise<MasterProductRow[]> {
+async function fetchAllMasterProductRows(
+  fields: string = MASTER_PRODUCT_FIELDS,
+): Promise<MasterProductRow[]> {
   const allRows: MasterProductRow[] = [];
   let from = 0;
-  const batchSize = 500;
+  // Supabase default row cap per request is 1000. Use the full window to minimize
+  // round-trips (fewer network hops = faster cold boot).
+  const batchSize = 1000;
   let hasMore = true;
   while (hasMore) {
     const { data, error } = await supabaseAdmin
       .from('master_products')
-      .select(MASTER_PRODUCT_FIELDS)
+      .select(fields)
       .eq('is_active', true)
       .range(from, from + batchSize - 1);
     if (error) throw new Error(`Database error: ${error.message}`);
@@ -124,7 +136,9 @@ export async function loadMasterCatalog(_options?: {
   lng?: number;
   radiusKm?: number;
 }): Promise<{ products: Product[]; productsByCategory: Record<string, Product[]> }> {
-  const rows = await fetchAllMasterProductRows();
+  // Home catalog does NOT need description text — use the lean field list to shave
+  // payload + parse cost noticeably.
+  const rows = await fetchAllMasterProductRows(HOME_PRODUCT_FIELDS);
   const products = rows.map(masterRowToProduct);
   const productsByCategory: Record<string, Product[]> = {};
   for (const p of products) {
@@ -306,6 +320,12 @@ export async function readHomeCatalogCache(): Promise<HomeCatalogCache | null> {
   } catch {
     return null;
   }
+}
+
+/** True if the cache is recent enough to skip a background re-fetch. */
+export function isHomeCatalogCacheFresh(cache: HomeCatalogCache | null): boolean {
+  if (!cache) return false;
+  return Date.now() - (cache.savedAt || 0) < HOME_CACHE_FRESH_MS;
 }
 
 export async function writeHomeCatalogCache(

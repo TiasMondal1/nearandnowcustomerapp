@@ -5,13 +5,13 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
     ActivityIndicator,
     FlatList,
-    Image,
     RefreshControl,
     StyleSheet,
     Text,
     TouchableOpacity,
     View,
 } from "react-native";
+import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { C } from "../../constants/colors";
@@ -158,7 +158,10 @@ export default function CategoriesScreen() {
                   <Image
                     source={{ uri: item.image_url }}
                     style={styles.categoryImage}
-                    resizeMode="cover"
+                    contentFit="cover"
+                    cachePolicy="memory-disk"
+                    transition={120}
+                    recyclingKey={item.id}
                   />
                 ) : (
                   <View

@@ -4,13 +4,13 @@ import React, { useEffect, useState } from "react";
 import {
     ActivityIndicator,
     Dimensions,
-    Image,
     ScrollView,
     StyleSheet,
     Text,
     TouchableOpacity,
     View,
 } from "react-native";
+import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { C } from "../../constants/colors";
@@ -88,7 +88,14 @@ export default function ProductDetailsScreen() {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 140 }}>
         <View style={styles.imageWrap}>
           {product.image_url ? (
-            <Image source={{ uri: product.image_url }} style={styles.heroImage} resizeMode="cover" />
+            <Image
+              source={{ uri: product.image_url }}
+              style={styles.heroImage}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              transition={180}
+              priority="high"
+            />
           ) : (
             <View style={[styles.heroImage, styles.imageFallback]}>
               <MaterialCommunityIcons name="image-off-outline" size={48} color={C.textLight} />

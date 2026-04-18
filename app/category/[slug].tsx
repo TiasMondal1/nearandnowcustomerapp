@@ -4,7 +4,6 @@ import React, { useCallback, useEffect, useState } from "react";
 import {
     ActivityIndicator,
     FlatList,
-    Image,
     InteractionManager,
     RefreshControl,
     StyleSheet,
@@ -12,6 +11,7 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
+import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { C } from "../../constants/colors";
@@ -120,7 +120,14 @@ export default function CategorySlugScreen() {
           onPress={() => router.push(`../product/${item.id}`)}
         >
           {item.image_url ? (
-            <Image source={{ uri: item.image_url }} style={styles.image} />
+            <Image
+              source={{ uri: item.image_url }}
+              style={styles.image}
+              contentFit="contain"
+              cachePolicy="memory-disk"
+              transition={120}
+              recyclingKey={item.id}
+            />
           ) : (
             <View style={styles.imagePlaceholder}>
               <MaterialCommunityIcons name="image-off-outline" size={24} color={C.textLight} />

@@ -5,7 +5,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Animated,
-  Image,
   LayoutAnimation,
   ScrollView,
   StyleSheet,
@@ -14,6 +13,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { C } from "../../constants/colors";
@@ -401,7 +401,13 @@ export default function CheckoutScreen() {
             <View key={item.product_id}>
               <View style={styles.itemRow}>
                 {item.image_url ? (
-                  <Image source={{ uri: item.image_url }} style={styles.itemImage} />
+                  <Image
+                    source={{ uri: item.image_url }}
+                    style={styles.itemImage}
+                    contentFit="contain"
+                    cachePolicy="memory-disk"
+                    transition={120}
+                  />
                 ) : (
                   <View style={styles.imagePlaceholder}>
                     <MaterialCommunityIcons name="leaf" size={20} color={C.border} />
@@ -536,7 +542,13 @@ export default function CheckoutScreen() {
                     <MaterialCommunityIcons name="bookmark-outline" size={14} color={C.textSub} />
                   </TouchableOpacity>
                   {p.image_url ? (
-                    <Image source={{ uri: p.image_url }} style={styles.recoImage} resizeMode="contain" />
+                    <Image
+                      source={{ uri: p.image_url }}
+                      style={styles.recoImage}
+                      contentFit="contain"
+                      cachePolicy="memory-disk"
+                      transition={120}
+                    />
                   ) : (
                     <View style={styles.recoPlaceholder}>
                       <MaterialCommunityIcons name="image-outline" size={22} color={C.border} />

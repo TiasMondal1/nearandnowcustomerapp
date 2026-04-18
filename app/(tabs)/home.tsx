@@ -1,10 +1,12 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Image as ExpoImage } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import React, {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import * as ExpoLocation from "expo-location";
@@ -12,53 +14,44 @@ import {
   ActivityIndicator,
   BackHandler,
   FlatList,
-  Image,
   InteractionManager,
   Platform,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
-  View
+  View,
+  type StyleProp,
+  type ViewStyle,
 } from "react-native";
 import { useFocusEffect } from "expo-router";
 import Animated, {
-  FadeIn,
-  FadeInDown,
   FadeInUp,
   useAnimatedStyle,
   useSharedValue,
-  withSpring
+  withSpring,
 } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import ProfileMenu from "../../components/ProfileMenu";
-import StarRating from "../../components/StarRating";
-import { useCart } from "../../context/CartContext";
+import { useAuth } from "../../context/AuthContext";
+import { useCartItemMap, useCart, type CartItem } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
 import { getAllCategories, type Category } from "../../lib/categoryService";
+import { getUserOrders } from "../../lib/orderService";
 import {
-  getCategoryCounts,
   getCountForCategoryName,
-  getProductsPage,
-  HOME_PAGE_SIZE,
-  readHomePageCache,
-  writeHomePageCache,
+  getProductsForCategoryName,
+  isHomeCatalogCacheFresh,
+  loadMasterCatalog,
+  readHomeCatalogCache,
+  writeHomeCatalogCache,
   type Product,
 } from "../../lib/productService";
 
-/** Fisher–Yates shuffle (new array). */
-function shuffleArray<T>(items: T[]): T[] {
-  const arr = [...items];
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
-}
-
-// ─── Design tokens (override / extend your C palette) ───────────────────────
+// ─── Design tokens ──────────────────────────────────────────────────────────
 const T = {
   green: "#2D7A4F",
   greenLight: "#3DA668",
@@ -77,6 +70,9 @@ const T = {
   shadow: "rgba(45,122,79,0.12)",
   shadowDark: "rgba(0,0,0,0.10)",
   badge: "#FF6B35",
+  imageBg: "#F7F5EF",
+  skeletonLo: "#EFEDE7",
+  skeletonHi: "#F7F5EF",
 };
 
 const FALLBACK_ICONS = [
@@ -86,249 +82,487 @@ const FALLBACK_ICONS = [
   "cookie",
   "cup",
   "sack",
-  "face-woman-shimmer",
-  "home-outline",
+  "food-apple-outline",
+  "basket-outline",
 ];
 
-// ─── Animated Product Card ───────────────────────────────────────────────────
-function ProductCard({
-  p,
-  index,
-  cartItem,
-  onAdd,
-  onUpdateQty,
-}: {
+/** Products shown in each category section before "See all". */
+const SECTION_VISIBLE_PRODUCTS = 6;
+
+/** A tiny 1×1 transparent pixel used as the image placeholder while the real product loads. */
+const PLACEHOLDER_BLURHASH = "L6PZfSi_.AyE_3t7t7R**0o#DgR4";
+
+// ─── Product Card (Blinkit / Instamart style) ───────────────────────────────
+type ProductCardProps = {
   p: Product;
-  index: number;
-  cartItem: any;
-  onAdd: () => void;
-  onUpdateQty: (qty: number) => void;
-}) {
-  const scale = useSharedValue(1);
-  const hasDiscount = p.original_price != null && p.original_price > p.price;
-  const discountPct = hasDiscount
-    ? Math.round(((p.original_price! - p.price) / p.original_price!) * 100)
-    : 0;
+  cartItem: CartItem | undefined;
+  onAdd: (p: Product) => void;
+  onUpdateQty: (p: Product, qty: number) => void;
+  containerStyle?: StyleProp<ViewStyle>;
+};
 
-  const animStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-  }));
+const ProductCard = React.memo(
+  function ProductCard({
+    p,
+    cartItem,
+    onAdd,
+    onUpdateQty,
+    containerStyle,
+  }: ProductCardProps) {
+    const scale = useSharedValue(1);
+    const hasDiscount = p.original_price != null && p.original_price > p.price;
+    const discountPct = hasDiscount
+      ? Math.round(((p.original_price! - p.price) / p.original_price!) * 100)
+      : 0;
 
-  return (
-    // Outer wrapper owns the layout/entering animation so Reanimated doesn't warn
-    // about `transform` on the same node being overwritten by the layout animation.
-    <Animated.View
-      entering={FadeInDown.delay(index * 40).duration(300)}
-      style={styles.cardOuter}
-    >
-      <Animated.View style={[animStyle, styles.card, !p.in_stock && styles.cardOutOfStock]}>
-      <Pressable
-        onPressIn={() => {
-          scale.value = withSpring(0.97, { damping: 18, stiffness: 280 });
-        }}
-        onPressOut={() => {
-          scale.value = withSpring(1, { damping: 18, stiffness: 280 });
-        }}
-        onPress={() => router.push(`../product/${p.id}`)}
-      >
-        {/* ── Image zone ── */}
-        <View style={styles.imageWrap}>
-          {p.image_url ? (
-            <Image source={{ uri: p.image_url }} style={styles.image} />
-          ) : (
-            <View style={styles.imagePlaceholder}>
-              <MaterialCommunityIcons
-                name="image-off-outline"
-                size={28}
-                color={T.barkLight}
-              />
-            </View>
-          )}
+    const animStyle = useAnimatedStyle(() => ({
+      transform: [{ scale: scale.value }],
+    }));
 
-          {/* Gradient overlay for text legibility */}
-          <LinearGradient
-            colors={["transparent", "rgba(0,0,0,0.28)"]}
-            style={StyleSheet.absoluteFillObject}
-            start={{ x: 0, y: 0.5 }}
-            end={{ x: 0, y: 1 }}
-            pointerEvents="none"
-          />
+    const handlePressIn = useCallback(() => {
+      scale.value = withSpring(0.97, { damping: 18, stiffness: 280 });
+    }, [scale]);
+    const handlePressOut = useCallback(() => {
+      scale.value = withSpring(1, { damping: 18, stiffness: 280 });
+    }, [scale]);
+    const handlePress = useCallback(() => {
+      router.push(`../product/${p.id}`);
+    }, [p.id]);
+    const handleAdd = useCallback(() => onAdd(p), [onAdd, p]);
+    const handleMinus = useCallback(
+      () => onUpdateQty(p, (cartItem?.quantity ?? 1) - 1),
+      [onUpdateQty, p, cartItem?.quantity],
+    );
+    const handlePlus = useCallback(
+      () => onUpdateQty(p, (cartItem?.quantity ?? 0) + 1),
+      [onUpdateQty, p, cartItem?.quantity],
+    );
 
-          {hasDiscount && (
-            <View style={styles.discountBadge}>
-              <Text style={styles.discountText}>−{discountPct}%</Text>
-            </View>
-          )}
-
-          {!p.in_stock && (
-            <View style={styles.outOfStockOverlay}>
-              <Text style={styles.outOfStockText}>Sold Out</Text>
-            </View>
-          )}
-        </View>
-      </Pressable>
-
-      {/* ── Card body ── */}
-      <View style={styles.cardBody}>
-        <Text style={styles.productName} numberOfLines={2}>
-          {p.name}
-        </Text>
-
-        <View style={styles.priceRow}>
-          <Text style={styles.priceValue}>₹{p.price}</Text>
-          {hasDiscount && (
-            <Text style={styles.originalPrice}>₹{p.original_price}</Text>
-          )}
-        </View>
-
-        {p.unit ? <Text style={styles.priceUnit}>{p.unit}</Text> : null}
-
-        <View style={styles.ratingWrap}>
-          <StarRating rating={p.avgRating ?? 0} reviewCount={p.reviewCount} />
-        </View>
-
-        {p.in_stock ? (
-          cartItem ? (
-            <View style={styles.qtyBox}>
-              <TouchableOpacity
-                style={styles.qtyBtn}
-                onPress={() => onUpdateQty(cartItem.quantity - 1)}
-                activeOpacity={0.75}
-              >
-                <Text style={styles.qtyBtnText}>−</Text>
-              </TouchableOpacity>
-              <Text style={styles.qtyValue}>{cartItem.quantity}</Text>
-              <TouchableOpacity
-                style={styles.qtyBtn}
-                onPress={() => onUpdateQty(cartItem.quantity + 1)}
-                activeOpacity={0.75}
-              >
-                <Text style={styles.qtyBtnText}>+</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <TouchableOpacity
-              style={styles.addBtn}
-              activeOpacity={0.82}
-              onPress={onAdd}
-            >
-              <LinearGradient
-                colors={[T.greenLight, T.green]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.addBtnGradient}
-              >
-                <MaterialCommunityIcons
-                  name="plus"
-                  size={15}
-                  color={T.white}
+    return (
+      <View style={[styles.cardOuter, containerStyle]}>
+        <Animated.View
+          style={[animStyle, styles.card, !p.in_stock && styles.cardOutOfStock]}
+        >
+          <Pressable
+            onPressIn={handlePressIn}
+            onPressOut={handlePressOut}
+            onPress={handlePress}
+          >
+            <View style={styles.imageWrap}>
+              {p.image_url ? (
+                <ExpoImage
+                  source={{ uri: p.image_url }}
+                  style={styles.image}
+                  contentFit="contain"
+                  transition={120}
+                  cachePolicy="memory-disk"
+                  placeholder={PLACEHOLDER_BLURHASH}
+                  recyclingKey={p.id}
+                  priority="normal"
                 />
-                <Text style={styles.addText}>ADD</Text>
-              </LinearGradient>
-            </TouchableOpacity>
-          )
-        ) : (
-          <View style={styles.soldOutBtn}>
-            <Text style={styles.soldOutText}>Sold Out</Text>
-          </View>
-        )}
-      </View>
-      </Animated.View>
-    </Animated.View>
-  );
-}
+              ) : (
+                <View style={styles.imagePlaceholder}>
+                  <MaterialCommunityIcons
+                    name="image-off-outline"
+                    size={28}
+                    color={T.barkLight}
+                  />
+                </View>
+              )}
 
-// ─── Category Chip ────────────────────────────────────────────────────────────
-function CategoryChip({
+              {hasDiscount && (
+                <View style={styles.discountFlag}>
+                  <Text style={styles.discountFlagText}>{discountPct}%</Text>
+                  <Text style={styles.discountFlagOff}>OFF</Text>
+                </View>
+              )}
+
+              {!p.in_stock && (
+                <View style={styles.outOfStockOverlay}>
+                  <Text style={styles.outOfStockText}>Sold Out</Text>
+                </View>
+              )}
+            </View>
+
+            <View style={styles.cardBody}>
+              {p.unit ? (
+                <View style={styles.unitPill}>
+                  <MaterialCommunityIcons
+                    name="clock-fast"
+                    size={9}
+                    color={T.green}
+                  />
+                  <Text style={styles.unitPillText} numberOfLines={1}>
+                    {p.unit}
+                  </Text>
+                </View>
+              ) : null}
+
+              <Text style={styles.productName} numberOfLines={2}>
+                {p.name}
+              </Text>
+
+              <View style={styles.priceAddRow}>
+                <View style={styles.priceCol}>
+                  <Text style={styles.priceValue}>₹{p.price}</Text>
+                  {hasDiscount && (
+                    <Text style={styles.originalPrice}>₹{p.original_price}</Text>
+                  )}
+                </View>
+
+                {p.in_stock ? (
+                  cartItem ? (
+                    <View style={styles.qtyBox}>
+                      <TouchableOpacity
+                        style={styles.qtyBtn}
+                        onPress={handleMinus}
+                        activeOpacity={0.75}
+                        hitSlop={6}
+                      >
+                        <MaterialCommunityIcons
+                          name="minus"
+                          size={12}
+                          color={T.white}
+                        />
+                      </TouchableOpacity>
+                      <Text style={styles.qtyValue}>{cartItem.quantity}</Text>
+                      <TouchableOpacity
+                        style={styles.qtyBtn}
+                        onPress={handlePlus}
+                        activeOpacity={0.75}
+                        hitSlop={6}
+                      >
+                        <MaterialCommunityIcons
+                          name="plus"
+                          size={12}
+                          color={T.white}
+                        />
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.addBtn}
+                      activeOpacity={0.82}
+                      onPress={handleAdd}
+                    >
+                      <Text style={styles.addText}>ADD</Text>
+                    </TouchableOpacity>
+                  )
+                ) : (
+                  <View style={styles.soldOutBtn}>
+                    <Text style={styles.soldOutText}>Out</Text>
+                  </View>
+                )}
+              </View>
+            </View>
+          </Pressable>
+        </Animated.View>
+      </View>
+    );
+  },
+  // Custom equality: a card only needs to re-render when *its* product/cart entry changes —
+  // not when unrelated products or cart items mutate.
+  (prev, next) =>
+    prev.p === next.p &&
+    prev.cartItem === next.cartItem &&
+    prev.onAdd === next.onAdd &&
+    prev.onUpdateQty === next.onUpdateQty,
+);
+
+// ─── Category Tile (for the "Shop by Category" visual grid) ─────────────────
+const CategoryTile = React.memo(function CategoryTile({
   item,
   index,
-  active,
-  count,
   onPress,
 }: {
-  item: any;
+  item: Category;
   index: number;
-  active: boolean;
-  count: number;
   onPress: () => void;
 }) {
-  const icon =
-    item.icon || FALLBACK_ICONS[(index - 1) % FALLBACK_ICONS.length];
-
+  const icon = item.icon || FALLBACK_ICONS[index % FALLBACK_ICONS.length];
   return (
     <TouchableOpacity
+      style={styles.catTile}
+      activeOpacity={0.8}
       onPress={onPress}
-      style={styles.categoryChip}
-      activeOpacity={0.75}
     >
-      <View
-        style={[
-          styles.categoryCircle,
-          active && styles.categoryCircleActive,
-        ]}
-      >
-        {item.id === "all" ||
-        !("image_url" in item) ||
-        !item.image_url ? (
-          <MaterialCommunityIcons
-            name={icon as any}
-            size={22}
-            color={active ? T.white : T.green}
+      <View style={styles.catTileIconWrap}>
+        {item.image_url ? (
+          <ExpoImage
+            source={{ uri: item.image_url }}
+            style={styles.catTileImg}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+            transition={100}
           />
         ) : (
-          <Image
-            source={{ uri: (item as any).image_url }}
-            style={styles.categoryImage}
+          <MaterialCommunityIcons
+            name={icon as any}
+            size={30}
+            color={T.green}
           />
         )}
-        {active && (
-          <View style={styles.categoryActiveRing} pointerEvents="none" />
-        )}
-        {count > 0 && (
-          <View style={styles.categoryCountBadge} pointerEvents="none">
-            <Text style={styles.categoryCountText}>
-              {count > 99 ? "99+" : count}
-            </Text>
-          </View>
-        )}
       </View>
-      <Text
-        style={[styles.categoryLabel, active && styles.categoryLabelActive]}
-        numberOfLines={1}
-      >
+      <Text style={styles.catTileLabel} numberOfLines={2}>
         {item.name}
       </Text>
     </TouchableOpacity>
+  );
+});
+
+// ─── Section header ──────────────────────────────────────────────────────────
+const SectionHeader = React.memo(function SectionHeader({
+  title,
+  subtitle,
+  onSeeAll,
+}: {
+  title: string;
+  subtitle?: string;
+  onSeeAll?: () => void;
+}) {
+  return (
+    <View style={styles.sectionHeader}>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.sectionTitle} numberOfLines={1}>
+          {title}
+        </Text>
+        {subtitle ? (
+          <Text style={styles.sectionSub} numberOfLines={1}>
+            {subtitle}
+          </Text>
+        ) : null}
+      </View>
+      {onSeeAll && (
+        <TouchableOpacity
+          onPress={onSeeAll}
+          activeOpacity={0.7}
+          style={styles.seeAllBtn}
+          hitSlop={6}
+        >
+          <Text style={styles.seeAllText}>See all</Text>
+          <MaterialCommunityIcons
+            name="chevron-right"
+            size={16}
+            color={T.green}
+          />
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+});
+
+// ─── Category section: 6-product grid + See-all ─────────────────────────────
+type CategorySectionProps = {
+  category: Category;
+  products: Product[];
+  cartItemsByProductId: Map<string, CartItem>;
+  onAdd: (p: Product) => void;
+  onUpdateQty: (p: Product, qty: number) => void;
+  onSeeAll: (name: string) => void;
+};
+
+const CategorySection = React.memo(
+  function CategorySection({
+    category,
+    products,
+    cartItemsByProductId,
+    onAdd,
+    onUpdateQty,
+    onSeeAll,
+  }: CategorySectionProps) {
+    const visible = useMemo(
+      () => products.slice(0, SECTION_VISIBLE_PRODUCTS),
+      [products],
+    );
+    const hasMore = products.length > SECTION_VISIBLE_PRODUCTS;
+    const handleSeeAll = useCallback(
+      () => onSeeAll(category.name),
+      [category.name, onSeeAll],
+    );
+
+    if (!products.length) return null;
+
+    return (
+      <View style={styles.section}>
+        <SectionHeader
+          title={category.name}
+          subtitle="Top picks"
+          onSeeAll={hasMore ? handleSeeAll : undefined}
+        />
+        <View style={styles.gridWrap}>
+          {visible.map((p) => (
+            <ProductCard
+              key={p.id}
+              p={p}
+              cartItem={cartItemsByProductId.get(p.id)}
+              onAdd={onAdd}
+              onUpdateQty={onUpdateQty}
+            />
+          ))}
+        </View>
+        {hasMore && (
+          <TouchableOpacity
+            style={styles.seeAllBar}
+            onPress={handleSeeAll}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.seeAllBarText}>
+              See all products in {category.name}
+            </Text>
+            <MaterialCommunityIcons
+              name="arrow-right"
+              size={16}
+              color={T.green}
+            />
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  },
+);
+
+// ─── Frequently-bought horizontal section ────────────────────────────────────
+const FrequentlyBoughtSection = React.memo(function FrequentlyBoughtSection({
+  title,
+  products,
+  cartItemsByProductId,
+  onAdd,
+  onUpdateQty,
+}: {
+  title: string;
+  products: Product[];
+  cartItemsByProductId: Map<string, CartItem>;
+  onAdd: (p: Product) => void;
+  onUpdateQty: (p: Product, qty: number) => void;
+}) {
+  const data = useMemo(() => products.slice(0, 10), [products]);
+  const renderItem = useCallback(
+    ({ item: p }: { item: Product }) => (
+      <ProductCard
+        p={p}
+        cartItem={cartItemsByProductId.get(p.id)}
+        onAdd={onAdd}
+        onUpdateQty={onUpdateQty}
+        containerStyle={styles.cardOuterHorizontal}
+      />
+    ),
+    [cartItemsByProductId, onAdd, onUpdateQty],
+  );
+
+  if (!data.length) return null;
+  return (
+    <View style={styles.section}>
+      <SectionHeader title={title} subtitle="Quick reorder" />
+      <FlatList
+        data={data}
+        keyExtractor={keyExtractor}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.horizontalListContent}
+        renderItem={renderItem}
+        initialNumToRender={4}
+        maxToRenderPerBatch={4}
+        windowSize={3}
+        removeClippedSubviews
+      />
+    </View>
+  );
+});
+
+const keyExtractor = (p: Product) => p.id;
+
+// ─── Skeleton card (shown during cold boot instead of blank screen) ─────────
+const SkeletonCard = React.memo(function SkeletonCard() {
+  return (
+    <View style={[styles.cardOuter, { opacity: 0.92 }]}>
+      <View style={[styles.card, { borderColor: "transparent" }]}>
+        <View style={[styles.imageWrap, { backgroundColor: T.skeletonHi }]}>
+          <View style={{ height: 96 }} />
+        </View>
+        <View style={styles.cardBody}>
+          <View style={[styles.skeletonLine, { width: "40%", height: 10 }]} />
+          <View
+            style={[
+              styles.skeletonLine,
+              { width: "90%", marginTop: 8, height: 10 },
+            ]}
+          />
+          <View
+            style={[
+              styles.skeletonLine,
+              { width: "70%", marginTop: 5, height: 10 },
+            ]}
+          />
+          <View style={styles.priceAddRow}>
+            <View
+              style={[styles.skeletonLine, { width: "30%", height: 14 }]}
+            />
+            <View
+              style={[
+                styles.skeletonLine,
+                { width: 46, height: 24, borderRadius: 8 },
+              ]}
+            />
+          </View>
+        </View>
+      </View>
+    </View>
+  );
+});
+
+function SkeletonHomeFeed() {
+  return (
+    <View style={styles.section}>
+      <View style={styles.sectionHeader}>
+        <View style={{ flex: 1 }}>
+          <View style={[styles.skeletonLine, { width: 120, height: 16 }]} />
+          <View
+            style={[
+              styles.skeletonLine,
+              { width: 80, height: 10, marginTop: 6 },
+            ]}
+          />
+        </View>
+      </View>
+      <View style={styles.gridWrap}>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <SkeletonCard key={i} />
+        ))}
+      </View>
+    </View>
   );
 }
 
 // ─── Main Screen ─────────────────────────────────────────────────────────────
 export default function HomeScreen() {
-  // `loading` only blocks on cold cache. If we have cached data, render it immediately.
   const [loading, setLoading] = useState(true);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({});
-  const [totalCount, setTotalCount] = useState(0);
-
-  // Paginated product list for the *currently active* category (or All).
-  const [pageItems, setPageItems] = useState<Product[]>([]);
-  const [pageOffset, setPageOffset] = useState(0);
-  const [hasMore, setHasMore] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [productsByCategory, setProductsByCategory] = useState<
+    Record<string, Product[]>
+  >({});
+  const [userTopProductIds, setUserTopProductIds] = useState<string[]>([]);
 
   const [activeCategory, setActiveCategory] = useState("All");
   const [refreshing, setRefreshing] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
-  const [hasScrolled, setHasScrolled] = useState(false);
 
-  // Live location state
   const [liveAddress, setLiveAddress] = useState<string | null>(null);
   const [locationFetching, setLocationFetching] = useState(false);
 
   const { location, isHydrated } = useLocation();
-  const { addItem, items, updateQty } = useCart();
+  const { addItem, updateQty } = useCart();
+  const cartItemsByProductId = useCartItemMap();
+  const totalQty = useMemo(() => {
+    let n = 0;
+    for (const [, v] of cartItemsByProductId) n += v.quantity;
+    return n;
+  }, [cartItemsByProductId]);
+  const hasCart = cartItemsByProductId.size > 0;
+  const { userId } = useAuth();
 
-  // Android: on Home tab, hardware back should close the app, never go back to auth/signup.
+  const scrollRef = useRef<ScrollView | null>(null);
+  const didInitialFetch = useRef(false);
+
   useFocusEffect(
     useCallback(() => {
       if (Platform.OS !== "android") return;
@@ -340,96 +574,67 @@ export default function HomeScreen() {
     }, []),
   );
 
-  /** Loads categories + counts + first page fresh and replaces state. */
-  const fetchInitial = useCallback(async () => {
+  const derivedCategoryCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const [k, v] of Object.entries(productsByCategory)) {
+      counts[k.toLowerCase().trim()] = v.length;
+    }
+    return counts;
+  }, [productsByCategory]);
+
+  /** Fetches fresh data and updates state + cache. */
+  const fetchFresh = useCallback(async () => {
     try {
-      const [categoriesData, countsData, firstPage] = await Promise.all([
+      const [categoriesData, catalog] = await Promise.all([
         getAllCategories(),
-        getCategoryCounts(),
-        getProductsPage(null, 0, HOME_PAGE_SIZE),
+        loadMasterCatalog(),
       ]);
-      const shuffled = shuffleArray(firstPage);
       setCategories(categoriesData);
-      setCategoryCounts(countsData.counts);
-      setTotalCount(countsData.total);
-      setActiveCategory((prev) => (prev === "All" ? prev : "All"));
-      setPageItems(shuffled);
-      setPageOffset(firstPage.length);
-      setHasMore(firstPage.length >= HOME_PAGE_SIZE);
-      writeHomePageCache({
-        categories: categoriesData,
-        categoryCounts: countsData,
-        firstPage,
+      setProductsByCategory(catalog.productsByCategory);
+      // Defer the AsyncStorage write so it never blocks the render thread.
+      InteractionManager.runAfterInteractions(() => {
+        writeHomeCatalogCache({
+          products: catalog.products,
+          productsByCategory: catalog.productsByCategory,
+          categories: categoriesData,
+        });
       });
     } catch (error) {
       console.error("Failed to load home:", error);
-    } finally {
-      setLoading(false);
     }
   }, []);
 
-  /** Paint from cache ASAP so the UI is never blank. */
+  /** Cold start: paint from cache immediately, refresh only if cache is stale. */
   useEffect(() => {
+    if (didInitialFetch.current) return;
+    didInitialFetch.current = true;
+
     let cancelled = false;
     (async () => {
-      const cached = await readHomePageCache();
-      if (cancelled || !cached) return;
-      setCategories(cached.categories);
-      setCategoryCounts(cached.categoryCounts.counts);
-      setTotalCount(cached.categoryCounts.total);
-      setPageItems(shuffleArray(cached.firstPage));
-      setPageOffset(cached.firstPage.length);
-      setHasMore(cached.firstPage.length >= HOME_PAGE_SIZE);
-      setLoading(false);
+      const cached = await readHomeCatalogCache();
+      if (!cancelled && cached) {
+        setCategories(cached.categories);
+        setProductsByCategory(cached.productsByCategory);
+        setLoading(false);
+      }
+
+      if (!isHydrated) return;
+
+      // Skip background refresh if cache is fresh (<5 min). This stops the app from doing
+      // a full-catalog DB scan on every mount — the #1 source of perceived "constant
+      // refreshing" slowness.
+      if (isHomeCatalogCacheFresh(cached)) return;
+
+      InteractionManager.runAfterInteractions(async () => {
+        if (cancelled) return;
+        await fetchFresh();
+        if (!cancelled) setLoading(false);
+      });
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
-
-  useEffect(() => {
-    if (!isHydrated) return;
-    const task = InteractionManager.runAfterInteractions(() => fetchInitial());
-    return () => task.cancel();
-  }, [isHydrated, fetchInitial]);
-
-  /** Fetch the first page for the active category (called when user taps a chip). */
-  const loadCategoryFirstPage = useCallback(async (categoryName: string) => {
-    try {
-      setLoadingMore(true);
-      const cat = categoryName === "All" ? null : categoryName;
-      const rows = await getProductsPage(cat, 0, HOME_PAGE_SIZE);
-      setPageItems(shuffleArray(rows));
-      setPageOffset(rows.length);
-      setHasMore(rows.length >= HOME_PAGE_SIZE);
-    } catch (e) {
-      console.error("Failed to load category page:", e);
-    } finally {
-      setLoadingMore(false);
-    }
-  }, []);
-
-  /** Appends the next page on scroll-to-end. */
-  const loadMore = useCallback(async () => {
-    if (loadingMore || !hasMore) return;
-    try {
-      setLoadingMore(true);
-      const cat = activeCategory === "All" ? null : activeCategory;
-      const rows = await getProductsPage(cat, pageOffset, HOME_PAGE_SIZE);
-      const shuffled = shuffleArray(rows);
-      setPageItems((prev) => {
-        const seen = new Set(prev.map((p) => p.id));
-        const add = shuffled.filter((p) => !seen.has(p.id));
-        return [...prev, ...add];
-      });
-      setPageOffset((o) => o + rows.length);
-      setHasMore(rows.length >= HOME_PAGE_SIZE);
-    } catch (e) {
-      console.error("Failed to load more:", e);
-    } finally {
-      setLoadingMore(false);
-    }
-  }, [activeCategory, pageOffset, loadingMore, hasMore]);
+  }, [isHydrated, fetchFresh]);
 
   // ── Live reverse-geocode from device GPS ──────────────────────────────────
   useEffect(() => {
@@ -451,7 +656,9 @@ export default function HomeScreen() {
         if (result) {
           const parts = [result.name, result.street, result.district, result.city]
             .filter(Boolean);
-          setLiveAddress(parts.slice(0, 2).join(", ") || result.city || "Your location");
+          setLiveAddress(
+            parts.slice(0, 2).join(", ") || result.city || "Your location",
+          );
         }
       } catch {
         // silently fall back to context location
@@ -459,27 +666,59 @@ export default function HomeScreen() {
         if (!cancelled) setLocationFetching(false);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  // ── Build user's "frequently bought" list from past orders ────────────────
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const orders = await getUserOrders(userId);
+        if (cancelled) return;
+        const counts: Record<string, number> = {};
+        for (const order of orders) {
+          for (const it of order.items || []) {
+            if (!it.product_id) continue;
+            counts[it.product_id] =
+              (counts[it.product_id] || 0) + (it.quantity || 1);
+          }
+        }
+        const ids = Object.entries(counts)
+          .sort(([, a], [, b]) => b - a)
+          .map(([id]) => id);
+        setUserTopProductIds(ids);
+      } catch {
+        /* fall back silently to "bought by others" */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchInitial();
+    await fetchFresh();
     setRefreshing(false);
-  }, [fetchInitial]);
+  }, [fetchFresh]);
 
-  /** Only show chips for categories that have products (uses counts, not a full product scan). */
   const categoriesWithProducts = useMemo(
     () =>
-      shuffleArray(
-        categories.filter((c) => getCountForCategoryName(categoryCounts, c.name) > 0),
+      categories.filter(
+        (c) => getCountForCategoryName(derivedCategoryCounts, c.name) > 0,
       ),
-    [categories, categoryCounts],
+    [categories, derivedCategoryCounts],
   );
 
   useEffect(() => {
     if (activeCategory === "All") return;
-    const stillValid = categoriesWithProducts.some((c) => c.name === activeCategory);
+    const stillValid = categoriesWithProducts.some(
+      (c) => c.name === activeCategory,
+    );
     if (!stillValid) setActiveCategory("All");
   }, [activeCategory, categoriesWithProducts]);
 
@@ -487,47 +726,115 @@ export default function HomeScreen() {
     (name: string) => {
       if (name === activeCategory) return;
       setActiveCategory(name);
-      loadCategoryFirstPage(name);
+      requestAnimationFrame(() =>
+        scrollRef.current?.scrollTo({ y: 0, animated: true }),
+      );
     },
-    [activeCategory, loadCategoryFirstPage],
+    [activeCategory],
   );
 
-  const filteredProducts = pageItems;
-  const activeCountLabel =
-    activeCategory === "All"
-      ? totalCount
-      : getCountForCategoryName(categoryCounts, activeCategory);
+  const filteredProducts = useMemo(() => {
+    if (activeCategory === "All") return [] as Product[];
+    return getProductsForCategoryName(productsByCategory, activeCategory);
+  }, [activeCategory, productsByCategory]);
+
+  /** Frequently bought section: personalized first, fall back to newest products. */
+  const frequentlyBought = useMemo(() => {
+    const flat: Product[] = [];
+    for (const arr of Object.values(productsByCategory)) flat.push(...arr);
+    if (!flat.length) return { title: "", products: [] as Product[] };
+
+    if (userTopProductIds.length > 0) {
+      const byId = new Map<string, Product>();
+      for (const p of flat) byId.set(p.id, p);
+      const personalized: Product[] = [];
+      for (const id of userTopProductIds) {
+        const p = byId.get(id);
+        if (p) personalized.push(p);
+        if (personalized.length >= 10) break;
+      }
+      if (personalized.length > 0) {
+        return { title: "Frequently bought", products: personalized };
+      }
+    }
+
+    // Fallback: most recently added, in-stock first.
+    const popular = [...flat]
+      .sort((a, b) => {
+        if (a.in_stock !== b.in_stock) return a.in_stock ? -1 : 1;
+        return (b.created_at ?? "").localeCompare(a.created_at ?? "");
+      })
+      .slice(0, 10);
+    return {
+      title: "Frequently bought by other customers",
+      products: popular,
+    };
+  }, [productsByCategory, userTopProductIds]);
 
   const profileScale = useSharedValue(1);
   const profileAnimatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: profileScale.value }],
   }));
+  const handleProfilePressIn = useCallback(() => {
+    profileScale.value = withSpring(0.93, { damping: 16, stiffness: 260 });
+  }, [profileScale]);
+  const handleProfilePressOut = useCallback(() => {
+    profileScale.value = withSpring(1, { damping: 16, stiffness: 260 });
+  }, [profileScale]);
 
-  const handleScroll = useCallback(
-    (event: any) => {
-      const offsetY = event?.nativeEvent?.contentOffset?.y ?? 0;
-      if (!hasScrolled && offsetY > 28) setHasScrolled(true);
-      else if (hasScrolled && offsetY <= 28) setHasScrolled(false);
-    },
-    [hasScrolled],
+  const handleAdd = useCallback(
+    (p: Product) =>
+      addItem({
+        product_id: p.id,
+        name: p.name,
+        price: p.price,
+        unit: p.unit,
+        image_url: p.image_url,
+      }),
+    [addItem],
   );
 
-  const totalQty = items.reduce((s, i) => s + i.quantity, 0);
-  const totalPrice = items.reduce((s, i) => s + i.price * i.quantity, 0);
+  const handleUpdateQty = useCallback(
+    (p: Product, qty: number) => updateQty(p.id, qty),
+    [updateQty],
+  );
 
-  // ── Loading ──────────────────────────────────────────────────────────────
+  // ── Loading (skeleton, not spinner) ──────────────────────────────────────
   if (loading) {
     return (
-      <SafeAreaView style={styles.center}>
-        <LinearGradient
-          colors={[T.greenXLight, T.cream]}
-          style={StyleSheet.absoluteFillObject}
-        />
-        <View style={styles.loadingIcon}>
-          <MaterialCommunityIcons name="leaf" size={32} color={T.green} />
+      <SafeAreaView style={styles.safe} edges={["top"]}>
+        {renderAddressBar({
+          liveAddress,
+          location,
+          locationFetching,
+          profileAnimatedStyle,
+          onPressIn: handleProfilePressIn,
+          onPressOut: handleProfilePressOut,
+          onProfilePress: () => setShowProfileMenu(true),
+        })}
+        <View style={styles.stickyWrap}>
+          <View style={[styles.searchBar, { backgroundColor: T.skeletonHi }]}>
+            <View
+              style={{
+                width: 30,
+                height: 30,
+                borderRadius: 10,
+                backgroundColor: T.skeletonLo,
+              }}
+            />
+            <View
+              style={[styles.skeletonLine, { width: "60%", height: 12 }]}
+            />
+          </View>
         </View>
-        <ActivityIndicator size="large" color={T.green} style={{ marginTop: 16 }} />
-        <Text style={styles.loadingText}>Finding fresh picks near you…</Text>
+        <ScrollView showsVerticalScrollIndicator={false}>
+          <SkeletonHomeFeed />
+          <SkeletonHomeFeed />
+        </ScrollView>
+        <ProfileMenu
+          visible={showProfileMenu}
+          onClose={() => setShowProfileMenu(false)}
+        />
       </SafeAreaView>
     );
   }
@@ -535,121 +842,11 @@ export default function HomeScreen() {
   // ── Render ───────────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      {/* ── Header ───────────────────────────────────────────────────────── */}
-      <Animated.View entering={FadeIn.duration(300)} style={styles.header}>
-        <LinearGradient
-          colors={[T.greenXLight, T.cream]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 0, y: 1 }}
-          style={StyleSheet.absoluteFillObject}
-          pointerEvents="none"
-        />
-
-        {/* App bar row: delivery location left + icons right */}
-        <Animated.View
-          entering={FadeInDown.duration(420).springify()}
-          style={styles.appBar}
-        >
-          {/* "Delivery to…" location block */}
-          <Pressable
-            style={{ flex: 1 }}
-            onPress={() => router.push("/location")}
-          >
-            {/* Label row */}
-            <View style={styles.deliveryLabelRow}>
-              <MaterialCommunityIcons
-                name="map-marker-outline"
-                size={14}
-                color={T.green}
-              />
-              <Text style={styles.deliveryLabelText}>Delivery to</Text>
-              {locationFetching && (
-                <ActivityIndicator size="small" color={T.green} style={{ marginLeft: 4 }} />
-              )}
-            </View>
-
-            {/* Address line */}
-            <View style={styles.locationInlineRow}>
-              <Text style={styles.deliveryAddressText} numberOfLines={1}>
-                {liveAddress
-                  ? liveAddress
-                  : location
-                  ? location.address
-                    ? `${location.label ? location.label + " · " : ""}${location.address}`
-                    : location.label || "Your location"
-                  : "Set delivery address"}
-              </Text>
-              <MaterialCommunityIcons
-                name="chevron-down"
-                size={16}
-                color={T.bark}
-              />
-            </View>
-          </Pressable>
-
-          {/* Right side: wallet + profile */}
-          <View style={styles.headerActions}>
-            <TouchableOpacity style={styles.walletBtn} activeOpacity={0.8}>
-              <LinearGradient
-                colors={[T.greenXLight, "#d4edda"]}
-                style={StyleSheet.absoluteFillObject}
-              />
-              <MaterialCommunityIcons name="wallet-outline" size={16} color={T.green} />
-              <Text style={styles.walletText}>₹0</Text>
-            </TouchableOpacity>
-
-            <Animated.View style={profileAnimatedStyle}>
-              <Pressable
-                onPressIn={() => {
-                  profileScale.value = withSpring(0.93, { damping: 16, stiffness: 260 });
-                }}
-                onPressOut={() => {
-                  profileScale.value = withSpring(1, { damping: 16, stiffness: 260 });
-                }}
-                onPress={() => setShowProfileMenu(true)}
-                style={styles.profileBtn}
-              >
-                <LinearGradient
-                  colors={[T.greenLight, T.green]}
-                  style={styles.profileAvatar}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                >
-                  <MaterialCommunityIcons name="account-outline" size={20} color={T.white} />
-                </LinearGradient>
-              </Pressable>
-            </Animated.View>
-          </View>
-        </Animated.View>
-
-        {/* Sticky search bar (appears on scroll) */}
-        {hasScrolled && (
-          <Animated.View
-            entering={FadeInDown.duration(220)}
-            style={styles.stickySearch}
-          >
-            <TouchableOpacity
-              style={styles.searchPill}
-              activeOpacity={0.88}
-              onPress={() => router.push("../support/search")}
-            >
-              <MaterialCommunityIcons name="magnify" size={19} color={T.barkLight} />
-              <Text style={styles.searchPlaceholder}>
-                Search groceries, dairy, snacks…
-              </Text>
-            </TouchableOpacity>
-          </Animated.View>
-        )}
-
-        {/* Thin accent line at bottom of header */}
-        <View style={styles.headerRule} />
-      </Animated.View>
-
-      {/* ── Product list ─────────────────────────────────────────────────── */}
-      <FlatList
-        data={filteredProducts}
-        keyExtractor={(item) => item.id}
-        numColumns={2}
+      <ScrollView
+        ref={scrollRef}
+        stickyHeaderIndices={[1]}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -658,168 +855,183 @@ export default function HomeScreen() {
             colors={[T.green]}
           />
         }
-        removeClippedSubviews
-        onScroll={handleScroll}
-        scrollEventThrottle={16}
         keyboardShouldPersistTaps="handled"
-        initialNumToRender={6}
-        maxToRenderPerBatch={8}
-        windowSize={5}
-        updateCellsBatchingPeriod={50}
-        columnWrapperStyle={styles.columnWrap}
-        contentContainerStyle={styles.listContent}
-        onEndReached={loadMore}
-        onEndReachedThreshold={0.4}
-        ListFooterComponent={
-          loadingMore && hasMore ? (
-            <View style={{ paddingVertical: 18, alignItems: "center" }}>
-              <ActivityIndicator size="small" color={T.green} />
-            </View>
-          ) : !hasMore && pageItems.length > 0 ? (
-            <View style={{ paddingVertical: 18, alignItems: "center" }}>
-              <Text style={{ color: T.barkLight, fontSize: 12, fontWeight: "600" }}>
-                You&apos;ve reached the end
-              </Text>
-            </View>
-          ) : null
-        }
-        ListHeaderComponent={
-          <>
-            {/* Search bar (default, below fold) */}
-            <TouchableOpacity
-              style={styles.searchBar}
-              activeOpacity={0.88}
-              onPress={() => router.push("../support/search")}
-            >
-              <View style={styles.searchIconWrap}>
-                <MaterialCommunityIcons
-                  name="magnify"
-                  size={19}
-                  color={T.green}
-                />
-              </View>
-              <Text style={styles.searchPlaceholder}>
-                Search groceries, dairy, snacks…
-              </Text>
-            </TouchableOpacity>
+        removeClippedSubviews={Platform.OS === "android"}
+        overScrollMode="never"
+      >
+        {renderAddressBar({
+          liveAddress,
+          location,
+          locationFetching,
+          profileAnimatedStyle,
+          onPressIn: handleProfilePressIn,
+          onPressOut: handleProfilePressOut,
+          onProfilePress: () => setShowProfileMenu(true),
+        })}
 
-            {/* Category strip */}
-            <FlatList
-              data={[
-                { id: "all", name: "All", icon: "apps" },
-                ...categoriesWithProducts,
-              ]}
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              keyExtractor={(c) => c.id}
-              contentContainerStyle={styles.categoryStrip}
-              renderItem={({ item, index }) => {
-                const count =
-                  item.id === "all"
-                    ? totalCount
-                    : getCountForCategoryName(categoryCounts, item.name);
-                return (
-                  <CategoryChip
-                    item={item}
-                    index={index}
-                    count={count}
-                    active={activeCategory === item.name}
-                    onPress={() => handleSelectCategory(item.name)}
-                  />
-                );
-              }}
-            />
-
-            {/* Section header */}
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>
-                {activeCategory === "All" ? "All Products" : activeCategory}
-              </Text>
-              <View style={styles.sectionBadge}>
-                <Text style={styles.sectionCount}>{activeCountLabel}</Text>
-              </View>
-            </View>
-          </>
-        }
-        ListEmptyComponent={
-          <View style={styles.empty}>
-            <View style={styles.emptyIconWrap}>
+        <View style={styles.stickyWrap}>
+          <TouchableOpacity
+            style={styles.searchBar}
+            activeOpacity={0.88}
+            onPress={() => router.push("../support/search")}
+          >
+            <View style={styles.searchIconWrap}>
               <MaterialCommunityIcons
-                name={activeCategory === "All" || !location ? "store-off-outline" : "package-variant-closed"}
-                size={40}
+                name="magnify"
+                size={19}
                 color={T.green}
               />
             </View>
-            <Text style={styles.emptyTitle}>
-              {!location
-                ? "Set your location"
-                : activeCategory === "All"
-                  ? "No products found"
-                  : `No products in ${activeCategory}`}
+            <Text style={styles.searchPlaceholder}>
+              Search groceries, dairy, snacks…
             </Text>
-            <Text style={styles.emptyText}>
-              {!location
-                ? "We'll show you what's fresh and available nearby."
-                : activeCategory === "All"
-                  ? "No products available near you at the moment."
-                  : `No products available in the ${activeCategory} category near you.`}
-            </Text>
-            {!location && (
-              <TouchableOpacity
-                style={styles.emptyBtn}
-                onPress={() => router.push("/location")}
-                activeOpacity={0.85}
-              >
-                <LinearGradient
-                  colors={[T.greenLight, T.green]}
-                  style={styles.emptyBtnGradient}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                >
+          </TouchableOpacity>
+        </View>
+
+        {activeCategory === "All" ? (
+          <>
+            <FrequentlyBoughtSection
+              title={frequentlyBought.title}
+              products={frequentlyBought.products}
+              cartItemsByProductId={cartItemsByProductId}
+              onAdd={handleAdd}
+              onUpdateQty={handleUpdateQty}
+            />
+
+            {categoriesWithProducts.length > 0 && (
+              <View style={styles.section}>
+                <SectionHeader
+                  title="Shop by category"
+                  subtitle="Everything you need"
+                />
+                <View style={styles.catTileGrid}>
+                  {categoriesWithProducts.map((c, i) => (
+                    <CategoryTile
+                      key={c.id}
+                      item={c}
+                      index={i}
+                      onPress={() => handleSelectCategory(c.name)}
+                    />
+                  ))}
+                </View>
+              </View>
+            )}
+
+            {categoriesWithProducts.length === 0 ? (
+              <View style={styles.empty}>
+                <View style={styles.emptyIconWrap}>
                   <MaterialCommunityIcons
-                    name="map-marker-outline"
-                    size={16}
-                    color={T.white}
+                    name={!location ? "store-off-outline" : "package-variant-closed"}
+                    size={40}
+                    color={T.green}
                   />
-                  <Text style={styles.emptyBtnText}>Choose Location</Text>
-                </LinearGradient>
-              </TouchableOpacity>
+                </View>
+                <Text style={styles.emptyTitle}>
+                  {!location ? "Set your location" : "No products found"}
+                </Text>
+                <Text style={styles.emptyText}>
+                  {!location
+                    ? "We'll show you what's fresh and available nearby."
+                    : "No products available near you at the moment."}
+                </Text>
+                {!location && (
+                  <TouchableOpacity
+                    style={styles.emptyBtn}
+                    onPress={() => router.push("/location")}
+                    activeOpacity={0.85}
+                  >
+                    <LinearGradient
+                      colors={[T.greenLight, T.green]}
+                      style={styles.emptyBtnGradient}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                    >
+                      <MaterialCommunityIcons
+                        name="map-marker-outline"
+                        size={16}
+                        color={T.white}
+                      />
+                      <Text style={styles.emptyBtnText}>Choose Location</Text>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ) : (
+              categoriesWithProducts.map((c) => (
+                <CategorySection
+                  key={c.id}
+                  category={c}
+                  products={getProductsForCategoryName(
+                    productsByCategory,
+                    c.name,
+                  )}
+                  cartItemsByProductId={cartItemsByProductId}
+                  onAdd={handleAdd}
+                  onUpdateQty={handleUpdateQty}
+                  onSeeAll={handleSelectCategory}
+                />
+              ))
+            )}
+
+            <View style={styles.endStamp}>
+              <MaterialCommunityIcons name="leaf" size={14} color={T.green} />
+              <Text style={styles.endStampText}>
+                That&apos;s everything fresh near you
+              </Text>
+            </View>
+          </>
+        ) : (
+          <View style={styles.section}>
+            <SectionHeader
+              title={activeCategory}
+              subtitle="Fresh picks near you"
+              onSeeAll={() => handleSelectCategory("All")}
+            />
+            {filteredProducts.length === 0 ? (
+              <View style={styles.empty}>
+                <View style={styles.emptyIconWrap}>
+                  <MaterialCommunityIcons
+                    name="package-variant-closed"
+                    size={40}
+                    color={T.green}
+                  />
+                </View>
+                <Text style={styles.emptyTitle}>
+                  No products in {activeCategory}
+                </Text>
+                <Text style={styles.emptyText}>
+                  Check back soon or explore other categories.
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.gridWrap}>
+                {filteredProducts.map((p) => (
+                  <ProductCard
+                    key={p.id}
+                    p={p}
+                    cartItem={cartItemsByProductId.get(p.id)}
+                    onAdd={handleAdd}
+                    onUpdateQty={handleUpdateQty}
+                  />
+                ))}
+              </View>
             )}
           </View>
-        }
-        renderItem={({ item: p, index }) => {
-          const cartItem = items.find((i) => i.product_id === p.id);
-          return (
-            <ProductCard
-              p={p}
-              index={index}
-              cartItem={cartItem}
-              onAdd={() =>
-                addItem({
-                  product_id: p.id,
-                  name: p.name,
-                  price: p.price,
-                  unit: p.unit,
-                  image_url: p.image_url,
-                })
-              }
-              onUpdateQty={(qty) => updateQty(p.id, qty)}
-            />
-          );
-        }}
-      />
+        )}
+      </ScrollView>
 
-      {/* ── Cart CTA pill ─────────────────────────────────────────────────── */}
-      {items.length > 0 && (
+      {/* ── Cart CTA pill (centered, compact) ──────────────────────────── */}
+      {hasCart && (
         <Animated.View
           entering={FadeInUp.duration(340).springify()}
           style={styles.cartBar}
+          pointerEvents="box-none"
         >
           <Pressable
             onPress={() => router.push("/support/checkout")}
             style={({ pressed }) => [
               styles.cartPill,
-              pressed && { opacity: 0.93 },
+              pressed && { transform: [{ scale: 0.97 }], opacity: 0.95 },
             ]}
           >
             <LinearGradient
@@ -832,13 +1044,15 @@ export default function HomeScreen() {
                 <Text style={styles.cartQtyText}>{totalQty}</Text>
               </View>
               <Text style={styles.cartPillLabel}>
-                View Cart · {totalQty} {totalQty === 1 ? "item" : "items"}
+                {totalQty === 1 ? "item in cart" : "items in cart"}
               </Text>
-              <MaterialCommunityIcons
-                name="arrow-right"
-                size={18}
-                color={T.white}
-              />
+              <View style={styles.cartArrowWrap}>
+                <MaterialCommunityIcons
+                  name="arrow-right"
+                  size={16}
+                  color={T.green}
+                />
+              </View>
             </LinearGradient>
           </Pressable>
         </Animated.View>
@@ -852,53 +1066,135 @@ export default function HomeScreen() {
   );
 }
 
+// ─── Shared address-bar renderer (keeps the main component tidy) ────────────
+function renderAddressBar({
+  liveAddress,
+  location,
+  locationFetching,
+  profileAnimatedStyle,
+  onPressIn,
+  onPressOut,
+  onProfilePress,
+}: {
+  liveAddress: string | null;
+  location: { label?: string; address?: string } | null | undefined;
+  locationFetching: boolean;
+  profileAnimatedStyle: any;
+  onPressIn: () => void;
+  onPressOut: () => void;
+  onProfilePress: () => void;
+}) {
+  return (
+    <View style={styles.addressBarBg}>
+      <LinearGradient
+        colors={[T.greenXLight, T.cream]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0, y: 1 }}
+        style={StyleSheet.absoluteFillObject}
+        pointerEvents="none"
+      />
+      <View style={styles.appBar}>
+        <Pressable
+          style={{ flex: 1 }}
+          onPress={() => router.push("/location")}
+        >
+          <View style={styles.deliveryLabelRow}>
+            <MaterialCommunityIcons
+              name="map-marker-outline"
+              size={14}
+              color={T.green}
+            />
+            <Text style={styles.deliveryLabelText}>Delivery to</Text>
+            {locationFetching && (
+              <ActivityIndicator
+                size="small"
+                color={T.green}
+                style={{ marginLeft: 4 }}
+              />
+            )}
+          </View>
+          <View style={styles.locationInlineRow}>
+            <Text style={styles.deliveryAddressText} numberOfLines={1}>
+              {liveAddress
+                ? liveAddress
+                : location
+                  ? location.address
+                    ? `${location.label ? location.label + " · " : ""}${location.address}`
+                    : location.label || "Your location"
+                  : "Set delivery address"}
+            </Text>
+            <MaterialCommunityIcons
+              name="chevron-down"
+              size={16}
+              color={T.bark}
+            />
+          </View>
+        </Pressable>
+
+        <View style={styles.headerActions}>
+          <TouchableOpacity style={styles.walletBtn} activeOpacity={0.8}>
+            <LinearGradient
+              colors={[T.greenXLight, "#d4edda"]}
+              style={StyleSheet.absoluteFillObject}
+            />
+            <MaterialCommunityIcons
+              name="wallet-outline"
+              size={16}
+              color={T.green}
+            />
+            <Text style={styles.walletText}>₹0</Text>
+          </TouchableOpacity>
+
+          <Animated.View style={profileAnimatedStyle}>
+            <Pressable
+              onPressIn={onPressIn}
+              onPressOut={onPressOut}
+              onPress={onProfilePress}
+              style={styles.profileBtn}
+            >
+              <LinearGradient
+                colors={[T.greenLight, T.green]}
+                style={styles.profileAvatar}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+              >
+                <MaterialCommunityIcons
+                  name="account-outline"
+                  size={20}
+                  color={T.white}
+                />
+              </LinearGradient>
+            </Pressable>
+          </Animated.View>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: T.cream },
 
-  // ── Loading ──────────────────────────────────────────────────────────────
-  center: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 0,
-  },
-  loadingIcon: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
-    backgroundColor: T.white,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: T.green,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.18,
-    shadowRadius: 14,
-    elevation: 8,
-  },
-  loadingText: {
-    color: T.barkMid,
-    fontSize: 14,
-    fontWeight: "600",
-    marginTop: 20,
-    letterSpacing: 0.2,
+  // ── Scroll container ─────────────────────────────────────────────────────
+  scrollContent: { paddingBottom: 150 },
+
+  // ── Skeleton helpers ─────────────────────────────────────────────────────
+  skeletonLine: {
+    backgroundColor: T.skeletonLo,
+    borderRadius: 6,
   },
 
-  // ── Header ───────────────────────────────────────────────────────────────
-  header: {
-    backgroundColor: T.cream,
-    zIndex: 20,
-  },
+  // ── Address bar block (scrolls away) ─────────────────────────────────────
+  addressBarBg: { backgroundColor: T.cream },
   appBar: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 18,
     paddingTop: 10,
-    paddingBottom: 12,
+    paddingBottom: 10,
     gap: 12,
   },
-
-  // Delivery to… header block
   deliveryLabelRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -925,13 +1221,7 @@ const styles = StyleSheet.create({
     gap: 4,
     maxWidth: "95%",
   },
-
-  // Right actions: wallet + profile
-  headerActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
   walletBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -944,12 +1234,7 @@ const styles = StyleSheet.create({
     borderColor: "rgba(45,122,79,0.18)",
     backgroundColor: T.greenXLight,
   },
-  walletText: {
-    fontSize: 13,
-    fontWeight: "800",
-    color: T.green,
-  },
-
+  walletText: { fontSize: 13, fontWeight: "800", color: T.green },
   profileBtn: { padding: 3 },
   profileAvatar: {
     width: 42,
@@ -964,49 +1249,16 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
 
-  // ── Sticky search ─────────────────────────────────────────────────────────
-  stickySearch: {
-    paddingHorizontal: 18,
+  // ── Sticky search ────────────────────────────────────────────────────────
+  stickyWrap: {
+    backgroundColor: T.cream,
+    paddingHorizontal: 16,
     paddingBottom: 10,
-    paddingTop: 4,
-  },
-  headerRule: {
-    height: 1,
-    backgroundColor: "rgba(60,47,30,0.07)",
-    marginHorizontal: 0,
-  },
-
-  // ── List ─────────────────────────────────────────────────────────────────
-  listContent: {
-    paddingBottom: 120,
-    paddingHorizontal: 14,
-    paddingTop: 8,
-  },
-  columnWrap: {
-    justifyContent: "space-between",
-    marginBottom: 14,
+    paddingTop: 2,
   },
 
   // ── Search bar ────────────────────────────────────────────────────────────
   searchBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginTop: 14,
-    marginBottom: 6,
-    paddingVertical: 13,
-    paddingHorizontal: 14,
-    borderRadius: 14,
-    backgroundColor: T.white,
-    borderWidth: 1.5,
-    borderColor: T.cardBorder,
-    shadowColor: T.shadowDark,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.9,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  searchPill: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
@@ -1017,8 +1269,8 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: T.cardBorder,
     shadowColor: T.shadowDark,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.9,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.5,
     shadowRadius: 6,
     elevation: 3,
   },
@@ -1037,87 +1289,14 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
 
-  // ── Category strip ────────────────────────────────────────────────────────
-  categoryStrip: {
-    paddingVertical: 18,
-    paddingHorizontal: 2,
-    gap: 12,
-  },
-  categoryChip: {
-    alignItems: "center",
-    gap: 7,
-    width: 68,
-  },
-  categoryCircle: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    backgroundColor: T.white,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1.5,
-    borderColor: T.cardBorder,
-    overflow: "hidden",
-    shadowColor: T.shadowDark,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.8,
-    shadowRadius: 5,
-    elevation: 3,
-  },
-  categoryCircleActive: {
-    backgroundColor: T.green,
-    borderColor: T.green,
-    shadowColor: T.green,
-    shadowOpacity: 0.35,
-    shadowRadius: 10,
-    elevation: 6,
-  },
-  categoryActiveRing: {
-    ...StyleSheet.absoluteFillObject,
-    borderRadius: 27,
-    borderWidth: 2.5,
-    borderColor: "rgba(255,255,255,0.35)",
-  },
-  categoryImage: { width: "100%", height: "100%" },
-  categoryCountBadge: {
-    position: "absolute",
-    top: -4,
-    right: -4,
-    minWidth: 20,
-    height: 20,
-    borderRadius: 10,
-    paddingHorizontal: 5,
-    backgroundColor: T.badge,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 2,
-    borderColor: T.white,
-  },
-  categoryCountText: {
-    color: T.white,
-    fontSize: 10,
-    fontWeight: "900",
-    letterSpacing: 0.2,
-  },
-  categoryLabel: {
-    fontSize: 11,
-    color: T.barkMid,
-    fontWeight: "600",
-    textAlign: "center",
-    letterSpacing: 0.1,
-  },
-  categoryLabelActive: {
-    color: T.green,
-    fontWeight: "800",
-  },
-
-  // ── Section header ────────────────────────────────────────────────────────
+  // ── Section (generic wrapper) ────────────────────────────────────────────
+  section: { marginTop: 16 },
   sectionHeader: {
     flexDirection: "row",
     alignItems: "center",
+    paddingHorizontal: 18,
+    marginBottom: 10,
     gap: 10,
-    marginBottom: 14,
-    marginTop: 2,
   },
   sectionTitle: {
     fontSize: 17,
@@ -1125,67 +1304,179 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: -0.2,
   },
-  sectionBadge: {
-    backgroundColor: T.greenXLight,
-    borderRadius: 20,
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderWidth: 1,
-    borderColor: "rgba(45,122,79,0.15)",
+  sectionSub: {
+    fontSize: 11.5,
+    color: T.barkLight,
+    fontWeight: "500",
+    marginTop: 1,
   },
-  sectionCount: {
+  seeAllBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 12,
+    backgroundColor: T.greenXLight,
+    borderWidth: 1,
+    borderColor: "rgba(45,122,79,0.18)",
+  },
+  seeAllText: {
     fontSize: 12,
     color: T.green,
     fontWeight: "800",
+    letterSpacing: 0.2,
+  },
+
+  horizontalListContent: { paddingHorizontal: 14, gap: 10 },
+
+  gridWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    paddingHorizontal: 14,
+    justifyContent: "space-between",
+    rowGap: 12,
+  },
+
+  seeAllBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginHorizontal: 14,
+    marginTop: 10,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: T.white,
+    borderWidth: 1.5,
+    borderColor: "rgba(45,122,79,0.25)",
+    borderStyle: "dashed",
+  },
+  seeAllBarText: {
+    color: T.green,
+    fontSize: 13,
+    fontWeight: "800",
+    letterSpacing: 0.2,
+  },
+
+  // ── Shop-by-category tile grid ───────────────────────────────────────────
+  catTileGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    paddingHorizontal: 10,
+    justifyContent: "flex-start",
+  },
+  catTile: {
+    width: "25%",
+    alignItems: "center",
+    paddingHorizontal: 4,
+    paddingVertical: 10,
+    gap: 6,
+  },
+  catTileIconWrap: {
+    width: 64,
+    height: 64,
+    borderRadius: 18,
+    backgroundColor: T.greenXLight,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(45,122,79,0.15)",
+    overflow: "hidden",
+  },
+  catTileImg: { width: "100%", height: "100%" },
+  catTileLabel: {
+    fontSize: 11,
+    color: T.bark,
+    fontWeight: "700",
+    textAlign: "center",
+    letterSpacing: 0.1,
+    lineHeight: 14,
+  },
+
+  endStamp: {
+    marginTop: 28,
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: T.greenXLight,
+    borderWidth: 1,
+    borderColor: "rgba(45,122,79,0.18)",
+  },
+  endStampText: {
+    fontSize: 12,
+    color: T.green,
+    fontWeight: "700",
+    letterSpacing: 0.2,
   },
 
   // ── Product card ──────────────────────────────────────────────────────────
-  cardOuter: {
-    width: "48.5%",
-  },
+  cardOuter: { width: "31.8%" },
+  cardOuterHorizontal: { width: 132 },
   card: {
     flex: 1,
     backgroundColor: T.card,
-    borderRadius: 18,
+    borderRadius: 14,
     overflow: "hidden",
     borderWidth: 1,
     borderColor: T.cardBorder,
     shadowColor: T.shadowDark,
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 1,
-    shadowRadius: 12,
-    elevation: 5,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 4,
+    elevation: 2,
   },
-  cardOutOfStock: { opacity: 0.6 },
-  imageWrap: { position: "relative", backgroundColor: T.sand },
-  image: { width: "100%", height: 145, resizeMode: "cover" },
+  cardOutOfStock: { opacity: 0.62 },
+  imageWrap: {
+    position: "relative",
+    backgroundColor: T.imageBg,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  image: { width: "100%", height: 96 },
   imagePlaceholder: {
     width: "100%",
-    height: 145,
-    backgroundColor: T.sand,
+    height: 96,
     alignItems: "center",
     justifyContent: "center",
   },
-  discountBadge: {
+
+  discountFlag: {
     position: "absolute",
-    top: 10,
-    left: 10,
-    backgroundColor: T.badge,
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    borderRadius: 8,
-    shadowColor: "#000",
+    top: 0,
+    left: 0,
+    backgroundColor: T.green,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderBottomRightRadius: 8,
+    borderTopLeftRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: T.green,
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 4,
+    shadowOpacity: 0.25,
+    shadowRadius: 3,
+    elevation: 2,
   },
-  discountText: {
+  discountFlagText: {
     color: T.white,
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: "900",
-    letterSpacing: 0.3,
+    lineHeight: 11,
+    letterSpacing: 0.2,
   },
+  discountFlagOff: {
+    color: T.white,
+    fontSize: 7.5,
+    fontWeight: "800",
+    lineHeight: 9,
+    letterSpacing: 0.8,
+  },
+
   outOfStockOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0,0,0,0.38)",
@@ -1194,114 +1485,118 @@ const styles = StyleSheet.create({
   },
   outOfStockText: {
     color: T.white,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "800",
-    letterSpacing: 0.8,
+    letterSpacing: 0.6,
   },
 
-  cardBody: { padding: 11 },
+  cardBody: { padding: 8, paddingTop: 7 },
+  unitPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 3,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: T.greenXLight,
+    marginBottom: 5,
+  },
+  unitPillText: {
+    color: T.green,
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.2,
+  },
   productName: {
-    fontSize: 13.5,
+    fontSize: 11.5,
     color: T.bark,
-    lineHeight: 18,
+    lineHeight: 14.5,
     fontWeight: "700",
-    minHeight: 36,
+    minHeight: 29,
     marginBottom: 6,
   },
-  priceRow: {
+  priceAddRow: {
     flexDirection: "row",
-    alignItems: "baseline",
-    gap: 5,
-    marginBottom: 2,
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 4,
   },
+  priceCol: { flexShrink: 1 },
   priceValue: {
-    color: T.green,
-    fontSize: 17,
+    color: T.bark,
+    fontSize: 13,
     fontWeight: "900",
-    letterSpacing: -0.5,
+    letterSpacing: -0.3,
+    lineHeight: 15,
   },
   originalPrice: {
     color: T.barkLight,
-    fontSize: 12.5,
+    fontSize: 10,
     textDecorationLine: "line-through",
     fontWeight: "500",
+    marginTop: 1,
   },
-  priceUnit: {
-    color: T.barkLight,
-    fontSize: 11,
-    fontWeight: "500",
-    marginBottom: 6,
-  },
-  ratingWrap: { marginBottom: 8 },
-
   addBtn: {
-    borderRadius: 11,
-    overflow: "hidden",
-    shadowColor: T.green,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
-  },
-  addBtnGradient: {
-    flexDirection: "row",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: T.green,
+    backgroundColor: T.greenXLight,
+    minWidth: 46,
     alignItems: "center",
     justifyContent: "center",
-    gap: 5,
-    paddingVertical: 10,
   },
   addText: {
-    fontSize: 13,
-    color: T.white,
+    fontSize: 11.5,
+    color: T.green,
     fontWeight: "900",
-    letterSpacing: 1,
+    letterSpacing: 0.8,
   },
   soldOutBtn: {
-    borderRadius: 11,
-    paddingVertical: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
     backgroundColor: T.sand,
-    alignItems: "center",
     borderWidth: 1.5,
     borderColor: T.cardBorder,
   },
-  soldOutText: { color: T.barkLight, fontSize: 12.5, fontWeight: "700" },
-
+  soldOutText: {
+    color: T.barkLight,
+    fontSize: 10.5,
+    fontWeight: "800",
+    letterSpacing: 0.4,
+  },
   qtyBox: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: T.greenXLight,
-    borderRadius: 11,
-    borderWidth: 1.5,
-    borderColor: "rgba(45,122,79,0.2)",
-    paddingHorizontal: 4,
-    paddingVertical: 4,
+    backgroundColor: T.green,
+    borderRadius: 8,
+    paddingHorizontal: 2,
+    paddingVertical: 2,
+    minWidth: 68,
   },
   qtyBtn: {
-    width: 30,
-    height: 30,
+    width: 22,
+    height: 22,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 8,
+    borderRadius: 6,
     backgroundColor: T.green,
-    shadowColor: T.green,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 3,
   },
-  qtyBtnText: { color: T.white, fontSize: 18, fontWeight: "900" },
   qtyValue: {
-    color: T.bark,
-    fontSize: 15,
-    fontWeight: "800",
-    minWidth: 22,
+    color: T.white,
+    fontSize: 12,
+    fontWeight: "900",
+    minWidth: 14,
     textAlign: "center",
   },
 
   // ── Empty state ───────────────────────────────────────────────────────────
   empty: {
-    marginTop: 56,
+    marginTop: 40,
     alignItems: "center",
     paddingHorizontal: 28,
     gap: 10,
@@ -1355,53 +1650,69 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 0,
     right: 0,
-    bottom: 108,
+    bottom: 110,
     alignItems: "center",
+    justifyContent: "center",
     paddingHorizontal: 24,
-    pointerEvents: "box-none",
   },
   cartPill: {
-    width: "100%",
-    borderRadius: 18,
+    alignSelf: "center",
+    borderRadius: 999,
     overflow: "hidden",
     shadowColor: T.green,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.32,
-    shadowRadius: 16,
-    elevation: 10,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.42,
+    shadowRadius: 18,
+    elevation: 14,
   },
   cartPillGradient: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 15,
-    paddingHorizontal: 18,
-    gap: 12,
+    paddingVertical: 9,
+    paddingLeft: 9,
+    paddingRight: 9,
+    gap: 10,
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.35)",
+    borderRadius: 999,
   },
   cartQtyBubble: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: "rgba(255,255,255,0.28)",
+    minWidth: 30,
+    height: 30,
+    paddingHorizontal: 8,
+    borderRadius: 15,
+    backgroundColor: T.white,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1.5,
-    borderColor: "rgba(255,255,255,0.45)",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.18,
+    shadowRadius: 4,
+    elevation: 3,
   },
   cartQtyText: {
-    color: T.white,
-    fontSize: 13,
+    color: T.green,
+    fontSize: 14,
     fontWeight: "900",
+    letterSpacing: 0.2,
   },
   cartPillLabel: {
-    flex: 1,
     color: T.white,
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: "800",
-    letterSpacing: 0.1,
+    letterSpacing: 0.3,
   },
-  cartPillPrice: {
-    color: "rgba(255,255,255,0.92)",
-    fontSize: 15,
-    fontWeight: "700",
+  cartArrowWrap: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: T.white,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.18,
+    shadowRadius: 4,
+    elevation: 3,
   },
 });

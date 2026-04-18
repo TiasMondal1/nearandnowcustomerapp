@@ -3,7 +3,6 @@ import { router } from "expo-router";
 import React, { useMemo, useState } from "react";
 import {
     FlatList,
-    Image,
     Modal,
     Pressable,
     StyleSheet,
@@ -11,6 +10,7 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
+import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { C } from "../../constants/colors";
@@ -104,7 +104,13 @@ export default function CartScreen() {
             renderItem={({ item }) => (
               <View style={styles.itemCard}>
                 {item.image_url ? (
-                  <Image source={{ uri: item.image_url }} style={styles.image} />
+                  <Image
+                    source={{ uri: item.image_url }}
+                    style={styles.image}
+                    contentFit="contain"
+                    cachePolicy="memory-disk"
+                    transition={120}
+                  />
                 ) : (
                   <View style={styles.imagePlaceholder}>
                     <MaterialCommunityIcons name="image-off-outline" size={22} color={C.textLight} />
