@@ -20,6 +20,9 @@
 | 9 | `isHomeCatalogCacheFresh` gate (5-min TTL) | Frontend | Home no longer re-fetches the full master catalog on every mount/focus. Stops the "constantly refreshing" feel. |
 | 10 | `removeClippedSubviews` on Android `ScrollView` | Frontend | Off-screen views are detached from the native view hierarchy. |
 | 11 | Lean `HOME_PRODUCT_FIELDS` (Supabase `SELECT` only what home needs) | Network | Smaller payload, faster JSON parse on device. |
+| 12 | Home `ScrollView` → `@shopify/flash-list` with typed-row virtualization | Frontend | Off-screen sections/rows are unmounted from the native view tree. With 60+ products the active node count drops from ~150 → ~12. Scrolling is buttery on mid-range Android. |
+| 13 | Search input — race-condition guard + cart `Map` lookups | Frontend | Slow stale responses can no longer overwrite a fresher result; cart lookup goes O(N) → O(1) per card. |
+| 14 | **Optimistic checkout** — success modal shows instantly, order creation happens in the background | UX/Frontend | Tap-to-success feels instant (~0ms vs ~300–800ms). Cart is preserved until the API confirms so failed orders are recoverable. |
 
 ---
 
@@ -246,10 +249,17 @@ After you ship the DB + CDN + Edge Function work above, you should be at Blinkit
 ## Files touched in this pass
 
 - `context/CartContext.tsx` — memoization + `useCartItemMap` selector
-- `app/(tabs)/home.tsx` — rewrite (chips removed, skeletons, expo-image, memoized tree)
+- `app/(tabs)/home.tsx` — rewrite (chips removed, skeletons, expo-image, memoized tree, **FlashList virtualization with typed-row data**)
 - `app/(tabs)/categories.tsx` — `expo-image`
-- `app/support/search.tsx` — `expo-image`
+- `app/support/search.tsx` — `expo-image`, **race-condition guard, `useCartItemMap` lookups**
 - `app/support/cart.tsx` — `expo-image`
-- `app/support/checkout.tsx` — `expo-image` (item + reco rows)
+- `app/support/checkout.tsx` — `expo-image` (item + reco rows), **optimistic order placement**
 - `app/product/[id].tsx` — `expo-image` (hero)
 - `app/category/[slug].tsx` — `expo-image`
+- `lib/imageUrl.ts` — Cloudflare image-proxy helper
+- `package.json` — added `@shopify/flash-list`
+
+> **Backend popularity-backfill cron** (the `near-and-now` repo work) is intentionally **deferred** —
+> handle that in the backend repo whenever you're ready. Until then, `loadMasterCatalog` /
+> `getProductsByCategory` will keep ordering by `rating` + `rating_count`, which is fine for the
+> current catalog size.

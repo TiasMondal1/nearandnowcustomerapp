@@ -22,6 +22,7 @@ import { useAuth } from "../../context/AuthContext";
 import { useCart } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
 import { getProductStoreDistance } from "../../lib/distanceUtils";
+import { cdnImage } from "../../lib/imageUrl";
 import { createOrder } from "../../lib/orderService";
 import { getAllProducts, type Product } from "../../lib/productService";
 import { createRazorpayOrder } from "../../lib/razorpayService";
@@ -227,6 +228,14 @@ export default function CheckoutScreen() {
     }
   };
 
+  /**
+   * Optimistic order creation: show success UI *immediately*, then create the order
+   * in the background. If the API call fails, dismiss the success UI and surface the
+   * error — the cart is preserved until the order is confirmed so the user can retry.
+   *
+   * This makes the tap-to-success feel instant (Blinkit/Instamart pattern), instead of
+   * showing a 300–800 ms spinner before the success animation.
+   */
   const doCreateOrder = async (paymentStatus: "pending" | "paid") => {
     if (!user?.id || !location) return;
     const notesParts: string[] = [];
@@ -247,7 +256,7 @@ export default function CheckoutScreen() {
     }
     if (tipAmount > 0) notesParts.push(`Tip for delivery partner: ₹${tipAmount.toFixed(2)}`);
 
-    await createOrder({
+    const orderPayload = {
       user_id: user.id,
       customer_name: user.name || "Customer",
       customer_phone: user.phone || customer?.phone || "",
@@ -271,9 +280,25 @@ export default function CheckoutScreen() {
       notes: notesParts.length ? notesParts.join(" | ") : undefined,
       gstin: gstinClaim && gstin.trim() ? gstin.trim() : undefined,
       tip_amount: tipAmount > 0 ? tipAmount : undefined,
-    });
-    clearCart();
+    };
+
+    // 1. Show success modal IMMEDIATELY (optimistic).
     setShowSuccess(true);
+
+    // 2. Fire the actual order creation in the background.
+    try {
+      await createOrder(orderPayload);
+      // 3. Only clear the cart once we know the order succeeded — preserves the user's
+      //    items if the network/API hiccups so they can retry without re-adding.
+      clearCart();
+    } catch (err: unknown) {
+      // Roll back the optimistic UI and surface the error.
+      setShowSuccess(false);
+      const message =
+        err instanceof Error ? err.message : "Something went wrong placing your order.";
+      Alert.alert("Order failed", `${message}\n\nYour cart is safe — please try again.`);
+      throw err;
+    }
   };
 
   const placeOrder = async () => {
@@ -402,7 +427,7 @@ export default function CheckoutScreen() {
               <View style={styles.itemRow}>
                 {item.image_url ? (
                   <Image
-                    source={{ uri: item.image_url }}
+                    source={{ uri: cdnImage(item.image_url) }}
                     style={styles.itemImage}
                     contentFit="contain"
                     cachePolicy="memory-disk"
@@ -543,7 +568,7 @@ export default function CheckoutScreen() {
                   </TouchableOpacity>
                   {p.image_url ? (
                     <Image
-                      source={{ uri: p.image_url }}
+                      source={{ uri: cdnImage(p.image_url) }}
                       style={styles.recoImage}
                       contentFit="contain"
                       cachePolicy="memory-disk"

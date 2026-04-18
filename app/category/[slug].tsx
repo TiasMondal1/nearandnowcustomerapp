@@ -18,6 +18,7 @@ import { C } from "../../constants/colors";
 import { getCategoryBySlug, type Category } from "../../lib/categoryService";
 import { useCart } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
+import { cdnImage } from "../../lib/imageUrl";
 import { getProductsByCategory, type Product as ServiceProduct } from "../../lib/productService";
 import StarRating from "../../components/StarRating";
 
@@ -121,7 +122,7 @@ export default function CategorySlugScreen() {
         >
           {item.image_url ? (
             <Image
-              source={{ uri: item.image_url }}
+              source={{ uri: cdnImage(item.image_url) }}
               style={styles.image}
               contentFit="contain"
               cachePolicy="memory-disk"

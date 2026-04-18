@@ -14,44 +14,68 @@ import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { C } from "../../constants/colors";
-import { useCart } from "../../context/CartContext";
+import { useCartItemMap, useCart } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
+import { cdnImage } from "../../lib/imageUrl";
 import { searchProducts, type Product } from "../../lib/productService";
 import StarRating from "../../components/StarRating";
 
 export default function SearchScreen() {
   const { location } = useLocation();
-  const { addItem, items, updateQty } = useCart();
+  const { addItem, updateQty } = useCart();
+  const cartItemsByProductId = useCartItemMap();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Product[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const inputRef = useRef<TextInput>(null);
 
+  // Monotonically-increasing request id so a slow stale response can't overwrite
+  // a fresher one. Critical when typing fast on a slow network.
+  const requestIdRef = useRef(0);
+
   useEffect(() => {
-    if (query.length < 2) {
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
       setResults([]);
       setSearched(false);
+      setLoading(false);
+      // Bump request id so any in-flight slower response is discarded.
+      requestIdRef.current += 1;
       return;
     }
-    const timeout = setTimeout(() => doSearch(), 350);
-    return () => clearTimeout(timeout);
-  }, [query]);
 
-  const doSearch = async () => {
+    // Show the loading state instantly even though the network call is debounced —
+    // this gives the user feedback that *something* is happening on the very first keystroke
+    // after the threshold.
     setLoading(true);
-    try {
-      const data = await searchProducts(
-        query,
-        location ? { lat: location.latitude, lng: location.longitude } : undefined,
-      );
-      setResults(data);
-      setSearched(true);
-    } catch {
-      setResults([]);
-    } finally {
-      setLoading(false);
-    }
+    const myId = ++requestIdRef.current;
+
+    const timeout = setTimeout(async () => {
+      try {
+        const data = await searchProducts(
+          trimmed,
+          location ? { lat: location.latitude, lng: location.longitude } : undefined,
+        );
+        // Discard stale responses: another query has been typed since this one started.
+        if (myId !== requestIdRef.current) return;
+        setResults(data);
+        setSearched(true);
+      } catch {
+        if (myId !== requestIdRef.current) return;
+        setResults([]);
+        setSearched(true);
+      } finally {
+        if (myId === requestIdRef.current) setLoading(false);
+      }
+    }, 350);
+
+    return () => clearTimeout(timeout);
+  }, [query, location]);
+
+  const doSearch = () => {
+    // Keep onSubmitEditing wired to dismiss keyboard / no-op (debounced effect runs on its own).
+    inputRef.current?.blur();
   };
 
   return (
@@ -105,7 +129,7 @@ export default function SearchScreen() {
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}
           renderItem={({ item }) => {
-            const cartItem = items.find((i) => i.product_id === item.id);
+            const cartItem = cartItemsByProductId.get(item.id);
             const hasDiscount = item.original_price != null && item.original_price > item.price;
 
             return (
@@ -116,7 +140,7 @@ export default function SearchScreen() {
               >
                 {item.image_url ? (
                   <Image
-                    source={{ uri: item.image_url }}
+                    source={{ uri: cdnImage(item.image_url) }}
                     style={styles.image}
                     contentFit="contain"
                     cachePolicy="memory-disk"

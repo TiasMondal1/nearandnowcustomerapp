@@ -1,4 +1,9 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import {
+  FlashList,
+  type FlashListRef,
+  type ListRenderItemInfo,
+} from "@shopify/flash-list";
 import { Image as ExpoImage } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
@@ -40,6 +45,7 @@ import { useAuth } from "../../context/AuthContext";
 import { useCartItemMap, useCart, type CartItem } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
 import { getAllCategories, type Category } from "../../lib/categoryService";
+import { cdnImage } from "../../lib/imageUrl";
 import { getUserOrders } from "../../lib/orderService";
 import {
   getCountForCategoryName,
@@ -48,6 +54,7 @@ import {
   loadMasterCatalog,
   readHomeCatalogCache,
   writeHomeCatalogCache,
+  type HomeCatalogCache,
   type Product,
 } from "../../lib/productService";
 
@@ -88,6 +95,32 @@ const FALLBACK_ICONS = [
 
 /** Products shown in each category section before "See all". */
 const SECTION_VISIBLE_PRODUCTS = 6;
+
+/** Number of cards rendered per row in the home grid. */
+const ROW_COUNT = 3;
+
+/**
+ * Typed discriminated-union of home-feed list items. FlashList virtualizes the
+ * outer list, so off-screen sections / rows are unmounted from the native view
+ * tree. This is the difference between scrolling 60+ images all at once (old
+ * ScrollView) vs ~8 at a time (FlashList).
+ */
+type HomeListItem =
+  | { kind: "search" }
+  | { kind: "freqBought"; title: string; products: Product[] }
+  | { kind: "catTileGrid"; categories: Category[] }
+  | { kind: "sectionHeader"; title: string; subtitle?: string; onSeeAll?: () => void }
+  | { kind: "productRow"; products: Product[]; rowKey: string }
+  | { kind: "seeAllBar"; categoryName: string; onPress: () => void }
+  | { kind: "endStamp" }
+  | {
+      kind: "empty";
+      title: string;
+      message: string;
+      icon: keyof typeof MaterialCommunityIcons.glyphMap;
+      cta?: { label: string; onPress: () => void };
+    };
+
 
 /** A tiny 1×1 transparent pixel used as the image placeholder while the real product loads. */
 const PLACEHOLDER_BLURHASH = "L6PZfSi_.AyE_3t7t7R**0o#DgR4";
@@ -151,7 +184,7 @@ const ProductCard = React.memo(
             <View style={styles.imageWrap}>
               {p.image_url ? (
                 <ExpoImage
-                  source={{ uri: p.image_url }}
+                  source={{ uri: cdnImage(p.image_url) }}
                   style={styles.image}
                   contentFit="contain"
                   transition={120}
@@ -289,11 +322,12 @@ const CategoryTile = React.memo(function CategoryTile({
       <View style={styles.catTileIconWrap}>
         {item.image_url ? (
           <ExpoImage
-            source={{ uri: item.image_url }}
+            source={{ uri: cdnImage(item.image_url) }}
             style={styles.catTileImg}
             contentFit="cover"
             cachePolicy="memory-disk"
             transition={100}
+            recyclingKey={item.id}
           />
         ) : (
           <MaterialCommunityIcons
@@ -560,7 +594,7 @@ export default function HomeScreen() {
   const hasCart = cartItemsByProductId.size > 0;
   const { userId } = useAuth();
 
-  const scrollRef = useRef<ScrollView | null>(null);
+  const listRef = useRef<FlashListRef<HomeListItem> | null>(null);
   const didInitialFetch = useRef(false);
 
   useFocusEffect(
@@ -604,42 +638,80 @@ export default function HomeScreen() {
     }
   }, []);
 
-  /** Cold start: paint from cache immediately, refresh only if cache is stale. */
-  useEffect(() => {
-    if (didInitialFetch.current) return;
-    didInitialFetch.current = true;
+  // Stash the cached payload so the second effect (background refresh) can
+  // make a freshness decision without re-reading AsyncStorage.
+  const initialCacheRef = useRef<{ value: HomeCatalogCache | null; loaded: boolean }>({
+    value: null,
+    loaded: false,
+  });
 
+  /**
+   * Phase 1 — runs ONCE on mount, before anything else. Reads the cached
+   * catalog from AsyncStorage and paints it. This is the fastest possible
+   * path to a fully-rendered home screen on a warm cold start.
+   *
+   * No dependency on `isHydrated` so the cached UI shows before the
+   * location context finishes hydrating.
+   */
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       const cached = await readHomeCatalogCache();
-      if (!cancelled && cached) {
+      if (cancelled) return;
+      initialCacheRef.current = { value: cached, loaded: true };
+      if (cached) {
         setCategories(cached.categories);
         setProductsByCategory(cached.productsByCategory);
         setLoading(false);
       }
-
-      if (!isHydrated) return;
-
-      // Skip background refresh if cache is fresh (<5 min). This stops the app from doing
-      // a full-catalog DB scan on every mount — the #1 source of perceived "constant
-      // refreshing" slowness.
-      if (isHomeCatalogCacheFresh(cached)) return;
-
-      InteractionManager.runAfterInteractions(async () => {
-        if (cancelled) return;
-        await fetchFresh();
-        if (!cancelled) setLoading(false);
-      });
     })();
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  /**
+   * Phase 2 — runs after `isHydrated` flips true (i.e. LocationContext is
+   * ready). Decides whether to actually hit the network. If the cache is
+   * fresh (<5 min) we skip entirely; otherwise we refresh in the
+   * background after the first paint settles, so even a slow Supabase
+   * round-trip never freezes the UI.
+   */
+  useEffect(() => {
+    if (!isHydrated) return;
+    if (didInitialFetch.current) return;
+    if (!initialCacheRef.current.loaded) return; // wait for Phase 1 to finish reading
+    didInitialFetch.current = true;
+
+    const cached = initialCacheRef.current.value;
+    if (isHomeCatalogCacheFresh(cached)) {
+      // Make absolutely sure loading is off if cache existed.
+      if (cached) setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const handle = InteractionManager.runAfterInteractions(async () => {
+      if (cancelled) return;
+      await fetchFresh();
+      if (!cancelled) setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+      handle.cancel?.();
+    };
   }, [isHydrated, fetchFresh]);
 
   // ── Live reverse-geocode from device GPS ──────────────────────────────────
+  // Deferred past first paint: GPS + reverse-geocode is a 500–2000 ms call
+  // chain that competes with the home catalog network request on the same
+  // connection. By scheduling it via InteractionManager, the home grid paints
+  // first and the live address fills in a moment later — exactly how Blinkit
+  // / Instamart behave on cold start.
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    const handle = InteractionManager.runAfterInteractions(async () => {
+      if (cancelled) return;
       try {
         setLocationFetching(true);
         const { status } = await ExpoLocation.requestForegroundPermissionsAsync();
@@ -665,17 +737,24 @@ export default function HomeScreen() {
       } finally {
         if (!cancelled) setLocationFetching(false);
       }
-    })();
+    });
     return () => {
       cancelled = true;
+      handle.cancel?.();
     };
   }, []);
 
   // ── Build user's "frequently bought" list from past orders ────────────────
+  // Also deferred: this hits Supabase to read up to 50 historical orders to
+  // compute popularity. It feeds the "Frequently bought" carousel which is
+  // *below* the fold on first paint, so there's no reason to block the
+  // initial render on it. Falling back to "bought by other customers" while
+  // this loads is the desired UX anyway.
   useEffect(() => {
     if (!userId) return;
     let cancelled = false;
-    (async () => {
+    const handle = InteractionManager.runAfterInteractions(async () => {
+      if (cancelled) return;
       try {
         const orders = await getUserOrders(userId);
         if (cancelled) return;
@@ -694,9 +773,10 @@ export default function HomeScreen() {
       } catch {
         /* fall back silently to "bought by others" */
       }
-    })();
+    });
     return () => {
       cancelled = true;
+      handle.cancel?.();
     };
   }, [userId]);
 
@@ -727,7 +807,7 @@ export default function HomeScreen() {
       if (name === activeCategory) return;
       setActiveCategory(name);
       requestAnimationFrame(() =>
-        scrollRef.current?.scrollTo({ y: 0, animated: true }),
+        listRef.current?.scrollToOffset({ offset: 0, animated: true }),
       );
     },
     [activeCategory],
@@ -799,19 +879,277 @@ export default function HomeScreen() {
     [updateQty],
   );
 
+  // ── Build the virtualized list data ──────────────────────────────────────
+  // NOTE: this hook (and `renderHomeItem` below) MUST be declared before any
+  // conditional `return` — moving them after the `loading` early-return
+  // violates the Rules of Hooks (different hook count between renders).
+  const listData = useMemo<HomeListItem[]>(() => {
+    const out: HomeListItem[] = [{ kind: "search" }];
+
+    if (activeCategory === "All") {
+      if (frequentlyBought.products.length > 0) {
+        out.push({
+          kind: "freqBought",
+          title: frequentlyBought.title,
+          products: frequentlyBought.products,
+        });
+      }
+
+      if (categoriesWithProducts.length > 0) {
+        out.push({
+          kind: "sectionHeader",
+          title: "Shop by category",
+          subtitle: "Everything you need",
+        });
+        out.push({
+          kind: "catTileGrid",
+          categories: categoriesWithProducts,
+        });
+      }
+
+      if (categoriesWithProducts.length === 0) {
+        out.push({
+          kind: "empty",
+          icon: !location ? "store-off-outline" : "package-variant-closed",
+          title: !location ? "Set your location" : "No products found",
+          message: !location
+            ? "We'll show you what's fresh and available nearby."
+            : "No products available near you at the moment.",
+          cta: !location
+            ? { label: "Choose Location", onPress: () => router.push("/location") }
+            : undefined,
+        });
+      } else {
+        for (const c of categoriesWithProducts) {
+          const products = getProductsForCategoryName(productsByCategory, c.name);
+          if (!products.length) continue;
+          const visible = products.slice(0, SECTION_VISIBLE_PRODUCTS);
+
+          out.push({
+            kind: "sectionHeader",
+            title: c.name,
+            subtitle: "Top picks",
+            onSeeAll:
+              products.length > SECTION_VISIBLE_PRODUCTS
+                ? () => handleSelectCategory(c.name)
+                : undefined,
+          });
+
+          for (let i = 0; i < visible.length; i += ROW_COUNT) {
+            out.push({
+              kind: "productRow",
+              products: visible.slice(i, i + ROW_COUNT),
+              rowKey: `${c.id}-r${i}`,
+            });
+          }
+
+          if (products.length > SECTION_VISIBLE_PRODUCTS) {
+            out.push({
+              kind: "seeAllBar",
+              categoryName: c.name,
+              onPress: () => handleSelectCategory(c.name),
+            });
+          }
+        }
+        out.push({ kind: "endStamp" });
+      }
+    } else {
+      out.push({
+        kind: "sectionHeader",
+        title: activeCategory,
+        subtitle: "Fresh picks near you",
+        onSeeAll: () => handleSelectCategory("All"),
+      });
+      if (filteredProducts.length === 0) {
+        out.push({
+          kind: "empty",
+          icon: "package-variant-closed",
+          title: `No products in ${activeCategory}`,
+          message: "Check back soon or explore other categories.",
+        });
+      } else {
+        for (let i = 0; i < filteredProducts.length; i += ROW_COUNT) {
+          out.push({
+            kind: "productRow",
+            products: filteredProducts.slice(i, i + ROW_COUNT),
+            rowKey: `${activeCategory}-r${i}`,
+          });
+        }
+      }
+    }
+
+    return out;
+  }, [
+    activeCategory,
+    frequentlyBought,
+    categoriesWithProducts,
+    productsByCategory,
+    filteredProducts,
+    location,
+    handleSelectCategory,
+  ]);
+
+  // ── List item renderer (lean, since each row recycles independently) ─────
+  const renderHomeItem = useCallback(
+    ({ item }: ListRenderItemInfo<HomeListItem>) => {
+      switch (item.kind) {
+        case "search":
+          return (
+            <View style={styles.stickyWrap}>
+              <TouchableOpacity
+                style={styles.searchBar}
+                activeOpacity={0.88}
+                onPress={() => router.push("../support/search")}
+              >
+                <View style={styles.searchIconWrap}>
+                  <MaterialCommunityIcons
+                    name="magnify"
+                    size={19}
+                    color={T.green}
+                  />
+                </View>
+                <Text style={styles.searchPlaceholder}>
+                  Search groceries, dairy, snacks…
+                </Text>
+              </TouchableOpacity>
+            </View>
+          );
+
+        case "freqBought":
+          return (
+            <FrequentlyBoughtSection
+              title={item.title}
+              products={item.products}
+              cartItemsByProductId={cartItemsByProductId}
+              onAdd={handleAdd}
+              onUpdateQty={handleUpdateQty}
+            />
+          );
+
+        case "catTileGrid":
+          return (
+            <View style={styles.catTileGrid}>
+              {item.categories.map((c, i) => (
+                <CategoryTile
+                  key={c.id}
+                  item={c}
+                  index={i}
+                  onPress={() => handleSelectCategory(c.name)}
+                />
+              ))}
+            </View>
+          );
+
+        case "sectionHeader":
+          return (
+            <SectionHeader
+              title={item.title}
+              subtitle={item.subtitle}
+              onSeeAll={item.onSeeAll}
+            />
+          );
+
+        case "productRow":
+          return (
+            <View style={styles.productRow}>
+              {item.products.map((p) => (
+                <ProductCard
+                  key={p.id}
+                  p={p}
+                  cartItem={cartItemsByProductId.get(p.id)}
+                  onAdd={handleAdd}
+                  onUpdateQty={handleUpdateQty}
+                />
+              ))}
+              {/* Pad short last rows so cards don't stretch to full width */}
+              {item.products.length < ROW_COUNT &&
+                Array.from({ length: ROW_COUNT - item.products.length }).map(
+                  (_, i) => <View key={`pad-${i}`} style={styles.cardOuter} />,
+                )}
+            </View>
+          );
+
+        case "seeAllBar":
+          return (
+            <TouchableOpacity
+              style={styles.seeAllBar}
+              onPress={item.onPress}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.seeAllBarText}>
+                See all products in {item.categoryName}
+              </Text>
+              <MaterialCommunityIcons
+                name="arrow-right"
+                size={16}
+                color={T.green}
+              />
+            </TouchableOpacity>
+          );
+
+        case "endStamp":
+          return (
+            <View style={styles.endStamp}>
+              <MaterialCommunityIcons name="leaf" size={14} color={T.green} />
+              <Text style={styles.endStampText}>
+                That&apos;s everything fresh near you
+              </Text>
+            </View>
+          );
+
+        case "empty":
+          return (
+            <View style={styles.empty}>
+              <View style={styles.emptyIconWrap}>
+                <MaterialCommunityIcons
+                  name={item.icon}
+                  size={40}
+                  color={T.green}
+                />
+              </View>
+              <Text style={styles.emptyTitle}>{item.title}</Text>
+              <Text style={styles.emptyText}>{item.message}</Text>
+              {item.cta && (
+                <TouchableOpacity
+                  style={styles.emptyBtn}
+                  onPress={item.cta.onPress}
+                  activeOpacity={0.85}
+                >
+                  <LinearGradient
+                    colors={[T.greenLight, T.green]}
+                    style={styles.emptyBtnGradient}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                  >
+                    <MaterialCommunityIcons
+                      name="map-marker-outline"
+                      size={16}
+                      color={T.white}
+                    />
+                    <Text style={styles.emptyBtnText}>{item.cta.label}</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+              )}
+            </View>
+          );
+      }
+    },
+    [cartItemsByProductId, handleAdd, handleUpdateQty, handleSelectCategory],
+  );
+
   // ── Loading (skeleton, not spinner) ──────────────────────────────────────
   if (loading) {
     return (
       <SafeAreaView style={styles.safe} edges={["top"]}>
-        {renderAddressBar({
-          liveAddress,
-          location,
-          locationFetching,
-          profileAnimatedStyle,
-          onPressIn: handleProfilePressIn,
-          onPressOut: handleProfilePressOut,
-          onProfilePress: () => setShowProfileMenu(true),
-        })}
+        <AddressBarBlock
+          liveAddress={liveAddress}
+          location={location}
+          locationFetching={locationFetching}
+          profileAnimatedStyle={profileAnimatedStyle}
+          onPressIn={handleProfilePressIn}
+          onPressOut={handleProfilePressOut}
+          onProfilePress={() => setShowProfileMenu(true)}
+        />
         <View style={styles.stickyWrap}>
           <View style={[styles.searchBar, { backgroundColor: T.skeletonHi }]}>
             <View
@@ -842,11 +1180,27 @@ export default function HomeScreen() {
   // ── Render ───────────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      <ScrollView
-        ref={scrollRef}
-        stickyHeaderIndices={[1]}
-        contentContainerStyle={styles.scrollContent}
+      <FlashList
+        ref={listRef}
+        data={listData}
+        renderItem={renderHomeItem}
+        keyExtractor={homeListKeyExtractor}
+        getItemType={homeListItemType}
+        stickyHeaderIndices={[0]}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={styles.flashListContent}
+        ListHeaderComponent={
+          <AddressBarBlock
+            liveAddress={liveAddress}
+            location={location}
+            locationFetching={locationFetching}
+            profileAnimatedStyle={profileAnimatedStyle}
+            onPressIn={handleProfilePressIn}
+            onPressOut={handleProfilePressOut}
+            onProfilePress={() => setShowProfileMenu(true)}
+          />
+        }
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -855,170 +1209,7 @@ export default function HomeScreen() {
             colors={[T.green]}
           />
         }
-        keyboardShouldPersistTaps="handled"
-        removeClippedSubviews={Platform.OS === "android"}
-        overScrollMode="never"
-      >
-        {renderAddressBar({
-          liveAddress,
-          location,
-          locationFetching,
-          profileAnimatedStyle,
-          onPressIn: handleProfilePressIn,
-          onPressOut: handleProfilePressOut,
-          onProfilePress: () => setShowProfileMenu(true),
-        })}
-
-        <View style={styles.stickyWrap}>
-          <TouchableOpacity
-            style={styles.searchBar}
-            activeOpacity={0.88}
-            onPress={() => router.push("../support/search")}
-          >
-            <View style={styles.searchIconWrap}>
-              <MaterialCommunityIcons
-                name="magnify"
-                size={19}
-                color={T.green}
-              />
-            </View>
-            <Text style={styles.searchPlaceholder}>
-              Search groceries, dairy, snacks…
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {activeCategory === "All" ? (
-          <>
-            <FrequentlyBoughtSection
-              title={frequentlyBought.title}
-              products={frequentlyBought.products}
-              cartItemsByProductId={cartItemsByProductId}
-              onAdd={handleAdd}
-              onUpdateQty={handleUpdateQty}
-            />
-
-            {categoriesWithProducts.length > 0 && (
-              <View style={styles.section}>
-                <SectionHeader
-                  title="Shop by category"
-                  subtitle="Everything you need"
-                />
-                <View style={styles.catTileGrid}>
-                  {categoriesWithProducts.map((c, i) => (
-                    <CategoryTile
-                      key={c.id}
-                      item={c}
-                      index={i}
-                      onPress={() => handleSelectCategory(c.name)}
-                    />
-                  ))}
-                </View>
-              </View>
-            )}
-
-            {categoriesWithProducts.length === 0 ? (
-              <View style={styles.empty}>
-                <View style={styles.emptyIconWrap}>
-                  <MaterialCommunityIcons
-                    name={!location ? "store-off-outline" : "package-variant-closed"}
-                    size={40}
-                    color={T.green}
-                  />
-                </View>
-                <Text style={styles.emptyTitle}>
-                  {!location ? "Set your location" : "No products found"}
-                </Text>
-                <Text style={styles.emptyText}>
-                  {!location
-                    ? "We'll show you what's fresh and available nearby."
-                    : "No products available near you at the moment."}
-                </Text>
-                {!location && (
-                  <TouchableOpacity
-                    style={styles.emptyBtn}
-                    onPress={() => router.push("/location")}
-                    activeOpacity={0.85}
-                  >
-                    <LinearGradient
-                      colors={[T.greenLight, T.green]}
-                      style={styles.emptyBtnGradient}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                    >
-                      <MaterialCommunityIcons
-                        name="map-marker-outline"
-                        size={16}
-                        color={T.white}
-                      />
-                      <Text style={styles.emptyBtnText}>Choose Location</Text>
-                    </LinearGradient>
-                  </TouchableOpacity>
-                )}
-              </View>
-            ) : (
-              categoriesWithProducts.map((c) => (
-                <CategorySection
-                  key={c.id}
-                  category={c}
-                  products={getProductsForCategoryName(
-                    productsByCategory,
-                    c.name,
-                  )}
-                  cartItemsByProductId={cartItemsByProductId}
-                  onAdd={handleAdd}
-                  onUpdateQty={handleUpdateQty}
-                  onSeeAll={handleSelectCategory}
-                />
-              ))
-            )}
-
-            <View style={styles.endStamp}>
-              <MaterialCommunityIcons name="leaf" size={14} color={T.green} />
-              <Text style={styles.endStampText}>
-                That&apos;s everything fresh near you
-              </Text>
-            </View>
-          </>
-        ) : (
-          <View style={styles.section}>
-            <SectionHeader
-              title={activeCategory}
-              subtitle="Fresh picks near you"
-              onSeeAll={() => handleSelectCategory("All")}
-            />
-            {filteredProducts.length === 0 ? (
-              <View style={styles.empty}>
-                <View style={styles.emptyIconWrap}>
-                  <MaterialCommunityIcons
-                    name="package-variant-closed"
-                    size={40}
-                    color={T.green}
-                  />
-                </View>
-                <Text style={styles.emptyTitle}>
-                  No products in {activeCategory}
-                </Text>
-                <Text style={styles.emptyText}>
-                  Check back soon or explore other categories.
-                </Text>
-              </View>
-            ) : (
-              <View style={styles.gridWrap}>
-                {filteredProducts.map((p) => (
-                  <ProductCard
-                    key={p.id}
-                    p={p}
-                    cartItem={cartItemsByProductId.get(p.id)}
-                    onAdd={handleAdd}
-                    onUpdateQty={handleUpdateQty}
-                  />
-                ))}
-              </View>
-            )}
-          </View>
-        )}
-      </ScrollView>
+      />
 
       {/* ── Cart CTA pill (centered, compact) ──────────────────────────── */}
       {hasCart && (
@@ -1066,8 +1257,33 @@ export default function HomeScreen() {
   );
 }
 
-// ─── Shared address-bar renderer (keeps the main component tidy) ────────────
-function renderAddressBar({
+// ─── FlashList helpers ──────────────────────────────────────────────────────
+const homeListKeyExtractor = (item: HomeListItem, index: number): string => {
+  switch (item.kind) {
+    case "search":
+      return "search";
+    case "freqBought":
+      return "freq";
+    case "catTileGrid":
+      return "tilegrid";
+    case "sectionHeader":
+      return `hdr-${item.title}-${index}`;
+    case "productRow":
+      return `row-${item.rowKey}`;
+    case "seeAllBar":
+      return `seeall-${item.categoryName}`;
+    case "endStamp":
+      return "end";
+    case "empty":
+      return `empty-${item.title}`;
+  }
+};
+
+/** Tells FlashList to recycle cells of the same type — huge perf win on scroll. */
+const homeListItemType = (item: HomeListItem): string => item.kind;
+
+// ─── Address-bar block (memoized so live-location updates don't bust list memo) ──
+const AddressBarBlock = React.memo(function AddressBarBlock({
   liveAddress,
   location,
   locationFetching,
@@ -1170,7 +1386,7 @@ function renderAddressBar({
       </View>
     </View>
   );
-}
+});
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
@@ -1178,6 +1394,14 @@ const styles = StyleSheet.create({
 
   // ── Scroll container ─────────────────────────────────────────────────────
   scrollContent: { paddingBottom: 150 },
+  flashListContent: { paddingBottom: 150 },
+  productRow: {
+    flexDirection: "row",
+    paddingHorizontal: 14,
+    justifyContent: "space-between",
+    columnGap: 8,
+    marginBottom: 12,
+  },
 
   // ── Skeleton helpers ─────────────────────────────────────────────────────
   skeletonLine: {

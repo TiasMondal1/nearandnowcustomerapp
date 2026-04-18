@@ -17,6 +17,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { C } from "../../constants/colors";
 import { useLocation } from "../../context/LocationContext";
 import { getAllCategories, type Category } from "../../lib/categoryService";
+import { cdnImage } from "../../lib/imageUrl";
 import {
     getCategoryCounts,
     getCountForCategoryName,
@@ -156,7 +157,7 @@ export default function CategoriesScreen() {
               >
                 {item.image_url ? (
                   <Image
-                    source={{ uri: item.image_url }}
+                    source={{ uri: cdnImage(item.image_url) }}
                     style={styles.categoryImage}
                     contentFit="cover"
                     cachePolicy="memory-disk"

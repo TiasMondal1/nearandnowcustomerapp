@@ -16,6 +16,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { C } from "../../constants/colors";
 import { calcOrderTotal } from "../../constants/fees";
 import { useCart } from "../../context/CartContext";
+import { cdnImage } from "../../lib/imageUrl";
 
 export default function CartScreen() {
   const { items, updateQty, removeItem, clearCart } = useCart();
@@ -105,7 +106,7 @@ export default function CartScreen() {
               <View style={styles.itemCard}>
                 {item.image_url ? (
                   <Image
-                    source={{ uri: item.image_url }}
+                    source={{ uri: cdnImage(item.image_url) }}
                     style={styles.image}
                     contentFit="contain"
                     cachePolicy="memory-disk"

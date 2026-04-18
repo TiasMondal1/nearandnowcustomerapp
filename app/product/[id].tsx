@@ -15,6 +15,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { C } from "../../constants/colors";
 import { useCart } from "../../context/CartContext";
+import { cdnImage } from "../../lib/imageUrl";
 import { getProductById, type Product } from "../../lib/productService";
 
 const { width } = Dimensions.get("window");
@@ -89,7 +90,7 @@ export default function ProductDetailsScreen() {
         <View style={styles.imageWrap}>
           {product.image_url ? (
             <Image
-              source={{ uri: product.image_url }}
+              source={{ uri: cdnImage(product.image_url) }}
               style={styles.heroImage}
               contentFit="cover"
               cachePolicy="memory-disk"
