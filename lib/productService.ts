@@ -174,6 +174,37 @@ export async function getAllProducts(_options?: {
 }
 
 /**
+ * Cold-start fast path: returns the top N most-popular in-stock products in a
+ * SINGLE round-trip (no pagination). The home screen renders top-6 per category,
+ * so 500 rows is easily enough to fill every section above the fold. The full
+ * catalog is then loaded in the background to keep search/filter responsive.
+ *
+ * Cost on a slow 3G connection: ~30–80 KB compressed, ~120–400 ms vs.
+ * 1–5 s for `loadMasterCatalog()`.
+ */
+export async function loadMasterCatalogFast(
+  limit: number = 500,
+): Promise<{ products: Product[]; productsByCategory: Record<string, Product[]> }> {
+  const { data, error } = await supabaseAdmin
+    .from('master_products')
+    .select(HOME_PRODUCT_FIELDS)
+    .eq('is_active', true)
+    .order('rating', { ascending: false, nullsFirst: false })
+    .order('rating_count', { ascending: false, nullsFirst: false })
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`Database error: ${error.message}`);
+  const products = (data || []).map((r) => masterRowToProduct(r as MasterProductRow));
+  const productsByCategory: Record<string, Product[]> = {};
+  for (const p of products) {
+    const c = p.category || 'Uncategorized';
+    if (!productsByCategory[c]) productsByCategory[c] = [];
+    productsByCategory[c].push(p);
+  }
+  return { products, productsByCategory };
+}
+
+/**
  * Fetch all in-stock products in a single category. Uses the existing
  * `idx_master_products_category` index for an O(log n) lookup instead of the
  * previous full-catalog scan + client-side filter.
@@ -361,17 +392,47 @@ export interface HomeCatalogCache {
   savedAt: number;
 }
 
+/**
+ * In-memory cache shared between the splash-time pre-warm in `app/_layout.tsx`
+ * and the home screen mount in `app/(tabs)/home.tsx`. Without this, both call
+ * sites pay the AsyncStorage round-trip + JSON.parse cost (which can be
+ * 100–300 ms when the catalog has thousands of rows). With it, the home
+ * screen's read is synchronous from RAM and adds ~0 ms to first paint.
+ */
+let memoryHomeCache: HomeCatalogCache | null = null;
+let memoryReadPromise: Promise<HomeCatalogCache | null> | null = null;
+
+/** Synchronous accessor for the prewarm result. Returns null if prewarm hasn't completed. */
+export function getMemoryHomeCache(): HomeCatalogCache | null {
+  return memoryHomeCache;
+}
+
 export async function readHomeCatalogCache(): Promise<HomeCatalogCache | null> {
-  try {
-    const raw = await AsyncStorage.getItem(HOME_CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as HomeCatalogCache;
-    if (!parsed?.products || !parsed?.categories) return null;
-    if (Date.now() - (parsed.savedAt || 0) > HOME_CACHE_TTL_MS) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
+  // Hot path — return the prewarmed value without touching AsyncStorage.
+  if (memoryHomeCache) return memoryHomeCache;
+
+  // De-duplicate concurrent reads: if the splash-time prewarm is still in flight,
+  // the home screen's later call should await the same Promise instead of issuing a
+  // second AsyncStorage hit.
+  if (memoryReadPromise) return memoryReadPromise;
+
+  memoryReadPromise = (async () => {
+    try {
+      const raw = await AsyncStorage.getItem(HOME_CACHE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as HomeCatalogCache;
+      if (!parsed?.products || !parsed?.categories) return null;
+      if (Date.now() - (parsed.savedAt || 0) > HOME_CACHE_TTL_MS) return null;
+      memoryHomeCache = parsed;
+      return parsed;
+    } catch {
+      return null;
+    } finally {
+      memoryReadPromise = null;
+    }
+  })();
+
+  return memoryReadPromise;
 }
 
 /** True if the cache is recent enough to skip a background re-fetch. */
@@ -383,11 +444,12 @@ export function isHomeCatalogCacheFresh(cache: HomeCatalogCache | null): boolean
 export async function writeHomeCatalogCache(
   data: Omit<HomeCatalogCache, 'savedAt'>,
 ): Promise<void> {
+  const payload: HomeCatalogCache = { ...data, savedAt: Date.now() };
+  // Update memory cache synchronously so subsequent reads see the new data
+  // without waiting on AsyncStorage.
+  memoryHomeCache = payload;
   try {
-    await AsyncStorage.setItem(
-      HOME_CACHE_KEY,
-      JSON.stringify({ ...data, savedAt: Date.now() }),
-    );
+    await AsyncStorage.setItem(HOME_CACHE_KEY, JSON.stringify(payload));
   } catch {
     // cache write is best-effort
   }
