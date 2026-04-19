@@ -3,6 +3,7 @@ import { router } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import {
     ActivityIndicator,
+    Alert,
     FlatList,
     InteractionManager,
     RefreshControl,
@@ -13,20 +14,12 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { PaymentProcessingOverlay } from "../../components/PaymentProcessingOverlay";
 import { C } from "../../constants/colors";
+import { CANCELLED_STATUSES, getStatusMeta } from "../../constants/orderStatus";
 import { useAuth } from "../../context/AuthContext";
+import { usePaymentFlow } from "../../hooks/usePaymentFlow";
 import { getUserOrders, type Order } from "../../lib/orderService";
-
-const STATUS_META: Record<string, { label: string; color: string; bg: string }> = {
-  pending_at_store:   { label: "Pending",        color: C.warning, bg: C.warningLight },
-  accepted_by_store:  { label: "Accepted",        color: C.primary, bg: C.primaryXLight },
-  awaiting_rider:     { label: "Finding rider",   color: C.warning, bg: C.warningLight },
-  rider_assigned:     { label: "Rider assigned",  color: C.info,    bg: C.infoLight },
-  out_for_delivery:   { label: "On the way",      color: C.info,    bg: C.infoLight },
-  delivered:          { label: "Delivered",       color: C.success, bg: C.successLight },
-  cancelled:          { label: "Cancelled",       color: C.danger,  bg: C.dangerLight },
-  rejected_by_store:  { label: "Rejected",        color: C.danger,  bg: C.dangerLight },
-};
 
 function formatDate(iso: string) {
   const d = new Date(iso);
@@ -36,11 +29,12 @@ function formatDate(iso: string) {
 }
 
 export default function OrdersScreen() {
-  const { userId } = useAuth();
+  const { userId, user, customer } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { phase: paymentPhase, payForOrder, RazorpayUI } = usePaymentFlow();
 
   const fetchOrders = useCallback(async (isRefresh = false) => {
     try {
@@ -80,13 +74,51 @@ export default function OrdersScreen() {
     setRefreshing(false);
   }, [fetchOrders]);
 
+  const handleRetryPayment = useCallback(
+    async (order: Order) => {
+      const result = await payForOrder({
+        internalOrderId: order.id,
+        amount: order.order_total,
+        customer: {
+          name: user?.name || "Customer",
+          email: user?.email || undefined,
+          phone: user?.phone || customer?.phone || undefined,
+        },
+        description: `Payment for order #${order.order_number || order.id.slice(0, 8).toUpperCase()}`,
+      });
+
+      if (result.status === "paid") {
+        Alert.alert("Payment successful", "Your order has been paid.");
+        fetchOrders(true);
+        return;
+      }
+      if (result.status === "error") {
+        Alert.alert("Payment unavailable", result.message);
+        return;
+      }
+      // pending — refresh either way (in case webhook landed during the flow)
+      fetchOrders(true);
+      if (result.reason === "cancelled") return;
+      Alert.alert("Payment not completed", result.message ?? "Please try again.");
+    },
+    [payForOrder, user, customer, fetchOrders],
+  );
+
   const renderOrder = ({ item }: { item: Order }) => {
     const status = item.order_status ?? "";
-    const meta = STATUS_META[status] || {
-      label: status,
-      color: C.textSub,
-      bg: C.bgSoft,
-    };
+    const meta = getStatusMeta(status);
+
+    // "Payment pending" only matters for online orders that haven't paid yet
+    // and aren't cancelled. COD orders are always 'pending' until delivery;
+    // we don't want to show a "Pay now" CTA on those.
+    const paymentMethod = (item.payment_method ?? "").toLowerCase();
+    const isOnline = paymentMethod !== "cod" && paymentMethod !== "cash_on_delivery";
+    const isCancelled = CANCELLED_STATUSES.includes(status as any);
+    const isDelivered = status === "order_delivered";
+    const needsPayment =
+      isOnline && item.payment_status === "pending" && !isCancelled;
+
+    const totalLabel = item.payment_status === "paid" ? "Total paid" : "Total payable";
 
     return (
       <View style={styles.card}>
@@ -95,8 +127,15 @@ export default function OrdersScreen() {
             <Text style={styles.orderNum}>#{item.order_number || item.id.slice(0, 8).toUpperCase()}</Text>
             <Text style={styles.orderDate}>{formatDate(item.created_at)}</Text>
           </View>
-          <View style={[styles.statusBadge, { backgroundColor: meta.bg }]}>
-            <Text style={[styles.statusText, { color: meta.color }]}>{meta.label}</Text>
+          <View style={{ alignItems: "flex-end", gap: 6 }}>
+            <View style={[styles.statusBadge, { backgroundColor: meta.bg }]}>
+              <Text style={[styles.statusText, { color: meta.color }]}>{meta.label}</Text>
+            </View>
+            {needsPayment && (
+              <View style={[styles.statusBadge, { backgroundColor: C.warningLight }]}>
+                <Text style={[styles.statusText, { color: C.warning }]}>Payment pending</Text>
+              </View>
+            )}
           </View>
         </View>
 
@@ -113,10 +152,27 @@ export default function OrdersScreen() {
 
         <View style={styles.cardFooter}>
           <View>
-            <Text style={styles.totalLabel}>Total paid</Text>
+            <Text style={styles.totalLabel}>{totalLabel}</Text>
             <Text style={styles.total}>₹{Number(item.order_total).toFixed(2)}</Text>
           </View>
-          {status === "delivered" ? (
+          {needsPayment ? (
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <TouchableOpacity
+                style={[styles.trackBtn, styles.secondaryBtn]}
+                onPress={() => router.push(`/order/${item.id}` as any)}
+              >
+                <Text style={[styles.trackText, { color: C.text }]}>Details</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.trackBtn, styles.payNowBtn]}
+                onPress={() => handleRetryPayment(item)}
+                disabled={paymentPhase !== "idle"}
+              >
+                <MaterialCommunityIcons name="credit-card-fast-outline" size={14} color="#fff" />
+                <Text style={styles.trackText}>Pay now</Text>
+              </TouchableOpacity>
+            </View>
+          ) : isDelivered ? (
             <TouchableOpacity
               style={[styles.trackBtn, styles.invoiceBtn]}
               onPress={() => router.push(`/order/${item.id}` as any)}
@@ -124,7 +180,7 @@ export default function OrdersScreen() {
               <MaterialCommunityIcons name="file-document-outline" size={14} color="#fff" />
               <Text style={styles.trackText}>View Invoice</Text>
             </TouchableOpacity>
-          ) : ["cancelled", "rejected_by_store"].includes(status) ? (
+          ) : isCancelled ? (
             <TouchableOpacity
               style={[styles.trackBtn, styles.detailsBtn]}
               onPress={() => router.push(`/order/${item.id}` as any)}
@@ -135,7 +191,7 @@ export default function OrdersScreen() {
           ) : (
             <TouchableOpacity
               style={styles.trackBtn}
-              onPress={() => router.push(`/order/${item.id}` as any)}
+              onPress={() => router.push(`/order/track/${item.id}` as any)}
             >
               <MaterialCommunityIcons name="map-marker-path" size={14} color="#fff" />
               <Text style={styles.trackText}>Track Order</Text>
@@ -214,6 +270,8 @@ export default function OrdersScreen() {
         }
         renderItem={renderOrder}
       />
+      {RazorpayUI}
+      <PaymentProcessingOverlay phase={paymentPhase} />
     </SafeAreaView>
   );
 }
@@ -344,6 +402,17 @@ const styles = StyleSheet.create({
   },
   detailsBtn: {
     backgroundColor: C.textSub,
+  },
+  payNowBtn: {
+    backgroundColor: C.warning,
+    shadowColor: C.warning,
+  },
+  secondaryBtn: {
+    backgroundColor: C.bgSoft,
+    shadowOpacity: 0,
+    elevation: 0,
+    borderWidth: 1,
+    borderColor: C.border,
   },
   trackText: { color: "#fff", fontSize: 13, fontWeight: "700" },
 

@@ -1,4 +1,3 @@
-import { useRazorpay } from "@codearcade/expo-razorpay";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -16,20 +15,19 @@ import {
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { PaymentProcessingOverlay } from "../../components/PaymentProcessingOverlay";
 import { C } from "../../constants/colors";
 import { calcOrderTotal } from "../../constants/fees";
 import { useAuth } from "../../context/AuthContext";
 import { useCart } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
+import { usePaymentFlow } from "../../hooks/usePaymentFlow";
 import { getProductStoreDistance } from "../../lib/distanceUtils";
 import { cdnImage } from "../../lib/imageUrl";
-import { createOrder } from "../../lib/orderService";
+import { createOrder, type Order } from "../../lib/orderService";
 import { getAllProducts, type Product } from "../../lib/productService";
-import { createRazorpayOrder } from "../../lib/razorpayService";
 
 type PaymentMode = "upi" | "cod";
-
-const RAZORPAY_KEY = process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID || "";
 
 export default function CheckoutScreen() {
   const { items, appliedCoupon, removeCoupon, discount, clearCart, addItem, updateQty } = useCart();
@@ -58,7 +56,7 @@ export default function CheckoutScreen() {
   const [recommended, setRecommended] = useState<Product[]>([]);
   const [loadingRecommended, setLoadingRecommended] = useState(false);
   const [payment, setPayment] = useState<PaymentMode>("upi");
-  const { openCheckout, closeCheckout, RazorpayUI } = useRazorpay();
+  const { phase: paymentPhase, payForOrder, RazorpayUI } = usePaymentFlow();
 
   const successAnim = useRef(new Animated.Value(0)).current;
 
@@ -229,15 +227,20 @@ export default function CheckoutScreen() {
   };
 
   /**
-   * Optimistic order creation: show success UI *immediately*, then create the order
-   * in the background. If the API call fails, dismiss the success UI and surface the
-   * error — the cart is preserved until the order is confirmed so the user can retry.
+   * Creates the internal `customer_orders` row via the backend.
    *
-   * This makes the tap-to-success feel instant (Blinkit/Instamart pattern), instead of
-   * showing a 300–800 ms spinner before the success animation.
+   * Two callers:
+   *   - COD path: uses the optimistic flag so the success UI fires *immediately*
+   *     and the network call runs in the background.
+   *   - Online path: cannot be optimistic (we must show the Razorpay sheet first
+   *     and only show success after `verifyPayment` returns), so it passes
+   *     `optimistic = false` and awaits the real Order back.
    */
-  const doCreateOrder = async (paymentStatus: "pending" | "paid") => {
-    if (!user?.id || !location) return;
+  const doCreateOrder = async (
+    paymentStatus: "pending" | "paid",
+    options: { optimistic?: boolean } = {},
+  ): Promise<Order | undefined> => {
+    if (!user?.id || !location) return undefined;
     const notesParts: string[] = [];
     if (gstinClaim && gstin.trim()) {
       notesParts.push(
@@ -282,23 +285,27 @@ export default function CheckoutScreen() {
       tip_amount: tipAmount > 0 ? tipAmount : undefined,
     };
 
-    // 1. Show success modal IMMEDIATELY (optimistic).
-    setShowSuccess(true);
-
-    // 2. Fire the actual order creation in the background.
-    try {
-      await createOrder(orderPayload);
-      // 3. Only clear the cart once we know the order succeeded — preserves the user's
-      //    items if the network/API hiccups so they can retry without re-adding.
-      clearCart();
-    } catch (err: unknown) {
-      // Roll back the optimistic UI and surface the error.
-      setShowSuccess(false);
-      const message =
-        err instanceof Error ? err.message : "Something went wrong placing your order.";
-      Alert.alert("Order failed", `${message}\n\nYour cart is safe — please try again.`);
-      throw err;
+    if (options.optimistic) {
+      // COD path — show success modal IMMEDIATELY and create order in the background.
+      setShowSuccess(true);
+      try {
+        const created = await createOrder(orderPayload);
+        // Only clear the cart once we know the order succeeded — preserves the user's
+        // items if the network/API hiccups so they can retry without re-adding.
+        clearCart();
+        return created;
+      } catch (err: unknown) {
+        // Roll back the optimistic UI and surface the error.
+        setShowSuccess(false);
+        const message =
+          err instanceof Error ? err.message : "Something went wrong placing your order.";
+        Alert.alert("Order failed", `${message}\n\nYour cart is safe — please try again.`);
+        throw err;
+      }
     }
+
+    // Online path — caller awaits the real Order so it can pass `id` to Razorpay.
+    return createOrder(orderPayload);
   };
 
   const placeOrder = async () => {
@@ -334,62 +341,91 @@ export default function CheckoutScreen() {
     setPlacing(true);
     try {
       if (payment === "cod") {
-        await doCreateOrder("pending");
-      } else {
-        if (!RAZORPAY_KEY) {
-          Alert.alert("Payment not configured", "Razorpay keys are missing. Please contact support.");
-          setPlacing(false);
-          return;
-        }
-        const amountPaise = Math.round(finalPayable * 100);
-        const { order_id } = await createRazorpayOrder(amountPaise);
-        closeCheckout?.();
-        openCheckout(
-          {
-            key: RAZORPAY_KEY,
-            amount: amountPaise,
-            currency: "INR",
-            order_id,
-            name: "Near & Now",
-            description: "Order payment",
-            prefill: {
-              name: user.name || "Customer",
-              email: user.email || "",
-              contact: user.phone || customer?.phone || "",
-            },
-            theme: { color: C.primary },
-          },
-          {
-            onSuccess: async () => {
-              closeCheckout?.();
-              try {
-                await doCreateOrder("paid");
-              } catch (err: any) {
-                Alert.alert(
-                  "Order failed",
-                  err?.message || "Payment succeeded but order could not be created. Please contact support.",
-                );
-              } finally {
-                setPlacing(false);
-              }
-            },
-            onFailure: (error: { description?: string }) => {
-              closeCheckout?.();
-              setPlacing(false);
-              Alert.alert("Payment failed", error?.description || "Payment could not be completed.");
-            },
-            onClose: () => {
-              setPlacing(false);
-            },
-          },
-        );
+        // Optimistic flow: success modal renders before the API call returns.
+        await doCreateOrder("pending", { optimistic: true });
         return;
       }
+
+      // ─── Online payment (Razorpay) ────────────────────────────────────────
+      // Mirrors near-and-now/frontend/src/pages/CheckoutPage.tsx exactly:
+      //   1. Create the internal customer_orders row with payment_status='pending'.
+      //   2. Hand off to usePaymentFlow.payForOrder, which:
+      //      a. POSTs /api/payment/create  (backend uses DB amount as truth)
+      //      b. Opens the Razorpay sheet
+      //      c. POSTs /api/payment/verify with the signature
+      //      d. If verify hiccups, polls the DB for ~10s in case the webhook lands first
+      // The processing overlay is driven by `paymentPhase`, so the user always
+      // sees clear "Setting up… / Verifying… / Confirming with bank…" states
+      // instead of a frozen-looking checkout screen.
+
+      const internalOrder = await doCreateOrder("pending");
+      if (!internalOrder?.id) {
+        throw new Error("Could not create order");
+      }
+
+      const result = await payForOrder({
+        internalOrderId: internalOrder.id,
+        amount: finalPayable,
+        customer: {
+          name: user.name || "Customer",
+          email: user.email || undefined,
+          phone: user.phone || customer?.phone || undefined,
+        },
+      });
+
+      if (result.status === "paid") {
+        setShowSuccess(true);
+        clearCart();
+        return;
+      }
+
+      // Anything other than 'paid' means the order is saved but payment isn't
+      // confirmed. Clear the cart (order is in DB, customer can pay from
+      // Orders) and route them there with a message tuned to the failure mode.
+      clearCart();
+
+      if (result.status === "error") {
+        Alert.alert(
+          "Payment unavailable",
+          `${result.message}\n\nYour order has been saved. You can retry payment from your Orders.`,
+        );
+        router.replace("../(tabs)/orders");
+        return;
+      }
+
+      // status === 'pending'
+      const titleByReason = {
+        cancelled: "Payment cancelled",
+        failed: "Payment failed",
+        verify_failed: "Payment not confirmed",
+        unverified: "Payment not confirmed",
+      } as const;
+      const messageByReason = {
+        cancelled:
+          "Your order has been saved. You can complete payment anytime from your Orders.",
+        failed:
+          (result.message ?? "Payment could not be completed.") +
+          "\n\nYour order has been saved — retry from your Orders.",
+        verify_failed:
+          (result.message ?? "Payment could not be verified.") +
+          "\n\nIf money was debited it will reflect shortly, or auto-refund within 5–7 days.",
+        unverified:
+          result.message ??
+          "We could not confirm your payment yet. Please check Orders in a minute.",
+      } as const;
+
+      Alert.alert(titleByReason[result.reason], messageByReason[result.reason], [
+        {
+          text: "Go to Orders",
+          onPress: () => router.replace("../(tabs)/orders"),
+        },
+      ]);
+      return;
     } catch (err: any) {
       console.error("PLACE_ORDER_ERROR", err);
       Alert.alert("Order failed", err?.message || "Something went wrong. Please try again.");
     } finally {
-      if (payment === "cod") setPlacing(false);
+      setPlacing(false);
     }
   };
 
@@ -917,6 +953,8 @@ export default function CheckoutScreen() {
       </View>
 
       {RazorpayUI}
+
+      <PaymentProcessingOverlay phase={paymentPhase} />
 
       {/* ─── Success Overlay ─── */}
       {showSuccess && (

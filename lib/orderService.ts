@@ -188,6 +188,37 @@ export async function createOrder(input: CreateOrderInput): Promise<Order> {
   return created as Order;
 }
 
+/**
+ * Lightweight single-row read used by the post-payment reconcile loop.
+ *
+ * When `/api/payment/verify` fails (network blip, response timeout, etc.) the
+ * Razorpay webhook may *still* settle the order asynchronously. Instead of
+ * scaring the user with a refund warning, we poll this for ~10s — if the
+ * webhook lands first, we promote the UI to "Paid" silently.
+ */
+export async function getOrderPaymentStatus(
+  orderId: string,
+): Promise<{ payment_status: string; status: string } | null> {
+  if (!orderId) return null;
+  try {
+    assertSupabaseAdminConfigured();
+    const { data, error } = await supabaseAdmin
+      .from('customer_orders')
+      .select('payment_status, status')
+      .eq('id', orderId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data) return null;
+    return {
+      payment_status: String((data as any).payment_status || 'pending'),
+      status: String((data as any).status || ''),
+    };
+  } catch (err) {
+    console.warn('[ORDER] getOrderPaymentStatus failed', err);
+    return null;
+  }
+}
+
 // GET /api/orders/customer/:customerId — handled by Railway backend (reads with service role server-side)
 export async function getUserOrders(userId: string): Promise<Order[]> {
   if (!userId) return [];

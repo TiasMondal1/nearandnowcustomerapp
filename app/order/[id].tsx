@@ -3,6 +3,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
     ActivityIndicator,
+    Alert,
     RefreshControl,
     ScrollView,
     StyleSheet,
@@ -12,32 +13,19 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { PaymentProcessingOverlay } from "../../components/PaymentProcessingOverlay";
 import { C } from "../../constants/colors";
+import {
+  CANCELLED_STATUSES,
+  ORDER_TIMELINE,
+  TERMINAL_STATUSES,
+  getStatusMeta,
+  getTimelineIndex,
+} from "../../constants/orderStatus";
 import { useAuth } from "../../context/AuthContext";
+import { usePaymentFlow } from "../../hooks/usePaymentFlow";
 import { getUserOrders, type Order } from "../../lib/orderService";
 import { supabase } from "../../lib/supabase";
-
-const TIMELINE: { key: string; label: string; icon: string }[] = [
-  { key: "pending_at_store",  label: "Order Placed",       icon: "receipt" },
-  { key: "accepted_by_store", label: "Store Accepted",     icon: "store-check-outline" },
-  { key: "awaiting_rider",    label: "Finding Rider",      icon: "account-search-outline" },
-  { key: "rider_assigned",    label: "Rider Assigned",     icon: "bike" },
-  { key: "out_for_delivery",  label: "Out for Delivery",   icon: "map-marker-path" },
-  { key: "delivered",         label: "Delivered",          icon: "check-circle" },
-];
-
-const CANCELLED_KEYS = ["cancelled", "rejected_by_store"];
-
-const STATUS_COLORS: Record<string, { color: string; bg: string }> = {
-  pending_at_store:   { color: C.warning,  bg: C.warningLight },
-  accepted_by_store:  { color: C.primary,  bg: C.primaryXLight },
-  awaiting_rider:     { color: C.warning,  bg: C.warningLight },
-  rider_assigned:     { color: C.info,     bg: C.infoLight },
-  out_for_delivery:   { color: C.info,     bg: C.infoLight },
-  delivered:          { color: C.success,  bg: C.successLight },
-  cancelled:          { color: C.danger,   bg: C.dangerLight },
-  rejected_by_store:  { color: C.danger,   bg: C.dangerLight },
-};
 
 function formatDate(iso: string) {
   const d = new Date(iso);
@@ -50,11 +38,12 @@ function formatDate(iso: string) {
 
 export default function OrderDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { userId } = useAuth();
+  const { userId, user, customer } = useAuth();
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [autoRefreshing, setAutoRefreshing] = useState(false);
+  const { phase: paymentPhase, payForOrder, RazorpayUI } = usePaymentFlow();
 
   useEffect(() => {
     if (userId) loadOrder();
@@ -77,11 +66,19 @@ export default function OrderDetailScreen() {
           filter: `id=eq.${id}`,
         },
         (payload) => {
-          const newStatus = (payload.new as any)?.status as string | undefined;
-          if (newStatus) {
+          const next = payload.new as any;
+          const newStatus = next?.status as string | undefined;
+          const newPaymentStatus = next?.payment_status as string | undefined;
+          if (newStatus || newPaymentStatus) {
             setAutoRefreshing(true);
             setOrder((prev) =>
-              prev ? { ...prev, order_status: newStatus } : prev,
+              prev
+                ? {
+                    ...prev,
+                    ...(newStatus ? { order_status: newStatus } : {}),
+                    ...(newPaymentStatus ? { payment_status: newPaymentStatus } : {}),
+                  }
+                : prev,
             );
             setTimeout(() => setAutoRefreshing(false), 800);
           }
@@ -151,9 +148,44 @@ export default function OrderDetailScreen() {
     );
   }
 
-  const isCancelled = CANCELLED_KEYS.includes(order.order_status ?? "");
-  const currentStatusIndex = TIMELINE.findIndex((s) => s.key === order.order_status);
-  const statusStyle = STATUS_COLORS[order.order_status ?? ""] ?? { color: C.textSub, bg: C.bgSoft };
+  const status = order.order_status ?? "";
+  const isCancelled = CANCELLED_STATUSES.includes(status as any);
+  const isDelivered = status === "order_delivered";
+  const isInFlight = !TERMINAL_STATUSES.includes(status as any);
+  const currentStatusIndex = getTimelineIndex(status);
+  const statusMeta = getStatusMeta(status);
+
+  const paymentMethod = (order.payment_method ?? "").toLowerCase();
+  const isOnline = paymentMethod !== "cod" && paymentMethod !== "cash_on_delivery";
+  const needsPayment =
+    isOnline && order.payment_status === "pending" && !isCancelled;
+
+  const handleRetryPayment = async () => {
+    if (!order) return;
+    const result = await payForOrder({
+      internalOrderId: order.id,
+      amount: order.order_total,
+      customer: {
+        name: user?.name || "Customer",
+        email: user?.email || undefined,
+        phone: user?.phone || customer?.phone || undefined,
+      },
+      description: `Payment for order #${order.order_number || order.id.slice(0, 8).toUpperCase()}`,
+    });
+
+    if (result.status === "paid") {
+      setOrder((prev) => (prev ? { ...prev, payment_status: "paid" } : prev));
+      Alert.alert("Payment successful", "Your order has been paid.");
+      return;
+    }
+    if (result.status === "error") {
+      Alert.alert("Payment unavailable", result.message);
+      return;
+    }
+    if (result.reason === "cancelled") return;
+    Alert.alert("Payment not completed", result.message ?? "Please try again.");
+    loadOrder(true);
+  };
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -162,9 +194,9 @@ export default function OrderDetailScreen() {
           <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>
-          {order.order_status === 'delivered' ? 'Invoice' : 'Order Details'}
+          {isDelivered ? 'Invoice' : 'Order Details'}
         </Text>
-        {autoRefreshing && order.order_status !== 'delivered' ? (
+        {autoRefreshing && !isDelivered ? (
           <View style={styles.autoRefreshIndicator}>
             <ActivityIndicator size="small" color={C.primary} />
           </View>
@@ -185,6 +217,29 @@ export default function OrderDetailScreen() {
           />
         }
       >
+        {needsPayment && (
+          <View style={styles.payBanner}>
+            <View style={styles.payBannerIconWrap}>
+              <MaterialCommunityIcons name="alert-circle" size={22} color={C.warning} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.payBannerTitle}>Payment pending</Text>
+              <Text style={styles.payBannerSub}>
+                Complete payment of ₹{order.order_total.toFixed(2)} to confirm your order.
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.payBannerBtn}
+              activeOpacity={0.85}
+              onPress={handleRetryPayment}
+              disabled={paymentPhase !== "idle"}
+            >
+              <MaterialCommunityIcons name="credit-card-fast-outline" size={16} color="#fff" />
+              <Text style={styles.payBannerBtnText}>Pay now</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Order meta */}
         <View style={styles.metaCard}>
           <View style={styles.metaRow}>
@@ -194,10 +249,8 @@ export default function OrderDetailScreen() {
               </Text>
               <Text style={styles.orderDate}>{formatDate(order.created_at)}</Text>
             </View>
-            <View style={[styles.statusBadge, { backgroundColor: statusStyle.bg }]}>
-              <Text style={[styles.statusText, { color: statusStyle.color }]}>
-                {order.order_status?.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
-              </Text>
+            <View style={[styles.statusBadge, { backgroundColor: statusMeta.bg }]}>
+              <Text style={[styles.statusText, { color: statusMeta.color }]}>{statusMeta.label}</Text>
             </View>
           </View>
 
@@ -211,7 +264,7 @@ export default function OrderDetailScreen() {
           <View style={styles.infoRow}>
             <MaterialCommunityIcons name="credit-card-outline" size={15} color={C.textSub} />
             <Text style={styles.infoText}>
-              {order.payment_method === "cod" ? "Cash on Delivery" : "UPI"} ·{" "}
+              {isOnline ? "Online" : "Cash on Delivery"} ·{" "}
               <Text style={[
                 order.payment_status === "paid"
                   ? { color: C.success }
@@ -221,10 +274,28 @@ export default function OrderDetailScreen() {
               </Text>
             </Text>
           </View>
+
+          {isInFlight && (
+            <TouchableOpacity
+              style={styles.liveTrackBtn}
+              activeOpacity={0.85}
+              onPress={() => router.push(`/order/track/${order.id}` as any)}
+            >
+              <View style={styles.liveTrackDotWrap}>
+                <View style={styles.liveTrackPulse} />
+                <View style={styles.liveTrackDot} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.liveTrackTitle}>Live tracking</Text>
+                <Text style={styles.liveTrackSub}>See your rider on the map in real time</Text>
+              </View>
+              <MaterialCommunityIcons name="chevron-right" size={20} color="#fff" />
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Status timeline or Invoice */}
-        {order.order_status === 'delivered' ? (
+        {isDelivered ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Invoice Details</Text>
             <View style={styles.invoiceCard}>
@@ -256,10 +327,10 @@ export default function OrderDetailScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Order Status</Text>
             <View style={styles.timeline}>
-              {TIMELINE.map((step, index) => {
+              {ORDER_TIMELINE.map((step, index) => {
                 const isDone = currentStatusIndex >= index;
                 const isActive = currentStatusIndex === index;
-                const isLast = index === TIMELINE.length - 1;
+                const isLast = index === ORDER_TIMELINE.length - 1;
 
                 return (
                   <View key={step.key} style={styles.timelineRow}>
@@ -272,7 +343,7 @@ export default function OrderDetailScreen() {
                         ]}
                       >
                         <MaterialCommunityIcons
-                          name={step.icon as any}
+                          name={step.icon}
                           size={14}
                           color={isDone ? "#fff" : C.textLight}
                         />
@@ -342,13 +413,16 @@ export default function OrderDetailScreen() {
             <BillLine label="Delivery fee" value={`₹${(order.delivery_fee ?? 0).toFixed(2)}`} />
             <View style={styles.billDivider} />
             <BillLine
-              label="Total Paid"
+              label={order.payment_status === "paid" ? "Total Paid" : "Total Payable"}
               value={`₹${order.order_total.toFixed(2)}`}
               bold
             />
           </View>
         </View>
       </ScrollView>
+
+      {RazorpayUI}
+      <PaymentProcessingOverlay phase={paymentPhase} />
     </SafeAreaView>
   );
 }
@@ -411,6 +485,57 @@ const styles = StyleSheet.create({
   notFoundText: { color: C.text, fontSize: 16, fontWeight: "700" },
   backLink: { color: C.primary, fontSize: 14, fontWeight: "600" },
 
+  payBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    margin: 16,
+    marginBottom: 0,
+    padding: 14,
+    borderRadius: 16,
+    backgroundColor: C.warningLight,
+    borderWidth: 1,
+    borderColor: "#fcd34d",
+  },
+  payBannerIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: C.card,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  payBannerTitle: {
+    color: "#92400e",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  payBannerSub: {
+    color: "#92400e",
+    fontSize: 12,
+    marginTop: 2,
+    opacity: 0.85,
+  },
+  payBannerBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: C.warning,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+    shadowColor: C.warning,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  payBannerBtnText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+
   metaCard: {
     backgroundColor: C.card,
     margin: 16,
@@ -439,6 +564,39 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   infoText: { color: C.textSub, fontSize: 13, flex: 1, lineHeight: 19 },
+
+  liveTrackBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginTop: 4,
+    backgroundColor: C.primary,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 12,
+    shadowColor: C.primary,
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 4,
+  },
+  liveTrackDotWrap: {
+    width: 12,
+    height: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  liveTrackPulse: {
+    position: "absolute",
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: "#fff",
+    opacity: 0.35,
+  },
+  liveTrackDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#fff" },
+  liveTrackTitle: { color: "#fff", fontSize: 14, fontWeight: "800" },
+  liveTrackSub: { color: "rgba(255,255,255,0.85)", fontSize: 11.5, marginTop: 2 },
 
   section: { paddingHorizontal: 16, marginBottom: 16 },
   sectionTitle: {
