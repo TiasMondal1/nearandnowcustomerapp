@@ -40,6 +40,12 @@ export interface PayForOrderArgs {
   };
   /** Override default "Order payment" string; useful for retries ("Complete payment for #ABC"). */
   description?: string;
+  /**
+   * Pre-selects the tab inside the Razorpay sheet. Use "upi", "card",
+   * "netbanking", "wallet", or "emi". If omitted, the sheet opens on its
+   * default tab (usually the last-used method for the customer).
+   */
+  preferredMethod?: 'upi' | 'card' | 'netbanking' | 'wallet' | 'emi';
 }
 
 const RECONCILE_TIMEOUT_MS = 10_000;
@@ -122,7 +128,14 @@ export function usePaymentFlow() {
                 name: args.customer.name || 'Customer',
                 email: args.customer.email || '',
                 contact: args.customer.phone || '',
+                // Pre-selects the tab inside the Razorpay sheet so the user
+                // lands on the rail they picked on the payment-options screen.
+                ...(args.preferredMethod ? { method: args.preferredMethod } : {}),
               },
+              // Ask Razorpay to remember the customer's saved cards / UPI
+              // VPAs. Combined with a server-side `customer_id`, this is what
+              // makes the "Preferred Payment" list build up over time.
+              remember_customer: true,
               theme: { color: C.primary },
             },
             {

@@ -24,10 +24,19 @@ import { useLocation } from "../../context/LocationContext";
 import { usePaymentFlow } from "../../hooks/usePaymentFlow";
 import { getProductStoreDistance } from "../../lib/distanceUtils";
 import { cdnImage } from "../../lib/imageUrl";
+import { markOrderPlaced } from "../../lib/orderHistoryFlag";
 import { createOrder, type Order } from "../../lib/orderService";
-import { getAllProducts, type Product } from "../../lib/productService";
-
-type PaymentMode = "upi" | "cod";
+import { clearSavedPaymentMethodsCache } from "../../lib/razorpayService";
+import {
+    getPaymentSelection,
+    subscribePaymentSelection,
+    type PaymentSelection,
+} from "../../lib/paymentSelection";
+import {
+    getAllProducts,
+    getMemoryHomeCache,
+    type Product,
+} from "../../lib/productService";
 
 export default function CheckoutScreen() {
   const { items, appliedCoupon, removeCoupon, discount, clearCart, addItem, updateQty } = useCart();
@@ -45,17 +54,25 @@ export default function CheckoutScreen() {
   const [tipPreset, setTipPreset] = useState<10 | 20 | 30 | 50 | "custom" | null>(null);
   const [customTip, setCustomTip] = useState("");
 
-  // "Ordering for someone else" — toggle + expandable details
-  const [orderingForSomeoneElse, setOrderingForSomeoneElse] = useState(false);
-  const [showRecipientDetails, setShowRecipientDetails] = useState(false);
-  const [recipientName, setRecipientName] = useState("");
-  const [recipientPhone, setRecipientPhone] = useState("");
-  const [recipientLocation, setRecipientLocation] = useState("");
+  // Seed recommended from the already-warm home cache so the "Did you forget?"
+  // strip paints on frame 1 instead of waiting on a network round-trip. Falls
+  // back to an async fetch only if the cache is empty.
+  const [recommended, setRecommended] = useState<Product[]>(() => {
+    const cache = getMemoryHomeCache();
+    if (!cache) return [];
+    const flat: Product[] = [];
+    for (const arr of Object.values(cache.productsByCategory)) flat.push(...arr);
+    return flat.slice(0, 9);
+  });
 
-  const [acceptCancellation, setAcceptCancellation] = useState(false);
-  const [recommended, setRecommended] = useState<Product[]>([]);
-  const [loadingRecommended, setLoadingRecommended] = useState(false);
-  const [payment, setPayment] = useState<PaymentMode>("upi");
+  // NOTE: we intentionally do NOT hold the payment selection in React state
+  // on this screen. Subscribing here would re-render the entire (large)
+  // checkout tree every time the user picks a payment method, which was
+  // causing a visible hang when returning from the payment-options page.
+  // Instead, the small `<PayMethodRow>` component near the bottom of this
+  // file subscribes on its own and re-renders in isolation, and the
+  // placeOrder handler reads the latest selection synchronously via
+  // `getPaymentSelection()`.
   const { phase: paymentPhase, payForOrder, RazorpayUI } = usePaymentFlow();
 
   const successAnim = useRef(new Animated.Value(0)).current;
@@ -98,16 +115,31 @@ export default function CheckoutScreen() {
   }, [location, items]);
 
   useEffect(() => {
+    // Kick off scoring immediately. We no longer gate on `location` being
+    // ready — the user already picked items, so we have everything we need to
+    // render a sensible "Did you forget?" strip on frame 1. If the memory
+    // cache from the home screen is warm we skip the network entirely; if
+    // not, we fall back to a single round-trip while the rest of the page
+    // stays interactive.
     const loadRecommended = async () => {
-      if (!location || items.length === 0) {
+      if (items.length === 0) {
         setRecommended([]);
         return;
       }
       try {
-        setLoadingRecommended(true);
-
-        // Get all available products
-        const allProducts = await getAllProducts({ lat: location.latitude, lng: location.longitude });
+        const cache = getMemoryHomeCache();
+        let allProducts: Product[];
+        if (cache) {
+          const flat: Product[] = [];
+          for (const arr of Object.values(cache.productsByCategory)) flat.push(...arr);
+          allProducts = flat;
+        } else {
+          allProducts = await getAllProducts(
+            location
+              ? { lat: location.latitude, lng: location.longitude }
+              : undefined,
+          );
+        }
         const cartIds = new Set(items.map((i) => i.product_id));
 
         // Get cart products with their details
@@ -181,9 +213,7 @@ export default function CheckoutScreen() {
 
         setRecommended(scoredProducts);
       } catch {
-        setRecommended([]);
-      } finally {
-        setLoadingRecommended(false);
+        // Keep whatever we seeded from the cache; better than a jarring empty strip.
       }
     };
     loadRecommended();
@@ -209,23 +239,6 @@ export default function CheckoutScreen() {
 
   const finalPayable = useMemo(() => baseFinalPayable + tipAmount, [baseFinalPayable, tipAmount]);
 
-  const toggleRecipientDetails = () => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setShowRecipientDetails((v) => !v);
-  };
-
-  const toggleOrderingForSomeoneElse = () => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    const next = !orderingForSomeoneElse;
-    setOrderingForSomeoneElse(next);
-    if (!next) {
-      setShowRecipientDetails(false);
-      setRecipientName("");
-      setRecipientPhone("");
-      setRecipientLocation("");
-    }
-  };
-
   /**
    * Creates the internal `customer_orders` row via the backend.
    *
@@ -250,21 +263,15 @@ export default function CheckoutScreen() {
     if (deliveryInstructions.trim()) {
       notesParts.push(`Delivery Instructions: ${deliveryInstructions.trim()}`);
     }
-    if (orderingForSomeoneElse) {
-      const parts = [];
-      if (recipientName.trim()) parts.push(`Name: ${recipientName.trim()}`);
-      if (recipientPhone.trim()) parts.push(`Phone: ${recipientPhone.trim()}`);
-      if (recipientLocation.trim()) parts.push(`Location: ${recipientLocation.trim()}`);
-      if (parts.length) notesParts.push(`Recipient — ${parts.join(", ")}`);
-    }
     if (tipAmount > 0) notesParts.push(`Tip for delivery partner: ₹${tipAmount.toFixed(2)}`);
 
+    const sel = getPaymentSelection();
     const orderPayload = {
       user_id: user.id,
       customer_name: user.name || "Customer",
       customer_phone: user.phone || customer?.phone || "",
       customer_email: user.email || undefined,
-      payment_method: payment,
+      payment_method: sel.mode,
       payment_status: paymentStatus,
       subtotal,
       delivery_fee: deliveryFee,
@@ -293,6 +300,10 @@ export default function CheckoutScreen() {
         // Only clear the cart once we know the order succeeded — preserves the user's
         // items if the network/API hiccups so they can retry without re-adding.
         clearCart();
+        // Flip the "has placed an order" flag so the Preferred Payment card
+        // on the payment-options screen unlocks on the NEXT checkout flow.
+        // Fire-and-forget; failing to persist this is non-fatal.
+        markOrderPlaced().catch(() => {});
         return created;
       } catch (err: unknown) {
         // Roll back the optimistic UI and surface the error.
@@ -321,26 +332,10 @@ export default function CheckoutScreen() {
       Alert.alert("Session expired", "Please login again.");
       return;
     }
-    if (orderingForSomeoneElse) {
-      if (!recipientName.trim()) {
-        Alert.alert("Recipient name required", "Please enter the name of the person you're ordering for.");
-        return;
-      }
-      if (recipientPhone.length !== 10) {
-        Alert.alert("Recipient phone required", "Please enter a valid 10-digit mobile number for the recipient.");
-        return;
-      }
-    }
-    if (!acceptCancellation) {
-      Alert.alert(
-        "Cancellation policy",
-        "Please review and accept the cancellation & policy information before placing your order.",
-      );
-      return;
-    }
     setPlacing(true);
     try {
-      if (payment === "cod") {
+      const currentSelection = getPaymentSelection();
+      if (currentSelection.mode === "cod") {
         // Optimistic flow: success modal renders before the API call returns.
         await doCreateOrder("pending", { optimistic: true });
         return;
@@ -371,11 +366,25 @@ export default function CheckoutScreen() {
           email: user.email || undefined,
           phone: user.phone || customer?.phone || undefined,
         },
+        // Honour the rail the user chose on the payment-options screen so
+        // the Razorpay sheet lands on that tab (UPI / Card / Wallet /
+        // Netbanking). EMI isn't used by our checkout, so filter it out.
+        preferredMethod:
+          currentSelection.method && currentSelection.method !== "emi"
+            ? currentSelection.method
+            : undefined,
       });
 
       if (result.status === "paid") {
         setShowSuccess(true);
         clearCart();
+        // Flip the "has placed an order" flag so the Preferred Payment card
+        // on the payment-options screen unlocks on the NEXT checkout flow.
+        markOrderPlaced().catch(() => {});
+        // Bust the saved-methods cache so the token Razorpay just minted
+        // for this payment shows up on the very next visit to the
+        // payment-options screen (instead of the stale empty cache).
+        clearSavedPaymentMethodsCache();
         return;
       }
 
@@ -431,23 +440,47 @@ export default function CheckoutScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      {/* ─── Header ─── */}
+      {/* ─── Header (clickable address, Instamart-style) ─── */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()} activeOpacity={0.7}>
+        <TouchableOpacity
+          style={styles.backBtn}
+          onPress={() => router.back()}
+          activeOpacity={0.7}
+        >
           <MaterialCommunityIcons name="arrow-left" size={20} color={C.text} />
         </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <Text style={styles.headerTitle} numberOfLines={1} ellipsizeMode="tail">
+
+        <TouchableOpacity
+          style={styles.addressBtn}
+          activeOpacity={0.7}
+          onPress={() => router.push("/select-location")}
+        >
+          <View style={styles.addressLabelRow}>
+            <MaterialCommunityIcons
+              name="home-variant"
+              size={14}
+              color={C.text}
+            />
+            <Text style={styles.addressLabelText}>
+              {(location?.label || "Home").toUpperCase()}
+            </Text>
+            <MaterialCommunityIcons
+              name="chevron-down"
+              size={16}
+              color={C.text}
+            />
+          </View>
+          <Text
+            style={styles.addressDetailText}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
             {location
-              ? location.address
-                ? `${(location.label || "Home").toUpperCase()} · ${location.address}`
-                : location.label || "Selected location"
-              : "Delivery Address"}
+              ? location.address || "Tap to choose a delivery address"
+              : "Tap to choose a delivery address"}
           </Text>
-          <Text style={styles.headerSub}>
-            {totalItems} item{totalItems !== 1 ? "s" : ""}
-          </Text>
-        </View>
+        </TouchableOpacity>
+
         <View style={{ width: 38 }} />
       </View>
 
@@ -648,29 +681,6 @@ export default function CheckoutScreen() {
           </View>
         )}
 
-        {/* ─── No Bag Toggle ─── */}
-        <View style={styles.card}>
-          <View style={styles.noBagRow}>
-            <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                <Text style={styles.noBagTitle}>I don't need a bag!</Text>
-                <Text style={styles.noBagEmoji}>♻️</Text>
-              </View>
-              <Text style={styles.noBagSub}>
-                Take the pledge for a greener future – opt{"\n"}for a no bag delivery!
-              </Text>
-            </View>
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={toggleOrderingForSomeoneElse}
-            >
-              <View style={[styles.toggleSwitch, orderingForSomeoneElse && styles.toggleSwitchOn]}>
-                <View style={[styles.toggleKnob, orderingForSomeoneElse && styles.toggleKnobOn]} />
-              </View>
-            </TouchableOpacity>
-          </View>
-        </View>
-
         {/* ─── Delivery Tip ─── */}
         <View style={styles.card}>
           <View style={styles.tipHeaderRow}>
@@ -759,91 +769,6 @@ export default function CheckoutScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* ─── Ordering for Someone Else ─── */}
-        {orderingForSomeoneElse && (
-          <View style={styles.card}>
-            <View style={styles.recipientBox}>
-              <View style={styles.recipientBoxHeader}>
-                <MaterialCommunityIcons name="gift-outline" size={15} color={C.primary} />
-                <Text style={styles.recipientBoxTitle}>Recipient Details</Text>
-                <Text style={styles.recipientBoxNote}>Shared with delivery partner</Text>
-              </View>
-
-              <View style={styles.recipientFieldRow}>
-                <View style={[styles.inputGroup, { flex: 1 }]}>
-                  <View style={styles.inputIconRow}>
-                    <MaterialCommunityIcons name="account-outline" size={14} color={C.textSub} />
-                    <Text style={styles.fieldLabel}>Name <Text style={{ color: C.error ?? "#e53e3e" }}>*</Text></Text>
-                  </View>
-                  <TextInput
-                    placeholder="Recipient's full name"
-                    placeholderTextColor={C.textLight}
-                    value={recipientName}
-                    onChangeText={setRecipientName}
-                    style={[styles.textInput, recipientName.trim().length > 0 && styles.textInputFilled]}
-                    returnKeyType="next"
-                  />
-                </View>
-              </View>
-
-              <View style={styles.inputGroup}>
-                <View style={styles.inputIconRow}>
-                  <MaterialCommunityIcons name="phone-outline" size={14} color={C.textSub} />
-                  <Text style={styles.fieldLabel}>Phone <Text style={{ color: C.error ?? "#e53e3e" }}>*</Text></Text>
-                </View>
-                <View style={styles.phoneInputRow}>
-                  <View style={styles.phonePrefix}>
-                    <Text style={styles.phonePrefixText}>🇮🇳 +91</Text>
-                  </View>
-                  <TextInput
-                    placeholder="10-digit mobile number"
-                    placeholderTextColor={C.textLight}
-                    keyboardType="phone-pad"
-                    value={recipientPhone}
-                    onChangeText={(t) => setRecipientPhone(t.replace(/[^0-9]/g, ""))}
-                    style={[styles.textInput, styles.phoneInputField, recipientPhone.length === 10 && styles.textInputFilled]}
-                    maxLength={10}
-                    returnKeyType="next"
-                  />
-                </View>
-                {recipientPhone.length > 0 && recipientPhone.length < 10 && (
-                  <Text style={styles.fieldHint}>
-                    <MaterialCommunityIcons name="information-outline" size={11} color={C.textLight} />
-                    {" "}{10 - recipientPhone.length} more digits needed
-                  </Text>
-                )}
-              </View>
-
-              <View style={styles.inputGroup}>
-                <View style={styles.inputIconRow}>
-                  <MaterialCommunityIcons name="map-marker-outline" size={14} color={C.textSub} />
-                  <Text style={styles.fieldLabel}>Delivery note for recipient</Text>
-                  <Text style={styles.optionalTag}>Optional</Text>
-                </View>
-                <TextInput
-                  placeholder="e.g. Ring bell twice, call on arrival, 3rd floor…"
-                  placeholderTextColor={C.textLight}
-                  value={recipientLocation}
-                  onChangeText={setRecipientLocation}
-                  style={[styles.textInput, styles.multilineInput, recipientLocation.trim().length > 0 && styles.textInputFilled]}
-                  multiline
-                  numberOfLines={2}
-                />
-              </View>
-
-              {(recipientName.trim() || recipientPhone.length === 10) && (
-                <View style={styles.recipientPreview}>
-                  <MaterialCommunityIcons name="check-circle-outline" size={14} color={C.success} />
-                  <Text style={styles.recipientPreviewText}>
-                    Delivering to <Text style={{ fontWeight: "800", color: C.text }}>{recipientName.trim() || "recipient"}</Text>
-                    {recipientPhone.length === 10 ? ` · +91 ${recipientPhone}` : ""}
-                  </Text>
-                </View>
-              )}
-            </View>
-          </View>
-        )}
-
         {/* ─── Delivery Instructions ─── */}
         <View style={styles.card}>
           <Text style={styles.billSectionTitle}>DELIVERY INSTRUCTIONS</Text>
@@ -858,65 +783,12 @@ export default function CheckoutScreen() {
           />
         </View>
 
-        {/* ─── Accept Policy ─── */}
-        <View style={[styles.card, { flexDirection: "row", alignItems: "flex-start", gap: 10 }]}>
-          <TouchableOpacity
-            style={[styles.checkbox, acceptCancellation && styles.checkboxActive]}
-            onPress={() => setAcceptCancellation((v) => !v)}
-            activeOpacity={0.8}
-          >
-            {acceptCancellation && (
-              <MaterialCommunityIcons name="check" size={13} color="#fff" />
-            )}
-          </TouchableOpacity>
-          <Text style={styles.acceptText}>
-            I've reviewed and accept the cancellation policy & FAQs.
-          </Text>
-        </View>
-
         <View style={{ height: 16 }} />
       </ScrollView>
 
       {/* ─── Pay Dock ─── */}
       <View style={styles.payDock}>
-        {/* Payment method row */}
-        <TouchableOpacity style={styles.payMethodRow} activeOpacity={0.8}>
-          <View style={styles.payMethodLeft}>
-            <MaterialCommunityIcons name="cellphone" size={18} color={C.text} />
-            <View style={{ marginLeft: 8 }}>
-              <Text style={styles.payMethodLabel}>Pay using</Text>
-              <Text style={styles.payMethodValue}>
-                {payment === "cod" ? "Cash on Delivery" : "Paytm UPI"}
-              </Text>
-            </View>
-          </View>
-          <View style={styles.payMethodChange}>
-            <Text style={styles.payMethodChangeText}>Change</Text>
-            <MaterialCommunityIcons name="chevron-right" size={16} color={C.primary} />
-          </View>
-        </TouchableOpacity>
-
-        {/* Payment toggle */}
-        <View style={styles.paymentToggleRow}>
-          <TouchableOpacity
-            style={[styles.paymentToggleBtn, payment === "upi" && styles.paymentToggleBtnActive]}
-            onPress={() => setPayment("upi")}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.paymentToggleText, payment === "upi" && styles.paymentToggleTextActive]}>
-              UPI / Card
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.paymentToggleBtn, payment === "cod" && styles.paymentToggleBtnActive]}
-            onPress={() => setPayment("cod")}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.paymentToggleText, payment === "cod" && styles.paymentToggleTextActive]}>
-              Cash on Delivery
-            </Text>
-          </TouchableOpacity>
-        </View>
+        <PayMethodRow />
 
         {/* Slide to Pay button */}
         <TouchableOpacity
@@ -935,9 +807,7 @@ export default function CheckoutScreen() {
               <View style={styles.paySlideArrow}>
                 <MaterialCommunityIcons name="chevron-double-right" size={22} color="#fff" />
               </View>
-              <Text style={styles.payButtonText}>
-                {payment === "cod" ? "Place Order" : `Slide to Pay | ₹${finalPayable.toFixed(0)}`}
-              </Text>
+              <PayButtonLabel finalPayable={finalPayable} />
             </>
           )}
         </TouchableOpacity>
@@ -1019,6 +889,64 @@ function BillRow({
   );
 }
 
+// ─── Isolated pay-dock subscribers ───────────────────────────────────────────
+//
+// These components subscribe to the payment-selection store *in isolation* so
+// that picking a new method on the payment-options screen only re-renders the
+// tiny pay-dock UI, not the entire checkout tree (which has a ScrollView with
+// products, recommendations, bill details, etc.). Before extraction, that
+// whole-tree re-render coincided with the pop animation and made returning to
+// checkout feel like the app was hanging.
+
+function usePaymentSelectionSubscription(): PaymentSelection {
+  const [sel, setSel] = useState<PaymentSelection>(() => getPaymentSelection());
+  useEffect(() => {
+    const unsub = subscribePaymentSelection(setSel);
+    setSel(getPaymentSelection());
+    return unsub;
+  }, []);
+  return sel;
+}
+
+function PayMethodRow() {
+  const sel = usePaymentSelectionSubscription();
+  return (
+    <TouchableOpacity
+      style={styles.payMethodRow}
+      activeOpacity={0.8}
+      onPress={() => router.push("/support/payment-options")}
+    >
+      <View style={styles.payMethodLeft}>
+        <MaterialCommunityIcons
+          name={(sel.icon as any) || "credit-card-outline"}
+          size={20}
+          color={C.text}
+        />
+        <View style={{ marginLeft: 10, flex: 1 }}>
+          <Text style={styles.payMethodLabel}>Pay using</Text>
+          <Text style={styles.payMethodValue} numberOfLines={1}>
+            {sel.label}
+            {sel.subLabel ? ` · ${sel.subLabel}` : ""}
+          </Text>
+        </View>
+      </View>
+      <View style={styles.payMethodChange}>
+        <Text style={styles.payMethodChangeText}>Change</Text>
+        <MaterialCommunityIcons name="chevron-right" size={16} color={C.primary} />
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+function PayButtonLabel({ finalPayable }: { finalPayable: number }) {
+  const sel = usePaymentSelectionSubscription();
+  return (
+    <Text style={styles.payButtonText}>
+      {sel.mode === "cod" ? "Place Order" : `Slide to Pay | ₹${finalPayable.toFixed(0)}`}
+    </Text>
+  );
+}
+
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
@@ -1048,6 +976,31 @@ const styles = StyleSheet.create({
   headerCenter: { flex: 1, alignItems: "center" },
   headerTitle: { color: C.text, fontSize: 15, fontWeight: "800", letterSpacing: -0.2 },
   headerSub: { color: C.textSub, fontSize: 11, marginTop: 1 },
+
+  // Clickable address button in the header (Swiggy Instamart style)
+  addressBtn: {
+    flex: 1,
+    marginHorizontal: 8,
+    paddingVertical: 2,
+    paddingHorizontal: 4,
+  },
+  addressLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  addressLabelText: {
+    color: C.text,
+    fontSize: 15,
+    fontWeight: "900",
+    letterSpacing: 0.2,
+  },
+  addressDetailText: {
+    color: C.textSub,
+    fontSize: 12,
+    marginTop: 1,
+    letterSpacing: -0.1,
+  },
 
   // Card (Blinkit uses white cards separated by gray gaps)
   card: {
@@ -1452,14 +1405,14 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingBottom: 10,
-    marginBottom: 10,
+    paddingBottom: 12,
+    marginBottom: 12,
     borderBottomWidth: 1,
-    borderBottomColor: C.border,
+    borderBottomColor: C.borderSoft,
   },
-  payMethodLeft: { flexDirection: "row", alignItems: "center" },
-  payMethodLabel: { color: C.textSub, fontSize: 10, fontWeight: "600" },
-  payMethodValue: { color: C.text, fontSize: 13, fontWeight: "700" },
+  payMethodLeft: { flexDirection: "row", alignItems: "center", flex: 1, marginRight: 8 },
+  payMethodLabel: { color: C.textSub, fontSize: 11, fontWeight: "600" },
+  payMethodValue: { color: C.text, fontSize: 14, fontWeight: "800", marginTop: 1 },
   payMethodChange: { flexDirection: "row", alignItems: "center" },
   payMethodChangeText: { color: C.primary, fontSize: 13, fontWeight: "700" },
   paymentToggleRow: {

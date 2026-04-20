@@ -93,6 +93,18 @@ const FALLBACK_ICONS = [
   "basket-outline",
 ];
 
+/**
+ * Module-level cache of the last reverse-geocoded "live address". When the
+ * user navigates away from the home tab (e.g. into select-location and back)
+ * expo-router may remount this screen, which previously re-fired the slow
+ * GPS + reverse-geocode chain on every return and caused the home page to
+ * briefly "hang" while permissions / GPS resolved. Caching here keeps the
+ * address bar populated instantly across remounts — the fresh lookup still
+ * runs in the background the first time per app launch.
+ */
+let __liveAddressCache: string | null = null;
+let __liveAddressResolved = false;
+
 /** Products shown in each category section before "See all". */
 const SECTION_VISIBLE_PRODUCTS = 6;
 
@@ -589,7 +601,7 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
 
-  const [liveAddress, setLiveAddress] = useState<string | null>(null);
+  const [liveAddress, setLiveAddress] = useState<string | null>(__liveAddressCache);
   const [locationFetching, setLocationFetching] = useState(false);
 
   const { location } = useLocation();
@@ -747,7 +759,12 @@ export default function HomeScreen() {
   // connection. By scheduling it via InteractionManager, the home grid paints
   // first and the live address fills in a moment later — exactly how Blinkit
   // / Instamart behave on cold start.
+  //
+  // Guarded by a module-level flag so remounts (e.g. coming back from
+  // select-location) don't replay the full GPS → reverse-geocode chain and
+  // visibly stall the home transition.
   useEffect(() => {
+    if (__liveAddressResolved) return;
     let cancelled = false;
     const handle = InteractionManager.runAfterInteractions(async () => {
       if (cancelled) return;
@@ -767,10 +784,12 @@ export default function HomeScreen() {
         if (result) {
           const parts = [result.name, result.street, result.district, result.city]
             .filter(Boolean);
-          setLiveAddress(
-            parts.slice(0, 2).join(", ") || result.city || "Your location",
-          );
+          const addr =
+            parts.slice(0, 2).join(", ") || result.city || "Your location";
+          __liveAddressCache = addr;
+          setLiveAddress(addr);
         }
+        __liveAddressResolved = true;
       } catch {
         // silently fall back to context location
       } finally {

@@ -7,6 +7,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "../context/AuthContext";
 import { CartProvider } from "../context/CartContext";
 import { LocationProvider } from "../context/LocationContext";
+import { loadOrderHistoryFlag } from "../lib/orderHistoryFlag";
 import { readHomeCatalogCache } from "../lib/productService";
 // import { usePushNotifications } from "../hooks/usePushNotifications";
 
@@ -23,6 +24,13 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 // paints on the very first frame after splash hides, instead of one frame
 // later.
 readHomeCatalogCache().catch(() => {});
+
+// Hydrate the "has placed an order?" flag during splash so the payment-options
+// screen can decide synchronously whether to show the Preferred Payment empty
+// state (first-time user) or a skeleton + fetch (returning user). Without this
+// the first visit to payment-options would always flash a skeleton for one
+// frame while AsyncStorage resolves.
+loadOrderHistoryFlag().catch(() => {});
 
 function AppShell() {
   const { isLoading } = useAuth();

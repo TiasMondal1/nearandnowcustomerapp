@@ -8,6 +8,8 @@ import {
   type AppUser,
   type Customer,
 } from '../lib/authService';
+import { clearOrderHistoryFlag } from '../lib/orderHistoryFlag';
+import { clearSavedPaymentMethodsCache } from '../lib/razorpayService';
 
 interface AuthContextType {
   user: AppUser | null;
@@ -131,6 +133,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       AsyncStorage.removeItem('userData'),
       AsyncStorage.removeItem('customerData'),
     ]);
+    // Wipe user-scoped caches so the next user doesn't inherit any of the
+    // previous user's state (saved Razorpay tokens, first-order flag).
+    clearSavedPaymentMethodsCache();
+    await clearOrderHistoryFlag();
     setUser(null);
     setCustomer(null);
     setUserId(null);

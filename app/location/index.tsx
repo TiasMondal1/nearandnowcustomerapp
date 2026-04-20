@@ -59,7 +59,14 @@ export default function LocationIndex() {
         address: loc.address,
         source: "saved",
       });
-      router.replace("/home");
+      // Prefer popping back to whatever screen opened this (home, checkout, etc.)
+      // so the app unwinds in one animation instead of tearing down the stack
+      // and rebuilding home from scratch.
+      if (router.canGoBack()) {
+        router.back();
+      } else {
+        router.replace("/(tabs)/home");
+      }
     },
     [setLocation],
   );
