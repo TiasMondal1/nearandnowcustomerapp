@@ -1,4 +1,5 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Image } from "expo-image";
 import { router } from "expo-router";
 import React, { useMemo, useState } from "react";
 import {
@@ -10,7 +11,6 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
-import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { C } from "../../constants/colors";
@@ -30,7 +30,7 @@ export default function CartScreen() {
     () => items.reduce((sum, i) => sum + i.quantity, 0),
     [items],
   );
-  const { platformFee, handlingFee, convFee, deliveryFee, projected } = useMemo(
+  const { platformFee, handlingFee, deliveryFee, gst, projected } = useMemo(
     () => calcOrderTotal(subtotal, totalItems),
     [subtotal, totalItems],
   );
@@ -83,17 +83,17 @@ export default function CartScreen() {
                   <Text style={styles.billValue}>₹{handlingFee.toFixed(2)}</Text>
                 </View>
                 <View style={styles.billRow}>
+                  <Text style={styles.billLabel}>Delivery fee</Text>
+                  <Text style={styles.billValue}>₹{deliveryFee.toFixed(2)}</Text>
+                </View>
+                <View style={styles.billRow}>
                   <View style={styles.billLabelRow}>
-                    <Text style={styles.billLabel}>Convenience fee</Text>
+                    <Text style={styles.billLabel}>GST (18%)</Text>
                     <TouchableOpacity onPress={() => setShowInfo(true)}>
                       <MaterialCommunityIcons name="information-outline" size={14} color={C.textLight} />
                     </TouchableOpacity>
                   </View>
-                  <Text style={styles.billValue}>₹{convFee}</Text>
-                </View>
-                <View style={styles.billRow}>
-                  <Text style={styles.billLabel}>Delivery fee</Text>
-                  <Text style={styles.billValue}>₹{deliveryFee}</Text>
+                  <Text style={styles.billValue}>₹{gst.toFixed(2)}</Text>
                 </View>
                 <View style={styles.billDivider} />
                 <View style={styles.billRow}>
@@ -182,18 +182,14 @@ export default function CartScreen() {
               <Text style={styles.modalSectionTitle}>Handling Fee</Text>
               <Text style={styles.modalDesc}>Fixed ₹5.50 per order</Text>
               <View style={styles.divider} />
-              <Text style={styles.modalSectionTitle}>Convenience Fee</Text>
-              <Text style={styles.modalDesc}>Order below ₹100 → ₹60</Text>
-              <Text style={styles.modalDesc}>Order ₹100–₹300 → ₹30</Text>
-              <Text style={styles.modalDesc}>Order above ₹300 → Free</Text>
+              <Text style={styles.modalSectionTitle}>Delivery Fee</Text>
+              <Text style={styles.modalDesc}>Fixed ₹25.00 per order</Text>
               <View style={styles.divider} />
-              <Text style={styles.modalSectionTitle}>Delivery Fee (Distance-based)</Text>
-              <Text style={styles.modalDesc}>0-1 km → ₹15</Text>
-              <Text style={styles.modalDesc}>1-2 km → ₹20</Text>
-              <Text style={styles.modalDesc}>2-3 km → ₹25</Text>
-              <Text style={styles.modalDesc}>3-4 km → ₹30 (maximum)</Text>
+              <Text style={styles.modalSectionTitle}>GST</Text>
+              <Text style={styles.modalDesc}>18% on Platform Fee + Handling Fee</Text>
+              <Text style={styles.modalDesc}>GST = (₹9.50 + ₹5.50) × 18% = ₹2.70</Text>
               <View style={styles.divider} />
-              <Text style={styles.modalNote}>Delivery fee is calculated based on the farthest store from your location. Final charges are confirmed at checkout.</Text>
+              <Text style={styles.modalNote}>All fees are calculated and confirmed at checkout.</Text>
             </View>
           </Pressable>
         </Pressable>

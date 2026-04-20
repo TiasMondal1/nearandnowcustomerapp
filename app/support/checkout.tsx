@@ -1,18 +1,18 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Image } from "expo-image";
 import { router } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Alert,
-  Animated,
-  LayoutAnimation,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    Alert,
+    Animated,
+    LayoutAnimation,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
-import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { PaymentProcessingOverlay } from "../../components/PaymentProcessingOverlay";
@@ -191,7 +191,7 @@ export default function CheckoutScreen() {
 
   const subtotal = useMemo(() => items.reduce((s, i) => s + i.price * i.quantity, 0), [items]);
   const totalItems = useMemo(() => items.reduce((s, i) => s + i.quantity, 0), [items]);
-  const { platformFee, handlingFee, convFee, deliveryFee, projected } = useMemo(
+  const { platformFee, handlingFee, deliveryFee, gst, projected } = useMemo(
     () => calcOrderTotal(subtotal, totalItems, maxDistance),
     [subtotal, totalItems, maxDistance],
   );
@@ -729,29 +729,20 @@ export default function CheckoutScreen() {
         <View style={styles.card}>
           <Text style={styles.billSectionTitle}>BILL DETAILS</Text>
           <BillRow label="Item Total" value={subtotal} strikeValue={subtotal + (discount > 0 ? discount : 0)} showStrike={false} />
-          <BillRow label="Handling Fee" value={handlingFee} strikeValue={Math.ceil(handlingFee * 1.6)} showStrike={handlingFee < 10} />
-          {convFee > 0 && <BillRow label="Small Cart Fee" value={convFee} note="No small cart fee on orders above ₹99" />}
+          {discount > 0 && <BillRow label="Coupon Discount" value={-discount} highlight />}
+          <BillRow label="Platform Fee" value={platformFee} />
+          <BillRow label="Handling Charges" value={handlingFee} />
+          <BillRow label="Delivery Fee" value={deliveryFee} />
           {tipAmount > 0 && <BillRow label="Delivery Partner Tip" value={tipAmount} />}
-          <View style={styles.deliveryFeeRow}>
-            <Text style={styles.billLabel}>Delivery Partner Fee</Text>
-            <Text style={styles.billValue}>₹{deliveryFee.toFixed(0)}</Text>
-          </View>
-          {deliveryFee === 0 && (
-            <Text style={styles.freeDeliveryNote}>
-              Add items worth ₹80 to avail your Free Delivery on this order
-            </Text>
-          )}
+          <View style={styles.billDivider} />
           <View style={styles.billGstRow}>
-            <Text style={styles.billLabel}>GST and Charges</Text>
-            <Text style={styles.billValue}>₹{platformFee.toFixed(2)}</Text>
+            <Text style={styles.billLabel}>GST (18% on Platform Fee + Handling Charges)</Text>
+            <Text style={styles.billValue}>₹{gst.toFixed(2)}</Text>
           </View>
           <View style={styles.billDivider} />
           <View style={styles.totalRow}>
             <Text style={styles.totalLabel}>To Pay</Text>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              {discount > 0 && (
-                <Text style={styles.totalStrike}>₹{(finalPayable + discount).toFixed(0)}</Text>
-              )}
               <Text style={styles.totalValue}>₹{finalPayable.toFixed(0)}</Text>
             </View>
           </View>

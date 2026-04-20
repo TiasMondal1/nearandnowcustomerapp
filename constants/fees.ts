@@ -1,19 +1,10 @@
 export const PLATFORM_FEE = 9.5;
 export const HANDLING_FEE = 5.5;
+export const DELIVERY_FEE = 25;
+export const GST_RATE = 0.18;
 
 export function calcDeliveryFee(distanceKm: number): number {
-  if (distanceKm <= 1) return 15;
-  if (distanceKm <= 2) return 20;
-  if (distanceKm <= 3) return 25;
-  if (distanceKm <= 4) return 30;
-  return 30;
-}
-
-export function calcConvFee(subtotal: number): number {
-  if (subtotal <= 0) return 0;
-  if (subtotal < 100) return 60;
-  if (subtotal <= 300) return 30;
-  return 0;
+  return DELIVERY_FEE;
 }
 
 export function calcOrderTotal(
@@ -24,16 +15,16 @@ export function calcOrderTotal(
 ): {
   platformFee: number;
   handlingFee: number;
-  convFee: number;
   deliveryFee: number;
+  gst: number;
   projected: number;
   finalPayable: number;
 } {
   const platformFee = PLATFORM_FEE;
   const handlingFee = HANDLING_FEE;
-  const convFee = calcConvFee(subtotal);
   const deliveryFee = calcDeliveryFee(distanceKm);
-  const projected = subtotal + platformFee + handlingFee + convFee + deliveryFee;
+  const gst = (platformFee + handlingFee) * GST_RATE;
+  const projected = subtotal + platformFee + handlingFee + deliveryFee + gst;
   const finalPayable = Math.max(projected - discount, 0);
-  return { platformFee, handlingFee, convFee, deliveryFee, projected, finalPayable };
+  return { platformFee, handlingFee, deliveryFee, gst, projected, finalPayable };
 }

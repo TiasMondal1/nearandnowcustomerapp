@@ -1,62 +1,61 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import {
-  FlashList,
-  type FlashListRef,
-  type ListRenderItemInfo,
+    FlashList,
+    type FlashListRef,
+    type ListRenderItemInfo,
 } from "@shopify/flash-list";
 import { Image as ExpoImage } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
-import { router } from "expo-router";
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
 import * as ExpoLocation from "expo-location";
+import { router, useFocusEffect } from "expo-router";
+import React, {
+    useCallback,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+} from "react";
 import {
-  ActivityIndicator,
-  BackHandler,
-  FlatList,
-  InteractionManager,
-  Platform,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-  type StyleProp,
-  type ViewStyle,
+    ActivityIndicator,
+    BackHandler,
+    FlatList,
+    InteractionManager,
+    Platform,
+    Pressable,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
+    type StyleProp,
+    type ViewStyle,
 } from "react-native";
-import { useFocusEffect } from "expo-router";
 import Animated, {
-  FadeInUp,
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
+    FadeInUp,
+    useAnimatedStyle,
+    useSharedValue,
+    withSpring,
 } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import ProfileMenu from "../../components/ProfileMenu";
 import { useAuth } from "../../context/AuthContext";
-import { useCartItemMap, useCart, type CartItem } from "../../context/CartContext";
+import { useCart, useCartItemMap, type CartItem } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
 import { getAllCategories, type Category } from "../../lib/categoryService";
 import { cdnImage } from "../../lib/imageUrl";
 import { getUserOrders } from "../../lib/orderService";
 import {
-  getCountForCategoryName,
-  getMemoryHomeCache,
-  getProductsForCategoryName,
-  isHomeCatalogCacheFresh,
-  loadMasterCatalog,
-  loadMasterCatalogFast,
-  readHomeCatalogCache,
-  writeHomeCatalogCache,
-  type Product,
+    getCountForCategoryName,
+    getMemoryHomeCache,
+    getProductsForCategoryName,
+    isHomeCatalogCacheFresh,
+    loadMasterCatalog,
+    loadMasterCatalogFast,
+    readHomeCatalogCache,
+    writeHomeCatalogCache,
+    type Product,
 } from "../../lib/productService";
 
 // ─── Design tokens ──────────────────────────────────────────────────────────
@@ -1352,7 +1351,7 @@ const AddressBarBlock = React.memo(function AddressBarBlock({
       <View style={styles.appBar}>
         <Pressable
           style={{ flex: 1 }}
-          onPress={() => router.push("/location")}
+          onPress={() => router.push("/select-location")}
         >
           <View style={styles.deliveryLabelRow}>
             <MaterialCommunityIcons
