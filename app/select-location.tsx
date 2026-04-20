@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as ExpoLocation from "expo-location";
-import { router } from "expo-router";
-import React, { useEffect, useState } from "react";
+import { router, useFocusEffect } from "expo-router";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
@@ -16,7 +16,11 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAuth } from "../context/AuthContext";
 import { useLocation } from "../context/LocationContext";
-import { getUserAddresses, type SavedAddress } from "../lib/addressService";
+import {
+    getUserAddresses,
+    readAddressesCache,
+    type SavedAddress,
+} from "../lib/addressService";
 
 const T = {
   green: "#2D7A4F",
@@ -37,11 +41,43 @@ type AddressWithDistance = SavedAddress & {
   distance?: number;
 };
 
+function calculateDistance(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number,
+): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+const getAddressIcon = (
+  label: string,
+): keyof typeof MaterialCommunityIcons.glyphMap => {
+  const lower = label.toLowerCase();
+  if (lower.includes("home")) return "home";
+  if (lower.includes("work") || lower.includes("office")) return "office-building";
+  if (lower.includes("hotel")) return "bed";
+  if (lower.includes("other")) return "map-marker";
+  return "map-marker";
+};
+
 export default function SelectLocationScreen() {
   const { userId } = useAuth();
   const { location: activeLocation, setLocation } = useLocation();
 
-  const [addresses, setAddresses] = useState<AddressWithDistance[]>([]);
+  const [addresses, setAddresses] = useState<SavedAddress[]>([]);
+  // `loading` means "we haven't rendered anything yet" — once the cache paints
+  // we flip this off immediately so the UI is never blank.
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [currentLocation, setCurrentLocation] = useState<{
@@ -50,66 +86,83 @@ export default function SelectLocationScreen() {
   } | null>(null);
   const [fetchingCurrentLocation, setFetchingCurrentLocation] = useState(false);
 
+  // Used to avoid setState after unmount when the background fetch resolves
+  // after the user has navigated away.
+  const mountedRef = useRef(true);
   useEffect(() => {
-    loadAddresses();
-  }, [userId]);
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
-  const loadAddresses = async () => {
-    if (!userId) {
-      setLoading(false);
-      return;
-    }
-
+  // ─── SWR: paint from cache → revalidate in background ─────────────────────
+  const revalidate = useCallback(async () => {
+    if (!userId) return;
     try {
-      setLoading(true);
-      const data = await getUserAddresses(userId);
-
-      const addressesWithDistance = data.map((addr) => {
-        let distance: number | undefined;
-        if (
-          currentLocation &&
-          addr.latitude != null &&
-          addr.longitude != null
-        ) {
-          distance = calculateDistance(
-            currentLocation.latitude,
-            currentLocation.longitude,
-            addr.latitude,
-            addr.longitude,
-          );
-        }
-        return { ...addr, distance };
-      });
-
-      setAddresses(addressesWithDistance);
+      const fresh = await getUserAddresses(userId);
+      if (mountedRef.current) setAddresses(fresh);
     } catch (error) {
-      console.error("Failed to load addresses:", error);
-      Alert.alert("Error", "Failed to load saved addresses");
+      // Only surface a toast if the user has no cached list to fall back to;
+      // otherwise we silently retry on the next focus.
+      console.error("Failed to revalidate addresses:", error);
+      if (mountedRef.current && addresses.length === 0) {
+        Alert.alert("Error", "Failed to load saved addresses");
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
-  };
+  }, [userId, addresses.length]);
 
-  const calculateDistance = (
-    lat1: number,
-    lon1: number,
-    lat2: number,
-    lon2: number,
-  ): number => {
-    const R = 6371;
-    const dLat = ((lat2 - lat1) * Math.PI) / 180;
-    const dLon = ((lon2 - lon1) * Math.PI) / 180;
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos((lat1 * Math.PI) / 180) *
-        Math.cos((lat2 * Math.PI) / 180) *
-        Math.sin(dLon / 2) *
-        Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
-  };
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!userId) {
+        setLoading(false);
+        return;
+      }
+      const cached = await readAddressesCache(userId);
+      if (cancelled) return;
+      if (cached && cached.length > 0) {
+        setAddresses(cached);
+        setLoading(false);
+      }
+      revalidate();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, revalidate]);
+
+  // Re-sync whenever the user navigates back to this screen (e.g. after adding
+  // a new address). The cache is invalidated on every mutation, so this pulls
+  // the latest list without showing a spinner.
+  useFocusEffect(
+    useCallback(() => {
+      if (userId) revalidate();
+    }, [userId, revalidate]),
+  );
+
+  // Attach distance info lazily (only when the user has granted GPS access).
+  const addressesWithDistance = useMemo<AddressWithDistance[]>(() => {
+    if (!currentLocation) return addresses;
+    return addresses.map((addr) => {
+      if (addr.latitude == null || addr.longitude == null) return addr;
+      return {
+        ...addr,
+        distance: calculateDistance(
+          currentLocation.latitude,
+          currentLocation.longitude,
+          addr.latitude,
+          addr.longitude,
+        ),
+      };
+    });
+  }, [addresses, currentLocation]);
 
   const handleUseCurrentLocation = async () => {
+    // Use-current-location now shares the same map-confirm + search flow as
+    // "Add new address": we just ensure permission is granted, then hand off
+    // to the map screen which auto-centers on the user's GPS fix on mount.
     try {
       setFetchingCurrentLocation(true);
       const { status } = await ExpoLocation.requestForegroundPermissionsAsync();
@@ -122,39 +175,7 @@ export default function SelectLocationScreen() {
         return;
       }
 
-      const position = await ExpoLocation.getCurrentPositionAsync({
-        accuracy: ExpoLocation.Accuracy.Balanced,
-      });
-
-      const [result] = await ExpoLocation.reverseGeocodeAsync({
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude,
-      });
-
-      setCurrentLocation({
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude,
-      });
-
-      if (result) {
-        const parts = [result.name, result.street, result.district, result.city]
-          .filter(Boolean);
-        const address = parts.join(", ") || result.city || "Current location";
-
-        setLocation({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          label: "Current Location",
-          address,
-          source: "manual",
-        });
-
-        if (router.canGoBack()) {
-          router.back();
-        } else {
-          router.replace("/(tabs)/home");
-        }
-      }
+      router.push("/location/select-map");
     } catch (error) {
       console.error("Failed to get current location:", error);
       Alert.alert("Error", "Failed to get your current location");
@@ -194,29 +215,29 @@ export default function SelectLocationScreen() {
     );
   };
 
-  const filteredAddresses = addresses.filter((addr) => {
-    if (!searchQuery.trim()) return true;
-    const query = searchQuery.toLowerCase();
-    return (
-      addr.label.toLowerCase().includes(query) ||
-      addr.address.toLowerCase().includes(query) ||
-      addr.city?.toLowerCase().includes(query) ||
-      addr.landmark?.toLowerCase().includes(query)
-    );
-  });
+  const filteredAddresses = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return addressesWithDistance;
+    return addressesWithDistance.filter((addr) => {
+      return (
+        addr.label.toLowerCase().includes(q) ||
+        addr.address.toLowerCase().includes(q) ||
+        addr.city?.toLowerCase().includes(q) ||
+        addr.landmark?.toLowerCase().includes(q)
+      );
+    });
+  }, [addressesWithDistance, searchQuery]);
 
-  const getAddressIcon = (label: string): keyof typeof MaterialCommunityIcons.glyphMap => {
-    const lower = label.toLowerCase();
-    if (lower.includes("home")) return "home";
-    if (lower.includes("work") || lower.includes("office")) return "office-building";
-    if (lower.includes("hotel")) return "bed";
-    if (lower.includes("other")) return "map-marker";
-    return "map-marker";
-  };
+  const activeLabel = activeLocation?.label;
+  const activeAddress = activeLocation?.address;
 
-  const renderAddressItem = ({ item, index }: { item: AddressWithDistance; index: number }) => {
-    const isSelected = activeLocation?.label === item.label &&
-                       activeLocation?.address === item.address;
+  const renderAddressItem = useCallback(({
+    item,
+  }: {
+    item: AddressWithDistance;
+  }) => {
+    const isSelected =
+      activeLabel === item.label && activeAddress === item.address;
 
     return (
       <TouchableOpacity
@@ -279,7 +300,14 @@ export default function SelectLocationScreen() {
         </View>
       </TouchableOpacity>
     );
-  };
+  }, [activeLabel, activeAddress]);
+
+  // `extraData` tells FlatList to re-render rows when the selection changes
+  // even though the underlying `data` array reference stays the same.
+  const listExtraData = useMemo(
+    () => ({ activeLabel, activeAddress }),
+    [activeLabel, activeAddress],
+  );
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
@@ -396,8 +424,14 @@ export default function SelectLocationScreen() {
           data={filteredAddresses}
           renderItem={renderAddressItem}
           keyExtractor={(item) => item.id}
+          extraData={listExtraData}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          initialNumToRender={8}
+          maxToRenderPerBatch={8}
+          windowSize={7}
+          removeClippedSubviews
         />
       )}
     </SafeAreaView>

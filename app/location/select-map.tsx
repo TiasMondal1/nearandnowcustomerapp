@@ -5,6 +5,8 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
+    FlatList,
+    Keyboard,
     StyleSheet,
     Text,
     TextInput,
@@ -33,8 +35,58 @@ const GOOGLE_MAPS_API_KEY =
   process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ||
   "AIzaSyAaEh8Qu-k6nT5BphpHcOUBOZ5RJ7F2QTQ";
 
+// Single Places Autocomplete session token keeps pricing correct across
+// predictions+details within one user search.
+function newSessionToken() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+type Prediction = {
+  place_id: string;
+  description: string;
+  main_text: string;
+  secondary_text: string;
+};
+
+type PlaceDetails = {
+  place_id: string;
+  formatted_address: string;
+  latitude: number;
+  longitude: number;
+  name?: string;
+  city?: string;
+  state?: string;
+  pincode?: string;
+  country?: string;
+  raw: any;
+};
+
+function extractAddressParts(components: any[]): Pick<
+  PlaceDetails,
+  "city" | "state" | "pincode" | "country"
+> {
+  const find = (type: string) =>
+    components?.find((c) => c?.types?.includes(type))?.long_name ?? undefined;
+  return {
+    city:
+      find("locality") ||
+      find("postal_town") ||
+      find("administrative_area_level_2") ||
+      find("sublocality_level_1") ||
+      undefined,
+    state: find("administrative_area_level_1"),
+    pincode: find("postal_code"),
+    country: find("country"),
+  };
+}
+
 export default function SelectMapLocationScreen() {
   const [searchQuery, setSearchQuery] = useState("");
+  const [predictions, setPredictions] = useState<Prediction[]>([]);
+  const [predictionsOpen, setPredictionsOpen] = useState(false);
+  const [predicting, setPredicting] = useState(false);
+  const sessionTokenRef = useRef<string>(newSessionToken());
+
   const [coords, setCoords] = useState({
     latitude: 22.5726,
     longitude: 88.3639,
@@ -45,15 +97,31 @@ export default function SelectMapLocationScreen() {
     latitudeDelta: 0.01,
     longitudeDelta: 0.01,
   });
-  const [locationName, setLocationName] = useState("Baghajatin Place");
-  const [locationAddress, setLocationAddress] = useState(
-    "Baghajatin Colony, Tal Pukar, Kolkata",
-  );
-  const [loading, setLoading] = useState(false);
+  const [locationName, setLocationName] = useState("");
+  const [locationAddress, setLocationAddress] = useState("");
   const [reverseLoading, setReverseLoading] = useState(false);
 
+  // Android's react-native-maps rasterises the custom marker view once and
+  // caches that snapshot. If the icon font hasn't finished loading at that
+  // moment, the marker ends up "half drawn". We flip `tracksViewChanges` on
+  // for a short window whenever the pin moves, so the snapshot is retaken
+  // after the glyph is definitely painted.
+  const [tracksChanges, setTracksChanges] = useState(true);
+  useEffect(() => {
+    setTracksChanges(true);
+    const t = setTimeout(() => setTracksChanges(false), 700);
+    return () => clearTimeout(t);
+  }, [coords.latitude, coords.longitude]);
+
+  // Richer place data we carry forward to the add-details screen so the form
+  // can prefill city / state / pincode, and so the insert into
+  // customer_saved_addresses has google_place_id + google_formatted_address.
+  const [placeDetails, setPlaceDetails] = useState<PlaceDetails | null>(null);
+
   const isGeocodingRef = useRef(false);
-  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
 
   const reverseGeocode = useCallback(async (lat: number, lng: number) => {
     if (isGeocodingRef.current) return;
@@ -69,7 +137,7 @@ export default function SelectMapLocationScreen() {
 
       if (json.status === "OK" && json.results?.[0]) {
         const result = json.results[0];
-        const addressComponents = result.address_components;
+        const addressComponents = result.address_components || [];
 
         const neighborhood =
           addressComponents.find((c: any) =>
@@ -85,12 +153,19 @@ export default function SelectMapLocationScreen() {
             c.types.includes("sublocality_level_1"),
           )?.long_name || "";
 
-        const city =
-          addressComponents.find((c: any) => c.types.includes("locality"))
-            ?.long_name || "";
+        const parts = extractAddressParts(addressComponents);
 
         setLocationName(neighborhood || sublocality || "Selected Location");
         setLocationAddress(result.formatted_address);
+        setPlaceDetails({
+          place_id: result.place_id,
+          formatted_address: result.formatted_address,
+          latitude: lat,
+          longitude: lng,
+          name: neighborhood || sublocality || undefined,
+          ...parts,
+          raw: result,
+        });
       }
     } catch (error) {
       console.error("Reverse geocoding failed:", error);
@@ -128,6 +203,54 @@ export default function SelectMapLocationScreen() {
     void getCurrentLocation();
   }, [getCurrentLocation]);
 
+  const fetchPredictions = useCallback(async (input: string) => {
+    if (!input.trim()) {
+      setPredictions([]);
+      setPredictionsOpen(false);
+      return;
+    }
+
+    setPredicting(true);
+    try {
+      const url =
+        `https://maps.googleapis.com/maps/api/place/autocomplete/json` +
+        `?input=${encodeURIComponent(input)}` +
+        `&key=${GOOGLE_MAPS_API_KEY}` +
+        `&sessiontoken=${sessionTokenRef.current}` +
+        `&components=country:in` +
+        `&language=en`;
+
+      const res = await fetch(url);
+      const json = await res.json();
+
+      if (json.status === "OK" && Array.isArray(json.predictions)) {
+        const mapped: Prediction[] = json.predictions.map((p: any) => ({
+          place_id: p.place_id,
+          description: p.description,
+          main_text: p.structured_formatting?.main_text || p.description,
+          secondary_text: p.structured_formatting?.secondary_text || "",
+        }));
+        setPredictions(mapped);
+        setPredictionsOpen(mapped.length > 0);
+      } else if (json.status === "ZERO_RESULTS") {
+        setPredictions([]);
+        setPredictionsOpen(true);
+      } else {
+        if (json.error_message) {
+          console.warn("Places Autocomplete:", json.status, json.error_message);
+        }
+        setPredictions([]);
+        setPredictionsOpen(false);
+      }
+    } catch (err) {
+      console.error("Places Autocomplete failed:", err);
+      setPredictions([]);
+      setPredictionsOpen(false);
+    } finally {
+      setPredicting(false);
+    }
+  }, []);
+
   const handleSearch = (text: string) => {
     setSearchQuery(text);
 
@@ -135,44 +258,82 @@ export default function SelectMapLocationScreen() {
       clearTimeout(searchTimeoutRef.current);
     }
 
-    if (!text.trim()) return;
+    if (!text.trim()) {
+      setPredictions([]);
+      setPredictionsOpen(false);
+      return;
+    }
 
     searchTimeoutRef.current = setTimeout(() => {
-      forwardGeocode(text);
-    }, 1000);
+      void fetchPredictions(text);
+    }, 300);
   };
 
-  const forwardGeocode = async (address: string) => {
-    if (!address.trim()) return;
+  const handleSelectPrediction = async (pred: Prediction) => {
+    Keyboard.dismiss();
+    setPredictionsOpen(false);
+    setSearchQuery(pred.main_text);
+    setReverseLoading(true);
 
-    setLoading(true);
     try {
-      const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
-        address,
-      )}&key=${GOOGLE_MAPS_API_KEY}`;
+      const fields = [
+        "place_id",
+        "geometry/location",
+        "formatted_address",
+        "name",
+        "address_component",
+      ].join(",");
+      const url =
+        `https://maps.googleapis.com/maps/api/place/details/json` +
+        `?place_id=${encodeURIComponent(pred.place_id)}` +
+        `&fields=${encodeURIComponent(fields)}` +
+        `&key=${GOOGLE_MAPS_API_KEY}` +
+        `&sessiontoken=${sessionTokenRef.current}`;
 
       const res = await fetch(url);
       const json = await res.json();
 
-      if (json.status === "OK" && json.results?.[0]) {
-        const location = json.results[0].geometry.location;
-        const latitude = location.lat;
-        const longitude = location.lng;
+      // Per Google's guidance, rotate the session token after Details is used.
+      sessionTokenRef.current = newSessionToken();
 
-        setCoords({ latitude, longitude });
-        setRegion({
-          latitude,
-          longitude,
-          latitudeDelta: 0.01,
-          longitudeDelta: 0.01,
-        });
-
-        reverseGeocode(latitude, longitude);
+      if (json.status !== "OK" || !json.result) {
+        Alert.alert("Sorry", "Couldn't load that place. Please pick another.");
+        return;
       }
-    } catch (error) {
-      console.error("Forward geocoding failed:", error);
+
+      const r = json.result;
+      const lat = r.geometry?.location?.lat;
+      const lng = r.geometry?.location?.lng;
+      if (typeof lat !== "number" || typeof lng !== "number") {
+        Alert.alert("Sorry", "This place has no coordinates.");
+        return;
+      }
+
+      const parts = extractAddressParts(r.address_components || []);
+
+      setCoords({ latitude: lat, longitude: lng });
+      setRegion({
+        latitude: lat,
+        longitude: lng,
+        latitudeDelta: 0.01,
+        longitudeDelta: 0.01,
+      });
+      setLocationName(pred.main_text);
+      setLocationAddress(r.formatted_address || pred.description);
+      setPlaceDetails({
+        place_id: r.place_id,
+        formatted_address: r.formatted_address || pred.description,
+        latitude: lat,
+        longitude: lng,
+        name: pred.main_text,
+        ...parts,
+        raw: r,
+      });
+    } catch (err) {
+      console.error("Place details failed:", err);
+      Alert.alert("Error", "Could not load that place.");
     } finally {
-      setLoading(false);
+      setReverseLoading(false);
     }
   };
 
@@ -186,11 +347,6 @@ export default function SelectMapLocationScreen() {
     setRegion(newRegion);
   };
 
-  const handleCenterMap = () => {
-    setCoords({ latitude: region.latitude, longitude: region.longitude });
-    reverseGeocode(region.latitude, region.longitude);
-  };
-
   const handleConfirmLocation = () => {
     router.push({
       pathname: "/location/add-details",
@@ -199,6 +355,15 @@ export default function SelectMapLocationScreen() {
         longitude: coords.longitude.toString(),
         address: locationAddress,
         placeName: locationName,
+        google_place_id: placeDetails?.place_id ?? "",
+        google_formatted_address: placeDetails?.formatted_address ?? "",
+        google_place_data: placeDetails?.raw
+          ? JSON.stringify(placeDetails.raw)
+          : "",
+        city: placeDetails?.city ?? "",
+        state: placeDetails?.state ?? "",
+        pincode: placeDetails?.pincode ?? "",
+        country: placeDetails?.country ?? "India",
       },
     });
   };
@@ -258,13 +423,80 @@ export default function SelectMapLocationScreen() {
           <MaterialCommunityIcons name="magnify" size={20} color={T.barkLight} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Search for apartment, street name..."
+            placeholder="Search for apartment, street name…"
             placeholderTextColor={T.barkLight}
             value={searchQuery}
             onChangeText={handleSearch}
+            onFocus={() => {
+              if (predictions.length > 0) setPredictionsOpen(true);
+            }}
+            returnKeyType="search"
           />
-          {loading && <ActivityIndicator size="small" color={T.green} />}
+          {predicting && <ActivityIndicator size="small" color={T.green} />}
+          {!predicting && searchQuery.length > 0 && (
+            <TouchableOpacity
+              onPress={() => {
+                setSearchQuery("");
+                setPredictions([]);
+                setPredictionsOpen(false);
+              }}
+              hitSlop={8}
+            >
+              <MaterialCommunityIcons
+                name="close-circle"
+                size={18}
+                color={T.barkLight}
+              />
+            </TouchableOpacity>
+          )}
         </View>
+
+        {predictionsOpen && (
+          <View style={styles.predictionsPanel}>
+            {predictions.length === 0 ? (
+              <View style={styles.predictionEmpty}>
+                <Text style={styles.predictionEmptyText}>
+                  No matching places. Try another search.
+                </Text>
+              </View>
+            ) : (
+              <FlatList
+                data={predictions}
+                keyExtractor={(it) => it.place_id}
+                keyboardShouldPersistTaps="handled"
+                ItemSeparatorComponent={() => (
+                  <View style={styles.predictionDivider} />
+                )}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={styles.predictionRow}
+                    onPress={() => handleSelectPrediction(item)}
+                    activeOpacity={0.7}
+                  >
+                    <MaterialCommunityIcons
+                      name="map-marker-outline"
+                      size={20}
+                      color={T.barkMid}
+                    />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.predictionMain} numberOfLines={1}>
+                        {item.main_text}
+                      </Text>
+                      {!!item.secondary_text && (
+                        <Text
+                          style={styles.predictionSecondary}
+                          numberOfLines={1}
+                        >
+                          {item.secondary_text}
+                        </Text>
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                )}
+              />
+            )}
+          </View>
+        )}
       </View>
 
       <View style={styles.mapContainer}>
@@ -280,22 +512,30 @@ export default function SelectMapLocationScreen() {
             coordinate={coords}
             draggable
             onDragEnd={handleMarkerDragEnd}
+            anchor={{ x: 0.5, y: 1 }}
+            tracksViewChanges={tracksChanges}
           >
-            <View style={styles.markerContainer}>
-              <MaterialCommunityIcons
-                name="map-marker"
-                size={48}
-                color={T.pink}
-              />
+            {/*
+              Pin is composed of three solid Views (head, inner dot, tail
+              triangle) instead of a font icon. Font icons race against the
+              native marker snapshot on Android and routinely render
+              half-drawn; plain Views always rasterise correctly because
+              they don't depend on a font file being loaded.
+            */}
+            <View style={styles.pinWrap}>
+              <View style={styles.pinHead}>
+                <View style={styles.pinDot} />
+              </View>
+              <View style={styles.pinTail} />
             </View>
           </Marker>
         </MapView>
 
-        <View style={styles.tooltipContainer}>
+        <View style={styles.tooltipContainer} pointerEvents="none">
           <View style={styles.tooltip}>
             <Text style={styles.tooltipTitle}>Order will be delivered here</Text>
             <Text style={styles.tooltipSubtitle}>
-              Place the pin to your exact location
+              Move the map or drag the pin to fine-tune
             </Text>
           </View>
         </View>
@@ -304,20 +544,13 @@ export default function SelectMapLocationScreen() {
           style={styles.myLocationBtn}
           onPress={handleMyLocation}
           activeOpacity={0.8}
+          accessibilityLabel="Use my current location"
         >
           <MaterialCommunityIcons
             name="crosshairs-gps"
             size={24}
             color={T.white}
           />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.centerBtn}
-          onPress={handleCenterMap}
-          activeOpacity={0.8}
-        >
-          <MaterialCommunityIcons name="target" size={20} color={T.green} />
         </TouchableOpacity>
       </View>
 
@@ -330,17 +563,23 @@ export default function SelectMapLocationScreen() {
           />
           <View style={styles.locationTextContainer}>
             <Text style={styles.locationName}>
-              {reverseLoading ? "Loading..." : locationName}
+              {reverseLoading ? "Loading…" : locationName || "Selected Location"}
             </Text>
             <Text style={styles.locationAddress} numberOfLines={2}>
-              {reverseLoading ? "Fetching address..." : locationAddress}
+              {reverseLoading
+                ? "Fetching address…"
+                : locationAddress || "Pick a place from search or tap on the map"}
             </Text>
           </View>
         </View>
 
         <TouchableOpacity
-          style={styles.confirmBtn}
+          style={[
+            styles.confirmBtn,
+            (!locationAddress || reverseLoading) && { opacity: 0.6 },
+          ]}
           onPress={handleConfirmLocation}
+          disabled={!locationAddress || reverseLoading}
           activeOpacity={0.85}
         >
           <Text style={styles.confirmBtnText}>Confirm Location</Text>
@@ -382,6 +621,9 @@ const styles = StyleSheet.create({
     backgroundColor: T.white,
     borderBottomWidth: 1,
     borderBottomColor: T.cardBorder,
+    // Stack the predictions panel above the map
+    zIndex: 10,
+    elevation: 10,
   },
   searchBar: {
     flexDirection: "row",
@@ -398,6 +640,53 @@ const styles = StyleSheet.create({
     color: T.bark,
     fontWeight: "500",
   },
+  predictionsPanel: {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    top: 62,
+    maxHeight: 280,
+    backgroundColor: T.white,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: T.cardBorder,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    elevation: 12,
+    overflow: "hidden",
+  },
+  predictionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 10,
+  },
+  predictionMain: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: T.bark,
+  },
+  predictionSecondary: {
+    fontSize: 12,
+    color: T.barkMid,
+    marginTop: 2,
+  },
+  predictionDivider: {
+    height: 1,
+    backgroundColor: T.cardBorder,
+    marginLeft: 44,
+  },
+  predictionEmpty: {
+    paddingHorizontal: 14,
+    paddingVertical: 16,
+  },
+  predictionEmptyText: {
+    fontSize: 13,
+    color: T.barkLight,
+  },
   mapContainer: {
     flex: 1,
     position: "relative",
@@ -405,9 +694,44 @@ const styles = StyleSheet.create({
   map: {
     flex: 1,
   },
-  markerContainer: {
+  pinWrap: {
+    width: 36,
+    height: 48,
+    alignItems: "center",
+    justifyContent: "flex-start",
+    backgroundColor: "transparent",
+  },
+  pinHead: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: T.pink,
+    borderWidth: 3,
+    borderColor: T.white,
     alignItems: "center",
     justifyContent: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3,
+    elevation: 4,
+  },
+  pinDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: T.white,
+  },
+  pinTail: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: 6,
+    borderRightWidth: 6,
+    borderTopWidth: 12,
+    borderLeftColor: "transparent",
+    borderRightColor: "transparent",
+    borderTopColor: T.pink,
+    marginTop: -2,
   },
   tooltipContainer: {
     position: "absolute",
@@ -438,11 +762,12 @@ const styles = StyleSheet.create({
   },
   myLocationBtn: {
     position: "absolute",
-    bottom: 180,
+    // Sit just above the bottom sheet, bottom-right.
+    bottom: 16,
     right: 20,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     backgroundColor: T.pink,
     alignItems: "center",
     justifyContent: "center",
@@ -451,24 +776,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 8,
-  },
-  centerBtn: {
-    position: "absolute",
-    bottom: 250,
-    right: 20,
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: T.white,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 2,
-    borderColor: T.green,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    elevation: 4,
   },
   bottomSheet: {
     backgroundColor: T.white,

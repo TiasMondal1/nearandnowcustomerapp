@@ -9,7 +9,17 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "build": "expo export"
+    "build": "expo export",
+    "prebuild:android": "expo prebuild --platform android --clean && node scripts/patch-android.js",
+    "patch:android": "node scripts/patch-android.js",
+    "build:apk": "node scripts/build-apk-with-env.js",
+    "build:apk:premium": "node scripts/build-apk-with-env.js premium",
+    "build:apk:medium": "node scripts/build-apk-with-env.js medium",
+    "build:apk:universal": "node scripts/build-apk-with-env.js universal",
+    "build:aab": "node scripts/build-apk-with-env.js aab",
+    "build:android": "npx eas-cli build --platform android --profile production",
+    "keystore:generate": "node scripts/generate-keystore.js",
+    "icons:generate": "node scripts/generate-icons.js"
   },
   "dependencies": {
     "@codearcade/expo-razorpay": "^1.5.0",
@@ -17,8 +27,8 @@
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-navigation/bottom-tabs": "^7.4.0",
     "@react-navigation/native": "^7.1.24",
-    "@sentry/react-native": "^8.8.0",
-    "@shopify/flash-list": "^2.3.1",
+    "@sentry/react-native": "~7.2.0",
+    "@shopify/flash-list": "2.0.2",
     "@supabase/supabase-js": "^2.86.2",
     "expo": "~54.0.33",
     "expo-constants": "~18.0.13",
@@ -48,6 +58,7 @@
     "@types/react": "~19.1.0",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
+    "sharp": "^0.34.5",
     "typescript": "~5.9.2"
   },
   "private": true

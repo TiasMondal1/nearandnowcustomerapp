@@ -1,7 +1,6 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import * as Contacts from "expo-contacts";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -37,24 +36,54 @@ const T = {
 
 const LABELS = ["Home", "Work", "Other"] as const;
 
+function normalizeIndianPhone(input: string): string | null {
+  const digits = input.replace(/\D/g, "");
+  if (digits.length === 12 && digits.startsWith("91")) return `+${digits}`;
+  if (digits.length === 10) return `+91${digits}`;
+  return null;
+}
+
 export default function AddAddressDetailsScreen() {
   const params = useLocalSearchParams<{
     latitude?: string;
     longitude?: string;
     address?: string;
     placeName?: string;
+    google_place_id?: string;
+    google_formatted_address?: string;
+    google_place_data?: string;
+    city?: string;
+    state?: string;
+    pincode?: string;
+    country?: string;
   }>();
 
   const { userId, user } = useAuth();
   const { setLocation } = useLocation();
 
+  // Address label — maps to customer_saved_addresses.label (Home/Work/Other).
   const [label, setLabel] = useState<(typeof LABELS)[number]>("Home");
-  const [houseNo, setHouseNo] = useState("");
-  const [building, setBuilding] = useState("");
+
+  // One consolidated address line replaces the old "House No." + "Building"
+  // split. Whatever the user types here is concatenated with the formatted
+  // address from Google for the final `address` column value.
+  const [addressLine, setAddressLine] = useState("");
   const [landmark, setLandmark] = useState("");
 
-  const [receiverName, setReceiverName] = useState("");
-  const [receiverPhone, setReceiverPhone] = useState("");
+  // Administrative fields — prefilled from Google place details when available.
+  const [city, setCity] = useState(params.city || "");
+  const [stateRegion, setStateRegion] = useState(params.state || "");
+  const [pincode, setPincode] = useState(params.pincode || "");
+
+  const [deliveryInstructions, setDeliveryInstructions] = useState("");
+
+  // Default contact on this saved address (can be edited per-order at checkout).
+  const [contactName, setContactName] = useState(user?.name || "");
+  const [contactPhone, setContactPhone] = useState(
+    (user?.phone || "").replace("+91", ""),
+  );
+
+  const [isDefault, setIsDefault] = useState(false);
 
   const [placeName, setPlaceName] = useState(params.placeName || "");
   const [formattedAddress, setFormattedAddress] = useState(params.address || "");
@@ -72,10 +101,40 @@ export default function AddAddressDetailsScreen() {
 
   const [saving, setSaving] = useState(false);
 
+  // Briefly keep the pin "live" so Android re-snapshots it after the view has
+  // fully painted. Using plain Views for the pin makes this mostly a belt-
+  // and-braces for edge cases where the preview map finishes loading late.
+  const [tracksChanges, setTracksChanges] = useState(true);
   useEffect(() => {
-    if (params.latitude && params.longitude) {
-      const lat = parseFloat(params.latitude);
-      const lng = parseFloat(params.longitude);
+    setTracksChanges(true);
+    const t = setTimeout(() => setTracksChanges(false), 700);
+    return () => clearTimeout(t);
+  }, [coords.latitude, coords.longitude]);
+
+  const googlePlaceData = useMemo(() => {
+    if (!params.google_place_data) return null;
+    try {
+      return JSON.parse(params.google_place_data);
+    } catch {
+      return null;
+    }
+  }, [params.google_place_data]);
+
+  // `useLocalSearchParams()` returns a brand-new object every render, so we
+  // deliberately depend on individual primitive fields to avoid an infinite
+  // setState loop.
+  const pLat = params.latitude;
+  const pLng = params.longitude;
+  const pAddress = params.address;
+  const pPlaceName = params.placeName;
+  const pCity = params.city;
+  const pState = params.state;
+  const pPincode = params.pincode;
+
+  useEffect(() => {
+    if (pLat && pLng) {
+      const lat = parseFloat(pLat);
+      const lng = parseFloat(pLng);
       setCoords({ latitude: lat, longitude: lng });
       setRegion({
         latitude: lat,
@@ -84,65 +143,27 @@ export default function AddAddressDetailsScreen() {
         longitudeDelta: 0.005,
       });
     }
-    if (params.address) {
-      setFormattedAddress(params.address);
-    }
-    if (params.placeName) {
-      setPlaceName(params.placeName);
-    }
-  }, [params]);
+  }, [pLat, pLng]);
 
-  function normalizeIndianPhone(input: string): string | null {
-    const digits = input.replace(/\D/g, "");
+  useEffect(() => {
+    if (pAddress) setFormattedAddress(pAddress);
+  }, [pAddress]);
 
-    if (digits.length === 12 && digits.startsWith("91")) {
-      return `+${digits}`;
-    }
+  useEffect(() => {
+    if (pPlaceName) setPlaceName(pPlaceName);
+  }, [pPlaceName]);
 
-    if (digits.length === 10) {
-      return `+91${digits}`;
-    }
+  useEffect(() => {
+    if (pCity) setCity(pCity);
+  }, [pCity]);
 
-    return null;
-  }
+  useEffect(() => {
+    if (pState) setStateRegion(pState);
+  }, [pState]);
 
-  const pickFromContacts = async () => {
-    try {
-      const { status } = await Contacts.requestPermissionsAsync();
-      if (status !== "granted") {
-        Alert.alert(
-          "Permission required",
-          "Allow contacts access to pick a phone number",
-        );
-        return;
-      }
-
-      const contact = await Contacts.presentContactPickerAsync();
-
-      if (!contact) return;
-
-      const name =
-        contact.name ||
-        `${contact.firstName ?? ""} ${contact.lastName ?? ""}`.trim();
-
-      const phone = contact.phoneNumbers?.[0]?.number ?? "";
-
-      const normalized = normalizeIndianPhone(phone);
-
-      if (!normalized) {
-        Alert.alert(
-          "Invalid number",
-          "Selected contact does not have a valid Indian mobile number",
-        );
-        return;
-      }
-
-      setReceiverName(name);
-      setReceiverPhone(normalized.replace("+91", ""));
-    } catch (e) {
-      Alert.alert("Error", "Could not open contacts");
-    }
-  };
+  useEffect(() => {
+    if (pPincode) setPincode(pPincode);
+  }, [pPincode]);
 
   const handleChangeLocation = () => {
     router.back();
@@ -156,49 +177,62 @@ export default function AddAddressDetailsScreen() {
       return;
     }
 
+    if (!addressLine.trim()) {
+      Alert.alert(
+        "Missing details",
+        "Please enter your house/flat and building details.",
+      );
+      return;
+    }
+
     try {
       setSaving(true);
 
-      const fullAddress = [houseNo, building, formattedAddress]
+      const fullAddress = [addressLine.trim(), formattedAddress]
         .filter(Boolean)
         .join(", ");
 
-      const contactName = receiverName.trim() || user?.name || "";
+      const normalizedContactPhone = contactPhone.trim()
+        ? normalizeIndianPhone(contactPhone) ?? undefined
+        : undefined;
 
       await createAddress(userId, {
-        label: label,
+        label,
         address: fullAddress,
+        city: city.trim() || undefined,
+        state: stateRegion.trim() || undefined,
+        pincode: pincode.trim() || undefined,
+        country: params.country || "India",
         latitude: coords.latitude,
         longitude: coords.longitude,
-        contact_name: contactName || undefined,
-        contact_phone: receiverPhone.trim()
-          ? normalizeIndianPhone(receiverPhone) ?? undefined
-          : undefined,
+        google_place_id: params.google_place_id || undefined,
+        google_formatted_address:
+          params.google_formatted_address || formattedAddress || undefined,
+        google_place_data: googlePlaceData ?? undefined,
+        contact_name: contactName.trim() || user?.name || undefined,
+        contact_phone: normalizedContactPhone,
         landmark: landmark.trim() || undefined,
-        delivery_for: receiverName.trim() ? "others" : "self",
-        receiver_name: receiverName.trim() || undefined,
-        receiver_phone: receiverPhone.trim()
-          ? normalizeIndianPhone(receiverPhone) ?? undefined
-          : undefined,
-        is_default: false,
+        delivery_instructions: deliveryInstructions.trim() || undefined,
+        // Receiver/delivery_for details are captured at checkout time now,
+        // not on the address itself. Every saved address defaults to "self".
+        delivery_for: "self",
+        is_default: isDefault,
       });
 
       setLocation({
         latitude: coords.latitude,
         longitude: coords.longitude,
-        label: label,
+        label,
         address: fullAddress,
         source: "saved",
       });
 
-      if (router.canGoBack()) {
-        router.back();
-        router.back();
-      } else {
-        router.replace("/(tabs)/home");
-      }
+      // A single `replace` avoids the "GO_BACK not handled" crash that we saw
+      // when popping the stack twice on a shallow navigator.
+      router.replace("/(tabs)/home");
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to save address";
+      const message =
+        err instanceof Error ? err.message : "Failed to save address";
       Alert.alert("Error", message);
     } finally {
       setSaving(false);
@@ -216,15 +250,16 @@ export default function AddAddressDetailsScreen() {
             <TouchableOpacity
               style={styles.backBtn}
               onPress={() => {
-                if (router.canGoBack()) {
-                  router.back();
-                } else {
-                  router.replace("/(tabs)/home");
-                }
+                if (router.canGoBack()) router.back();
+                else router.replace("/(tabs)/home");
               }}
               activeOpacity={0.7}
             >
-              <MaterialCommunityIcons name="chevron-left" size={28} color={T.bark} />
+              <MaterialCommunityIcons
+                name="chevron-left"
+                size={28}
+                color={T.bark}
+              />
             </TouchableOpacity>
             <Text style={styles.headerTitle}>Add Address Details</Text>
             <View style={{ width: 40 }} />
@@ -240,12 +275,17 @@ export default function AddAddressDetailsScreen() {
               pitchEnabled={false}
               rotateEnabled={false}
             >
-              <Marker coordinate={coords}>
-                <MaterialCommunityIcons
-                  name="map-marker"
-                  size={40}
-                  color={T.pink}
-                />
+              <Marker
+                coordinate={coords}
+                anchor={{ x: 0.5, y: 1 }}
+                tracksViewChanges={tracksChanges}
+              >
+                <View style={styles.pinWrap}>
+                  <View style={styles.pinHead}>
+                    <View style={styles.pinDot} />
+                  </View>
+                  <View style={styles.pinTail} />
+                </View>
               </Marker>
             </MapView>
           </View>
@@ -253,7 +293,9 @@ export default function AddAddressDetailsScreen() {
           <View style={styles.locationCard}>
             <View style={styles.locationHeader}>
               <View style={styles.locationTextContainer}>
-                <Text style={styles.locationName}>{placeName || "Selected Location"}</Text>
+                <Text style={styles.locationName}>
+                  {placeName || "Selected Location"}
+                </Text>
                 <Text style={styles.locationAddress} numberOfLines={2}>
                   {formattedAddress}
                 </Text>
@@ -269,35 +311,55 @@ export default function AddAddressDetailsScreen() {
           </View>
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Add Address</Text>
+            <Text style={styles.sectionTitle}>Address</Text>
 
             <TextInput
-              style={styles.input}
-              placeholder="House No. & Floor *"
+              style={[styles.input, { minHeight: 72, textAlignVertical: "top" }]}
+              placeholder="House / flat no., building name, floor…"
               placeholderTextColor={T.barkLight}
-              value={houseNo}
-              onChangeText={setHouseNo}
+              value={addressLine}
+              onChangeText={setAddressLine}
+              multiline
             />
 
             <TextInput
               style={styles.input}
-              placeholder="Building & Block No. (Optional)"
-              placeholderTextColor={T.barkLight}
-              value={building}
-              onChangeText={setBuilding}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Landmark & Area Name (Optional)"
+              placeholder="Landmark (Optional)"
               placeholderTextColor={T.barkLight}
               value={landmark}
               onChangeText={setLandmark}
             />
+
+            <View style={styles.row2}>
+              <TextInput
+                style={[styles.input, styles.flex1]}
+                placeholder="City"
+                placeholderTextColor={T.barkLight}
+                value={city}
+                onChangeText={setCity}
+              />
+              <TextInput
+                style={[styles.input, styles.flex1]}
+                placeholder="State"
+                placeholderTextColor={T.barkLight}
+                value={stateRegion}
+                onChangeText={setStateRegion}
+              />
+            </View>
+
+            <TextInput
+              style={styles.input}
+              placeholder="Pincode"
+              placeholderTextColor={T.barkLight}
+              keyboardType="number-pad"
+              maxLength={6}
+              value={pincode}
+              onChangeText={(t) => setPincode(t.replace(/\D/g, ""))}
+            />
           </View>
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Add Address Label</Text>
+            <Text style={styles.sectionTitle}>Save as</Text>
             <View style={styles.labelRow}>
               {LABELS.map((l) => (
                 <TouchableOpacity
@@ -319,44 +381,53 @@ export default function AddAddressDetailsScreen() {
           </View>
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Receiver Details</Text>
+            <Text style={styles.sectionTitle}>Delivery Instructions</Text>
+            <TextInput
+              style={[styles.input, { minHeight: 72, textAlignVertical: "top" }]}
+              placeholder="e.g. Don't ring bell, call on arrival, gate code…"
+              placeholderTextColor={T.barkLight}
+              value={deliveryInstructions}
+              onChangeText={setDeliveryInstructions}
+              multiline
+            />
+          </View>
 
-            <View style={styles.receiverInputContainer}>
-              <TextInput
-                style={styles.receiverInput}
-                placeholder="Receiver's Name"
-                placeholderTextColor={T.barkLight}
-                value={receiverName}
-                onChangeText={setReceiverName}
-              />
-              <TouchableOpacity
-                style={styles.contactIconBtn}
-                onPress={pickFromContacts}
-                activeOpacity={0.7}
-              >
-                <MaterialCommunityIcons
-                  name="account-box"
-                  size={24}
-                  color={T.bark}
-                />
-              </TouchableOpacity>
-            </View>
-
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Your Contact</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Your name"
+              placeholderTextColor={T.barkLight}
+              value={contactName}
+              onChangeText={setContactName}
+            />
             <View style={styles.phoneInputContainer}>
               <Text style={styles.phonePrefix}>+91</Text>
               <TextInput
                 style={styles.phoneInput}
-                placeholder="Receiver's Phone Number"
+                placeholder="Your phone number"
                 placeholderTextColor={T.barkLight}
                 keyboardType="number-pad"
                 maxLength={10}
-                value={receiverPhone}
-                onChangeText={(text) => {
-                  const digitsOnly = text.replace(/\D/g, "");
-                  setReceiverPhone(digitsOnly);
-                }}
+                value={contactPhone}
+                onChangeText={(t) => setContactPhone(t.replace(/\D/g, ""))}
               />
             </View>
+          </View>
+
+          <View style={styles.section}>
+            <TouchableOpacity
+              onPress={() => setIsDefault((v) => !v)}
+              style={styles.defaultRow}
+              activeOpacity={0.7}
+            >
+              <MaterialCommunityIcons
+                name={isDefault ? "checkbox-marked" : "checkbox-blank-outline"}
+                size={22}
+                color={isDefault ? T.green : T.barkMid}
+              />
+              <Text style={styles.defaultText}>Set as default address</Text>
+            </TouchableOpacity>
           </View>
 
           <TouchableOpacity
@@ -406,6 +477,46 @@ const styles = StyleSheet.create({
   },
   map: {
     flex: 1,
+  },
+
+  pinWrap: {
+    width: 32,
+    height: 42,
+    alignItems: "center",
+    justifyContent: "flex-start",
+    backgroundColor: "transparent",
+  },
+  pinHead: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: T.pink,
+    borderWidth: 3,
+    borderColor: T.white,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3,
+    elevation: 4,
+  },
+  pinDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: T.white,
+  },
+  pinTail: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: 5,
+    borderRightWidth: 5,
+    borderTopWidth: 10,
+    borderLeftColor: "transparent",
+    borderRightColor: "transparent",
+    borderTopColor: T.pink,
+    marginTop: -2,
   },
 
   locationCard: {
@@ -469,6 +580,11 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     fontWeight: "500",
   },
+  row2: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  flex1: { flex: 1 },
 
   labelRow: {
     flexDirection: "row",
@@ -497,26 +613,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 
-  receiverInputContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: T.sand,
-    borderRadius: 12,
-    paddingRight: 12,
-    marginBottom: 12,
-  },
-  receiverInput: {
-    flex: 1,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 15,
-    color: T.bark,
-    fontWeight: "500",
-  },
-  contactIconBtn: {
-    padding: 4,
-  },
-
   phoneInputContainer: {
     flexDirection: "row",
     alignItems: "center",
@@ -539,16 +635,33 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
 
+  defaultRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 4,
+  },
+  defaultText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: T.bark,
+  },
+
   saveBtn: {
     marginHorizontal: 20,
     marginTop: 32,
-    backgroundColor: T.sand,
+    backgroundColor: T.pink,
     borderRadius: 16,
     paddingVertical: 16,
     alignItems: "center",
+    shadowColor: T.pink,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
   },
   saveText: {
-    color: T.bark,
+    color: T.white,
     fontSize: 16,
     fontWeight: "800",
     letterSpacing: 0.5,

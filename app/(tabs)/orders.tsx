@@ -19,7 +19,11 @@ import { C } from "../../constants/colors";
 import { CANCELLED_STATUSES, getStatusMeta } from "../../constants/orderStatus";
 import { useAuth } from "../../context/AuthContext";
 import { usePaymentFlow } from "../../hooks/usePaymentFlow";
-import { getUserOrders, type Order } from "../../lib/orderService";
+import {
+    getUserOrders,
+    readUserOrdersCache,
+    type Order,
+} from "../../lib/orderService";
 
 function formatDate(iso: string) {
   const d = new Date(iso);
@@ -61,11 +65,28 @@ export default function OrdersScreen() {
   }, [userId]);
 
   useEffect(() => {
-    if (!userId) { setLoading(false); return; }
+    if (!userId) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    // SWR: paint cached orders instantly, then revalidate in the background
+    // after the first frame settles so the tab opens with zero skeleton.
+    (async () => {
+      const cached = await readUserOrdersCache(userId);
+      if (cancelled) return;
+      if (cached && cached.length > 0) {
+        setOrders(cached);
+        setLoading(false);
+      }
+    })();
     const task = InteractionManager.runAfterInteractions(() => {
-      fetchOrders();
+      if (!cancelled) fetchOrders();
     });
-    return () => task.cancel();
+    return () => {
+      cancelled = true;
+      task.cancel();
+    };
   }, [fetchOrders, userId]);
 
   const onRefresh = useCallback(async () => {

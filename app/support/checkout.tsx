@@ -1,5 +1,6 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
+import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -53,6 +54,13 @@ export default function CheckoutScreen() {
   const [deliveryInstructions, setDeliveryInstructions] = useState("");
   const [tipPreset, setTipPreset] = useState<10 | 20 | 30 | 50 | "custom" | null>(null);
   const [customTip, setCustomTip] = useState("");
+
+  // Who is this order for? Captured here (not on the saved address) so the
+  // same address can serve both self-delivery and "ordering for someone else".
+  const [orderFor, setOrderFor] = useState<"self" | "others">("self");
+  const [receiverName, setReceiverName] = useState("");
+  const [receiverPhone, setReceiverPhone] = useState("");
+  const [receiverAddress, setReceiverAddress] = useState("");
 
   // Seed recommended from the already-warm home cache so the "Did you forget?"
   // strip paints on frame 1 instead of waiting on a network round-trip. Falls
@@ -263,6 +271,15 @@ export default function CheckoutScreen() {
     if (deliveryInstructions.trim()) {
       notesParts.push(`Delivery Instructions: ${deliveryInstructions.trim()}`);
     }
+    if (orderFor === "others") {
+      const rxParts: string[] = [];
+      if (receiverName.trim()) rxParts.push(receiverName.trim());
+      if (receiverPhone.trim()) rxParts.push(`+91${receiverPhone.trim()}`);
+      if (receiverAddress.trim()) rxParts.push(receiverAddress.trim());
+      if (rxParts.length) {
+        notesParts.push(`Deliver to: ${rxParts.join(" | ")}`);
+      }
+    }
     if (tipAmount > 0) notesParts.push(`Tip for delivery partner: ₹${tipAmount.toFixed(2)}`);
 
     const sel = getPaymentSelection();
@@ -275,7 +292,7 @@ export default function CheckoutScreen() {
       payment_status: paymentStatus,
       subtotal,
       delivery_fee: deliveryFee,
-      order_total: finalPayable,
+      order_total: Math.round(finalPayable),
       delivery_address: location.address ?? location.label ?? "",
       delivery_latitude: location.latitude,
       delivery_longitude: location.longitude,
@@ -331,6 +348,19 @@ export default function CheckoutScreen() {
     if (!user?.id) {
       Alert.alert("Session expired", "Please login again.");
       return;
+    }
+    if (orderFor === "others") {
+      if (!receiverName.trim()) {
+        Alert.alert("Missing details", "Please enter the receiver's name.");
+        return;
+      }
+      if (receiverPhone.trim().length !== 10) {
+        Alert.alert(
+          "Invalid phone",
+          "Please enter a valid 10-digit mobile number for the receiver.",
+        );
+        return;
+      }
     }
     setPlacing(true);
     try {
@@ -440,48 +470,54 @@ export default function CheckoutScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      {/* ─── Header (clickable address, Instamart-style) ─── */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => router.back()}
-          activeOpacity={0.7}
-        >
-          <MaterialCommunityIcons name="arrow-left" size={20} color={C.text} />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.addressBtn}
-          activeOpacity={0.7}
-          onPress={() => router.push("/select-location")}
-        >
-          <View style={styles.addressLabelRow}>
-            <MaterialCommunityIcons
-              name="home-variant"
-              size={14}
-              color={C.text}
-            />
-            <Text style={styles.addressLabelText}>
-              {(location?.label || "Home").toUpperCase()}
-            </Text>
-            <MaterialCommunityIcons
-              name="chevron-down"
-              size={16}
-              color={C.text}
-            />
-          </View>
-          <Text
-            style={styles.addressDetailText}
-            numberOfLines={1}
-            ellipsizeMode="tail"
+      {/* ─── Header: matches the home screen's "DELIVERY TO" address bar so
+          there's no visual jump when navigating between tabs. ─── */}
+      <View style={styles.addressBarBg}>
+        <LinearGradient
+          colors={["#ecfdf5", "#ffffff"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0, y: 1 }}
+          style={StyleSheet.absoluteFillObject}
+          pointerEvents="none"
+        />
+        <View style={styles.appBar}>
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={() => router.back()}
+            activeOpacity={0.7}
           >
-            {location
-              ? location.address || "Tap to choose a delivery address"
-              : "Tap to choose a delivery address"}
-          </Text>
-        </TouchableOpacity>
+            <MaterialCommunityIcons name="arrow-left" size={20} color={C.text} />
+          </TouchableOpacity>
 
-        <View style={{ width: 38 }} />
+          <TouchableOpacity
+            style={{ flex: 1 }}
+            activeOpacity={0.7}
+            onPress={() => router.push("/select-location")}
+          >
+            <View style={styles.deliveryLabelRow}>
+              <MaterialCommunityIcons
+                name="map-marker-outline"
+                size={14}
+                color={C.primary}
+              />
+              <Text style={styles.deliveryLabelText}>Delivery to</Text>
+            </View>
+            <View style={styles.locationInlineRow}>
+              <Text style={styles.deliveryAddressText} numberOfLines={1}>
+                {location
+                  ? location.address
+                    ? `${location.label ? location.label + " · " : ""}${location.address}`
+                    : location.label || "Your location"
+                  : "Set delivery address"}
+              </Text>
+              <MaterialCommunityIcons
+                name="chevron-down"
+                size={16}
+                color={C.text}
+              />
+            </View>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView
@@ -740,20 +776,34 @@ export default function CheckoutScreen() {
           <Text style={styles.billSectionTitle}>BILL DETAILS</Text>
           <BillRow label="Item Total" value={subtotal} strikeValue={subtotal + (discount > 0 ? discount : 0)} showStrike={false} />
           {discount > 0 && <BillRow label="Coupon Discount" value={-discount} highlight />}
-          <BillRow label="Platform Fee" value={platformFee} />
-          <BillRow label="Handling Charges" value={handlingFee} />
+          <BillRow
+            label="Platform Fee"
+            value={platformFee}
+            onInfoPress={() =>
+              Alert.alert(
+                "Platform Fee",
+                "A small fee that keeps our app running smoothly so we can keep bringing fresh picks to your door. Thank you for supporting us!",
+              )
+            }
+          />
+          <BillRow
+            label="Handling Charges"
+            value={handlingFee}
+            onInfoPress={() =>
+              Alert.alert(
+                "Handling Charges",
+                "This goes towards carefully packing and handling your order so it reaches you just right. Thanks for being part of our journey!",
+              )
+            }
+          />
+          <BillRow label="GST charges" value={gst} />
           <BillRow label="Delivery Fee" value={deliveryFee} />
           {tipAmount > 0 && <BillRow label="Delivery Partner Tip" value={tipAmount} />}
-          <View style={styles.billDivider} />
-          <View style={styles.billGstRow}>
-            <Text style={styles.billLabel}>GST (18% on Platform Fee + Handling Charges)</Text>
-            <Text style={styles.billValue}>₹{gst.toFixed(2)}</Text>
-          </View>
           <View style={styles.billDivider} />
           <View style={styles.totalRow}>
             <Text style={styles.totalLabel}>To Pay</Text>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <Text style={styles.totalValue}>₹{finalPayable.toFixed(0)}</Text>
+              <Text style={styles.totalValue}>₹{Math.round(finalPayable)}</Text>
             </View>
           </View>
         </View>
@@ -767,6 +817,87 @@ export default function CheckoutScreen() {
           <TouchableOpacity onPress={() => router.push("/settings/support")}>
             <Text style={styles.noteLink}>Read cancellation policy</Text>
           </TouchableOpacity>
+        </View>
+
+        {/* ─── Who is this order for? ─── */}
+        <View style={styles.card}>
+          <Text style={styles.billSectionTitle}>WHO IS THIS ORDER FOR?</Text>
+          <View style={styles.orderForRow}>
+            <TouchableOpacity
+              style={[
+                styles.orderForChip,
+                orderFor === "self" && styles.orderForChipActive,
+              ]}
+              activeOpacity={0.8}
+              onPress={() => setOrderFor("self")}
+            >
+              <MaterialCommunityIcons
+                name={orderFor === "self" ? "radiobox-marked" : "radiobox-blank"}
+                size={18}
+                color={orderFor === "self" ? C.primary : C.textSub}
+              />
+              <Text
+                style={[
+                  styles.orderForChipText,
+                  orderFor === "self" && styles.orderForChipTextActive,
+                ]}
+              >
+                Myself
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.orderForChip,
+                orderFor === "others" && styles.orderForChipActive,
+              ]}
+              activeOpacity={0.8}
+              onPress={() => setOrderFor("others")}
+            >
+              <MaterialCommunityIcons
+                name={orderFor === "others" ? "radiobox-marked" : "radiobox-blank"}
+                size={18}
+                color={orderFor === "others" ? C.primary : C.textSub}
+              />
+              <Text
+                style={[
+                  styles.orderForChipText,
+                  orderFor === "others" && styles.orderForChipTextActive,
+                ]}
+              >
+                Someone else
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {orderFor === "others" && (
+            <View style={{ marginTop: 12, gap: 10 }}>
+              <TextInput
+                placeholder="Receiver's name *"
+                placeholderTextColor={C.textLight}
+                value={receiverName}
+                onChangeText={setReceiverName}
+                style={styles.textInput}
+              />
+              <TextInput
+                placeholder="Receiver's 10-digit phone *"
+                placeholderTextColor={C.textLight}
+                value={receiverPhone}
+                onChangeText={(t) => setReceiverPhone(t.replace(/\D/g, ""))}
+                keyboardType="number-pad"
+                maxLength={10}
+                style={styles.textInput}
+              />
+              <TextInput
+                placeholder="Receiver's address details (Optional)"
+                placeholderTextColor={C.textLight}
+                value={receiverAddress}
+                onChangeText={setReceiverAddress}
+                style={[styles.textInput, styles.multilineInput]}
+                multiline
+                numberOfLines={2}
+              />
+            </View>
+          )}
         </View>
 
         {/* ─── Delivery Instructions ─── */}
@@ -863,6 +994,7 @@ function BillRow({
   strikeValue,
   showStrike,
   note,
+  onInfoPress,
 }: {
   label: string;
   value: number;
@@ -870,17 +1002,42 @@ function BillRow({
   strikeValue?: number;
   showStrike?: boolean;
   note?: string;
+  onInfoPress?: () => void;
 }) {
+  // Only integer-valued fees collapse cleanly; preserve decimals (9.5, 0.75 …)
+  // so the breakdown stays faithful. The final "To Pay" row is the one place
+  // we round to the nearest rupee.
+  const formatAmount = (n: number) => {
+    const abs = Math.abs(n);
+    const hasDecimals = Math.abs(abs - Math.round(abs)) > 0.0001;
+    return hasDecimals ? abs.toFixed(2) : String(Math.round(abs));
+  };
   return (
     <View style={{ marginBottom: 10 }}>
       <View style={styles.billRow}>
-        <Text style={[styles.billLabel, highlight && { color: C.success }]}>{label}</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", flexShrink: 1, gap: 4 }}>
+          <Text style={[styles.billLabel, highlight && { color: C.success }]}>{label}</Text>
+          {onInfoPress && (
+            <TouchableOpacity
+              onPress={onInfoPress}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel={`More info about ${label}`}
+            >
+              <MaterialCommunityIcons
+                name="information-outline"
+                size={14}
+                color={C.textSub}
+              />
+            </TouchableOpacity>
+          )}
+        </View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
           {showStrike && strikeValue !== undefined && (
-            <Text style={styles.billStrike}>₹{strikeValue.toFixed(0)}</Text>
+            <Text style={styles.billStrike}>₹{formatAmount(strikeValue)}</Text>
           )}
           <Text style={[styles.billValue, highlight && { color: C.success, fontWeight: "700" }]}>
-            {value < 0 ? `−₹${Math.abs(value).toFixed(0)}` : `₹${value.toFixed(2)}`}
+            {value < 0 ? `−₹${formatAmount(value)}` : `₹${formatAmount(value)}`}
           </Text>
         </View>
       </View>
@@ -953,16 +1110,6 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#f0f0f5" },
   scrollContent: { paddingBottom: 200 },
 
-  // Header
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: C.card,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
   backBtn: {
     width: 38,
     height: 38,
@@ -973,33 +1120,47 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: C.border,
   },
-  headerCenter: { flex: 1, alignItems: "center" },
-  headerTitle: { color: C.text, fontSize: 15, fontWeight: "800", letterSpacing: -0.2 },
-  headerSub: { color: C.textSub, fontSize: 11, marginTop: 1 },
 
-  // Clickable address button in the header (Swiggy Instamart style)
-  addressBtn: {
-    flex: 1,
-    marginHorizontal: 8,
-    paddingVertical: 2,
-    paddingHorizontal: 4,
+  // "Delivery to" address bar — kept visually in sync with the one on the
+  // home screen so navigating checkout ↔ home never feels like two apps.
+  addressBarBg: {
+    backgroundColor: C.card,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
   },
-  addressLabelRow: {
+  appBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 12,
+    gap: 12,
+  },
+  deliveryLabelRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
+    marginBottom: 3,
   },
-  addressLabelText: {
-    color: C.text,
-    fontSize: 15,
-    fontWeight: "900",
-    letterSpacing: 0.2,
-  },
-  addressDetailText: {
-    color: C.textSub,
+  deliveryLabelText: {
     fontSize: 12,
-    marginTop: 1,
-    letterSpacing: -0.1,
+    color: C.primary,
+    fontWeight: "700",
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+  },
+  deliveryAddressText: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: C.text,
+    letterSpacing: -0.3,
+    flex: 1,
+  },
+  locationInlineRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    maxWidth: "95%",
   },
 
   // Card (Blinkit uses white cards separated by gray gaps)
@@ -1296,6 +1457,37 @@ const styles = StyleSheet.create({
     height: 44,
   },
   multilineInput: { minHeight: 74, height: undefined, textAlignVertical: "top" },
+
+  // "Who is this order for?" section
+  orderForRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  orderForChip: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: C.border,
+    backgroundColor: C.card,
+  },
+  orderForChipActive: {
+    borderColor: C.primary,
+    backgroundColor: C.primaryXLight,
+  },
+  orderForChipText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: C.text,
+  },
+  orderForChipTextActive: {
+    color: C.primary,
+  },
   inputGroup: { marginBottom: 12 },
   inputIconRow: { flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 7 },
   fieldLabel: { color: C.textSub, fontSize: 12, fontWeight: "700" },

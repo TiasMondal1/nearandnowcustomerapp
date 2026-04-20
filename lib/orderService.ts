@@ -1,5 +1,65 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
 import { apiFetch } from './apiClient';
 import { assertSupabaseAdminConfigured, supabaseAdmin } from './supabase';
+
+// ─── User-orders SWR cache ──────────────────────────────────────────────────
+// Keyed per user so switching accounts on the same device doesn't cross
+// contaminate. Same shape/versioning as the home-catalog and saved-address
+// caches for consistency.
+const ORDERS_CACHE_VERSION = 1;
+const ORDERS_CACHE_TTL_MS = 1000 * 60 * 60 * 24; // 1 day
+
+const ordersCacheKey = (userId: string) =>
+  `nn_user_orders_v${ORDERS_CACHE_VERSION}:${userId}`;
+
+interface UserOrdersCache {
+  version: number;
+  savedAt: number;
+  orders: unknown[];
+}
+
+export async function readUserOrdersCache(
+  userId: string,
+): Promise<Order[] | null> {
+  if (!userId) return null;
+  try {
+    const raw = await AsyncStorage.getItem(ordersCacheKey(userId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as UserOrdersCache;
+    if (!parsed || parsed.version !== ORDERS_CACHE_VERSION) return null;
+    if (Date.now() - parsed.savedAt > ORDERS_CACHE_TTL_MS) return null;
+    return Array.isArray(parsed.orders) ? (parsed.orders as Order[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeUserOrdersCache(
+  userId: string,
+  orders: Order[],
+): Promise<void> {
+  if (!userId) return;
+  const payload: UserOrdersCache = {
+    version: ORDERS_CACHE_VERSION,
+    savedAt: Date.now(),
+    orders,
+  };
+  try {
+    await AsyncStorage.setItem(ordersCacheKey(userId), JSON.stringify(payload));
+  } catch {
+    // Cache writes are best-effort.
+  }
+}
+
+export async function invalidateUserOrdersCache(userId: string): Promise<void> {
+  if (!userId) return;
+  try {
+    await AsyncStorage.removeItem(ordersCacheKey(userId));
+  } catch {
+    // Ignore.
+  }
+}
 
 export interface OrderItem {
   product_id?: string;
@@ -247,7 +307,7 @@ export async function createOrder(input: CreateOrderInput): Promise<Order> {
       subtotal_amount: input.subtotal,
       delivery_fee: input.delivery_fee,
       discount_amount: 0,
-      total_amount: input.order_total,
+      total_amount: Math.round(input.order_total),
       delivery_address: input.delivery_address,
       delivery_latitude: input.delivery_latitude,
       delivery_longitude: input.delivery_longitude,
@@ -363,7 +423,7 @@ export async function createOrder(input: CreateOrderInput): Promise<Order> {
   }
 
   // ─── 9. Return the Order shape the app expects ───────────────────────────
-  return {
+  const placedOrder: Order = {
     id: customerOrderId,
     order_number: orderCode,
     order_status: 'pending_at_store',
@@ -380,6 +440,11 @@ export async function createOrder(input: CreateOrderInput): Promise<Order> {
       (customerOrder as { created_at?: string }).created_at ||
       new Date().toISOString(),
   };
+  // Fire-and-forget: the next visit to the Orders tab will refresh from the
+  // server anyway, but clearing the stale cache now means the new order shows
+  // up at the top even on a cold start within the TTL window.
+  invalidateUserOrdersCache(input.user_id).catch(() => {});
+  return placedOrder;
 }
 
 /**
@@ -418,7 +483,9 @@ export async function getUserOrders(userId: string): Promise<Order[]> {
   if (!userId) return [];
   // Prefer direct DB read (matches your schema exactly). Fallback to backend if admin key isn't configured.
   try {
-    return await getUserOrdersFromSupabase(userId);
+    const orders = await getUserOrdersFromSupabase(userId);
+    writeUserOrdersCache(userId, orders).catch(() => {});
+    return orders;
   } catch (err) {
     // If admin key is missing, or any other issue occurs, try the backend route.
     try {
@@ -426,7 +493,9 @@ export async function getUserOrders(userId: string): Promise<Order[]> {
         `/api/orders/customer/${encodeURIComponent(userId)}`,
       );
       if (!Array.isArray(rows)) return [];
-      return rows.map(mapBackendOrder);
+      const orders = rows.map(mapBackendOrder);
+      writeUserOrdersCache(userId, orders).catch(() => {});
+      return orders;
     } catch (err2) {
       const message =
         (err2 instanceof Error && err2.message) ||
