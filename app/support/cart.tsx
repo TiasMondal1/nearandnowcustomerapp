@@ -106,7 +106,7 @@ export default function CartScreen() {
               <View style={styles.itemCard}>
                 {item.image_url ? (
                   <Image
-                    source={{ uri: cdnImage(item.image_url) }}
+                    source={{ uri: cdnImage(item.image_url, 200) }}
                     style={styles.image}
                     contentFit="contain"
                     cachePolicy="memory-disk"

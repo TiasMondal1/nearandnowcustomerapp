@@ -90,7 +90,7 @@ export default function ProductDetailsScreen() {
         <View style={styles.imageWrap}>
           {product.image_url ? (
             <Image
-              source={{ uri: cdnImage(product.image_url) }}
+              source={{ uri: cdnImage(product.image_url, 800) }}
               style={styles.heroImage}
               contentFit="cover"
               cachePolicy="memory-disk"

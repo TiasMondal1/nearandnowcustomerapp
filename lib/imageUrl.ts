@@ -34,15 +34,23 @@ function isAlreadyFast(url: string): boolean {
  * Wrap a URL so it's served via our Cloudflare image proxy. Slow / uncached
  * sources become globally cached on first hit.
  *
+ * When `width` is provided, hints the worker to return a resized variant so
+ * grid thumbnails don't download full-resolution originals (often 5–10× the
+ * bytes they'd need at 3-column render size).
+ *
  * @example
- * cdnImage('https://thumbs.dreamstime.com/b/bakery.jpg')
- *   // → 'https://cdn.nearandnow.in/?u=https%3A%2F%2Fthumbs.dreamstime.com%2Fb%2Fbakery.jpg'
+ * cdnImage('https://thumbs.dreamstime.com/b/bakery.jpg', 240)
+ *   // → 'https://cdn.nearandnow.in/?u=<encoded>&w=240'
  *
  * cdnImage('https://cdn.grofers.com/.../tomato.png')
  *   // → 'https://cdn.grofers.com/.../tomato.png'  (already fast, untouched)
  */
-export function cdnImage(url: string | undefined | null): string | undefined {
+export function cdnImage(
+  url: string | undefined | null,
+  width?: number,
+): string | undefined {
   if (!url) return undefined;
   if (isAlreadyFast(url)) return url;
-  return `${CDN_BASE}/?u=${encodeURIComponent(url)}`;
+  const base = `${CDN_BASE}/?u=${encodeURIComponent(url)}`;
+  return width && Number.isFinite(width) ? `${base}&w=${Math.round(width)}` : base;
 }

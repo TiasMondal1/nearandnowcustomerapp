@@ -122,12 +122,13 @@ export default function CategorySlugScreen() {
         >
           {item.image_url ? (
             <Image
-              source={{ uri: cdnImage(item.image_url) }}
+              source={{ uri: cdnImage(item.image_url, 240) }}
               style={styles.image}
               contentFit="contain"
               cachePolicy="memory-disk"
               transition={120}
               recyclingKey={item.id}
+              priority="low"
             />
           ) : (
             <View style={styles.imagePlaceholder}>

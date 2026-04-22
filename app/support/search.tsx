@@ -1,5 +1,5 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
@@ -24,7 +24,11 @@ export default function SearchScreen() {
   const { location } = useLocation();
   const { addItem, updateQty } = useCart();
   const cartItemsByProductId = useCartItemMap();
-  const [query, setQuery] = useState("");
+  // Allow `/support/search?q=Amul+Milk` (used by the Order Again fallback card
+  // when the item is no longer in the live catalog).
+  const params = useLocalSearchParams<{ q?: string }>();
+  const initialQuery = typeof params.q === "string" ? params.q : "";
+  const [query, setQuery] = useState(initialQuery);
   const [results, setResults] = useState<Product[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
@@ -140,11 +144,12 @@ export default function SearchScreen() {
               >
                 {item.image_url ? (
                   <Image
-                    source={{ uri: cdnImage(item.image_url) }}
+                    source={{ uri: cdnImage(item.image_url, 240) }}
                     style={styles.image}
                     contentFit="contain"
                     cachePolicy="memory-disk"
                     transition={120}
+                    priority="low"
                   />
                 ) : (
                   <View style={styles.imagePlaceholder}>

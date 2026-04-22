@@ -196,14 +196,14 @@ const ProductCard = React.memo(
             <View style={styles.imageWrap}>
               {p.image_url ? (
                 <ExpoImage
-                  source={{ uri: cdnImage(p.image_url) }}
+                  source={{ uri: cdnImage(p.image_url, 240) }}
                   style={styles.image}
                   contentFit="contain"
                   transition={120}
                   cachePolicy="memory-disk"
                   placeholder={PLACEHOLDER_BLURHASH}
                   recyclingKey={p.id}
-                  priority="normal"
+                  priority="low"
                 />
               ) : (
                 <View style={styles.imagePlaceholder}>
@@ -334,12 +334,13 @@ const CategoryTile = React.memo(function CategoryTile({
       <View style={styles.catTileIconWrap}>
         {item.image_url ? (
           <ExpoImage
-            source={{ uri: cdnImage(item.image_url) }}
+            source={{ uri: cdnImage(item.image_url, 180) }}
             style={styles.catTileImg}
             contentFit="cover"
             cachePolicy="memory-disk"
             transition={100}
             recyclingKey={item.id}
+            priority="low"
           />
         ) : (
           <MaterialCommunityIcons
@@ -609,7 +610,7 @@ export default function HomeScreen() {
   const cartItemsByProductId = useCartItemMap();
   const totalQty = useMemo(() => {
     let n = 0;
-    for (const [, v] of cartItemsByProductId) n += v.quantity;
+    for (const v of cartItemsByProductId.values()) n += v.quantity;
     return n;
   }, [cartItemsByProductId]);
   const hasCart = cartItemsByProductId.size > 0;

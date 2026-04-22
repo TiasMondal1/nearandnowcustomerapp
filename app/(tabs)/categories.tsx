@@ -1,20 +1,25 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
+import { Image } from "expo-image";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
     ActivityIndicator,
-    FlatList,
+    Pressable,
     RefreshControl,
+    ScrollView,
     StyleSheet,
     Text,
-    TouchableOpacity,
     View,
 } from "react-native";
-import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { C } from "../../constants/colors";
+import {
+    CATEGORY_GROUPS,
+    DEFAULT_GROUP,
+    getGroupForCategoryName,
+    type CategoryGroupDef,
+} from "../../constants/categoryGroups";
 import { useLocation } from "../../context/LocationContext";
 import { getAllCategories, type Category } from "../../lib/categoryService";
 import { cdnImage } from "../../lib/imageUrl";
@@ -25,15 +30,75 @@ import {
     writeHomePageCache,
 } from "../../lib/productService";
 
-const FALLBACK_COLORS = [
-  "#FF6B6B", "#51CF66", "#FFD43B", "#845EF7",
-  "#339AF0", "#FAB005", "#E599F7", "#74C0FC"
+const FALLBACK_TILE_COLORS = [
+  "#E6F4EA", "#FEF3C7", "#DBEAFE", "#FCE7F3",
+  "#EDE9FE", "#D1FAE5", "#FFE4E6", "#FEF9C3",
 ];
 
 const FALLBACK_ICONS = [
-  "apple", "leaf", "cow", "cookie",
-  "cup", "sack", "face-woman-shimmer", "home-outline"
+  "apple",
+  "leaf",
+  "cow",
+  "cookie",
+  "cup",
+  "sack",
+  "face-woman-shimmer",
+  "home-outline",
 ];
+
+type CategoryWithTint = Category & { tint: string; iconName: string };
+
+type Section = {
+  group: CategoryGroupDef;
+  items: CategoryWithTint[];
+};
+
+/**
+ * One tile — memoized so scrolling a large grouped grid doesn't re-render
+ * every tile when the header re-renders.
+ */
+const CategoryTile = React.memo(function CategoryTile({
+  item,
+  onPress,
+}: {
+  item: CategoryWithTint;
+  onPress: (slug: string) => void;
+}) {
+  const handlePress = useCallback(() => onPress(item.slug), [onPress, item.slug]);
+
+  return (
+    <Pressable
+      onPress={handlePress}
+      style={({ pressed }) => [
+        styles.tile,
+        pressed && { transform: [{ scale: 0.97 }], opacity: 0.9 },
+      ]}
+    >
+      <View style={[styles.tileImageWrap, { backgroundColor: item.tint }]}>
+        {item.image_url ? (
+          <Image
+            source={{ uri: cdnImage(item.image_url, 240) }}
+            style={styles.tileImage}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+            transition={120}
+            recyclingKey={item.id}
+            priority="low"
+          />
+        ) : (
+          <MaterialCommunityIcons
+            name={item.iconName as any}
+            size={34}
+            color={C.primary}
+          />
+        )}
+      </View>
+      <Text style={styles.tileLabel} numberOfLines={2}>
+        {item.name}
+      </Text>
+    </Pressable>
+  );
+});
 
 export default function CategoriesScreen() {
   const { isHydrated } = useLocation();
@@ -83,47 +148,82 @@ export default function CategoriesScreen() {
     fetchData();
   }, [isHydrated, fetchData]);
 
-  const categoriesWithProducts = useMemo(
-    () =>
-      categories.filter((c) => getCountForCategoryName(categoryCounts, c.name) > 0),
-    [categories, categoryCounts],
-  );
+  /**
+   * Build Blinkit-style sections: buckets categories into their logical group
+   * ("Grocery & Kitchen", "Snacks & Drinks", etc) while dropping groups that
+   * have zero live categories — keeps the screen compact on sparse catalogs.
+   */
+  const sections = useMemo<Section[]>(() => {
+    const byGroupId = new Map<string, CategoryWithTint[]>();
+    let tintIdx = 0;
+
+    for (const cat of categories) {
+      if (getCountForCategoryName(categoryCounts, cat.name) <= 0) continue;
+
+      const group = getGroupForCategoryName(cat.name);
+      const enriched: CategoryWithTint = {
+        ...cat,
+        tint:
+          cat.color ||
+          FALLBACK_TILE_COLORS[tintIdx++ % FALLBACK_TILE_COLORS.length],
+        iconName:
+          cat.icon ||
+          FALLBACK_ICONS[Math.abs(cat.name.length) % FALLBACK_ICONS.length],
+      };
+
+      const list = byGroupId.get(group.id);
+      if (list) {
+        list.push(enriched);
+      } else {
+        byGroupId.set(group.id, [enriched]);
+      }
+    }
+
+    const out: Section[] = [];
+    for (const g of CATEGORY_GROUPS) {
+      const items = byGroupId.get(g.id);
+      if (items && items.length) out.push({ group: g, items });
+    }
+    const rest = byGroupId.get(DEFAULT_GROUP.id);
+    if (rest && rest.length) out.push({ group: DEFAULT_GROUP, items: rest });
+    return out;
+  }, [categories, categoryCounts]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     fetchData(true);
   }, [fetchData]);
 
+  const handleTilePress = useCallback((slug: string) => {
+    router.push(`/category/${slug}` as any);
+  }, []);
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safe}>
+      <SafeAreaView style={styles.safe} edges={["top"]}>
         <View style={styles.header}>
           <Text style={styles.title}>Shop by category</Text>
           <Text style={styles.subtitle}>Fresh groceries delivered fast</Text>
         </View>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={C.primary} />
-          <Text style={styles.loadingText}>Loading categories...</Text>
+          <Text style={styles.loadingText}>Loading categories…</Text>
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} edges={["top"]}>
       <View style={styles.header}>
         <Text style={styles.title}>Shop by category</Text>
         <Text style={styles.subtitle}>Fresh groceries delivered fast</Text>
       </View>
 
-      <FlatList
-        data={categoriesWithProducts}
-        numColumns={2}
-        keyExtractor={(item) => item.id}
-        columnWrapperStyle={styles.row}
-        contentContainerStyle={styles.grid}
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        removeClippedSubviews
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -132,67 +232,34 @@ export default function CategoriesScreen() {
             colors={[C.primary]}
           />
         }
-        ListEmptyComponent={
+      >
+        {sections.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <MaterialCommunityIcons name="view-grid-outline" size={64} color={C.textLight} />
+            <MaterialCommunityIcons
+              name="view-grid-outline"
+              size={64}
+              color={C.textLight}
+            />
             <Text style={styles.emptyTitle}>No categories available</Text>
             <Text style={styles.emptyText}>Check back soon for new categories</Text>
           </View>
-        }
-        renderItem={({ item, index }) => {
-          const color = item.color || FALLBACK_COLORS[index % FALLBACK_COLORS.length];
-          const icon = item.icon || FALLBACK_ICONS[index % FALLBACK_ICONS.length];
-
-          return (
-            <TouchableOpacity
-              activeOpacity={0.9}
-              onPress={() => router.push(`/category/${item.slug}`)}
-              style={styles.tileWrap}
-            >
-              <LinearGradient
-                colors={[color + "33", color + "11", "transparent"]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.tile}
-              >
-                {item.image_url ? (
-                  <Image
-                    source={{ uri: cdnImage(item.image_url) }}
-                    style={styles.categoryImage}
-                    contentFit="cover"
-                    cachePolicy="memory-disk"
-                    transition={120}
-                    recyclingKey={item.id}
+        ) : (
+          sections.map(({ group, items }) => (
+            <View key={group.id} style={styles.sectionWrap}>
+              <Text style={styles.sectionTitle}>{group.title}</Text>
+              <View style={styles.grid}>
+                {items.map((it) => (
+                  <CategoryTile
+                    key={it.id}
+                    item={it}
+                    onPress={handleTilePress}
                   />
-                ) : (
-                  <View
-                    style={[
-                      styles.iconBubble,
-                      { backgroundColor: color + "22" },
-                    ]}
-                  >
-                    <MaterialCommunityIcons
-                      name={icon as any}
-                      size={34}
-                      color={color}
-                    />
-                  </View>
-                )}
-
-                <Text style={styles.label}>{item.name}</Text>
-
-                <View style={styles.ctaRow}>
-                  <MaterialCommunityIcons
-                    name="arrow-right"
-                    size={14}
-                    color={C.textSub}
-                  />
-                </View>
-              </LinearGradient>
-            </TouchableOpacity>
-          );
-        }}
-      />
+                ))}
+              </View>
+            </View>
+          ))
+        )}
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -207,6 +274,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 12,
     paddingBottom: 10,
+    backgroundColor: C.card,
+    borderBottomWidth: 1,
+    borderBottomColor: C.borderSoft,
   },
 
   title: {
@@ -233,6 +303,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 
+  scrollContent: {
+    paddingBottom: 130,
+    paddingTop: 8,
+  },
+
   emptyContainer: {
     flex: 1,
     alignItems: "center",
@@ -252,67 +327,46 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 
+  sectionWrap: {
+    paddingHorizontal: 14,
+    paddingTop: 16,
+    paddingBottom: 4,
+  },
+  sectionTitle: {
+    fontSize: 17,
+    color: C.text,
+    fontWeight: "900",
+    letterSpacing: -0.2,
+    paddingHorizontal: 4,
+    marginBottom: 10,
+  },
+
   grid: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 120,
-  },
-
-  row: {
-    justifyContent: "space-between",
-  },
-
-  tileWrap: {
-    width: "48%",
-    marginBottom: 16,
+    flexDirection: "row",
+    flexWrap: "wrap",
   },
 
   tile: {
-    borderRadius: 16,
-    padding: 16,
-    minHeight: 140,
-    justifyContent: "space-between",
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    shadowColor: C.shadow,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    elevation: 4,
+    width: "25%",
+    paddingHorizontal: 4,
+    paddingVertical: 6,
+    alignItems: "center",
   },
-
-  categoryImage: {
-    width: 56,
-    height: 56,
-    borderRadius: 18,
-  },
-
-  iconBubble: {
-    width: 56,
-    height: 56,
-    borderRadius: 18,
+  tileImageWrap: {
+    width: "100%",
+    aspectRatio: 1,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
+    overflow: "hidden",
   },
-
-  label: {
-    color: C.text,
-    fontSize: 15,
-    fontWeight: "800",
-    marginTop: 14,
-  },
-
-  ctaRow: {
-    flexDirection: "row",
-    alignItems: "center",
+  tileImage: { width: "100%", height: "100%" },
+  tileLabel: {
     marginTop: 6,
-    gap: 6,
-  },
-
-  ctaText: {
-    color: C.textSub,
-    fontSize: 12,
-    fontWeight: "700",
+    fontSize: 11.5,
+    color: C.text,
+    fontWeight: "600",
+    textAlign: "center",
+    lineHeight: 14,
   },
 });

@@ -62,7 +62,19 @@ export async function invalidateUserOrdersCache(userId: string): Promise<void> {
 }
 
 export interface OrderItem {
+  /**
+   * Store-specific `products.id` — the FK stored on `order_items`. This is
+   * NOT the id the mobile catalog keys off of (that's `master_product_id`
+   * below). Kept here for backwards compat with screens that already use it.
+   */
   product_id?: string;
+  /**
+   * Resolved `master_products.id` — populated by joining `products` during
+   * the order fetch. This is the id that lines up with the home catalog, so
+   * the Order Again tab uses it to re-add items to the cart and look up
+   * enriched product info (images, discounts, stock).
+   */
+  master_product_id?: string;
   name: string;
   price: number;
   quantity: number;
@@ -111,6 +123,15 @@ type BackendOrderItem = {
   quantity?: number | string | null;
   unit?: string | null;
   image_url?: string | null;
+  /**
+   * Populated when the Supabase select joins `products(master_product_id)`.
+   * Supabase returns the related row as either an object (to-one FK) or an
+   * array depending on how the FK is defined — handle both.
+   */
+  products?:
+    | { master_product_id?: string | null }
+    | { master_product_id?: string | null }[]
+    | null;
 };
 
 type BackendStoreOrder = {
@@ -138,12 +159,28 @@ function toNumber(val: unknown, fallback = 0) {
   return fallback;
 }
 
+function extractMasterProductId(
+  products: BackendOrderItem['products'],
+): string | undefined {
+  if (!products) return undefined;
+  if (Array.isArray(products)) {
+    for (const p of products) {
+      if (p && p.master_product_id) return String(p.master_product_id);
+    }
+    return undefined;
+  }
+  return products.master_product_id
+    ? String(products.master_product_id)
+    : undefined;
+}
+
 function mapBackendOrder(order: BackendCustomerOrder): Order {
   const items: OrderItem[] = [];
   for (const so of order.store_orders || []) {
     for (const it of so.order_items || []) {
       items.push({
         product_id: (it.product_id ?? undefined) || undefined,
+        master_product_id: extractMasterProductId(it.products),
         name: String(it.product_name ?? ''),
         price: toNumber(it.unit_price, 0),
         quantity: toNumber(it.quantity, 0),
@@ -196,7 +233,10 @@ async function getUserOrdersFromSupabase(userId: string): Promise<Order[]> {
           unit_price,
           quantity,
           unit,
-          image_url
+          image_url,
+          products:product_id (
+            master_product_id
+          )
         )
       )
     `,
@@ -476,6 +516,118 @@ export async function getOrderPaymentStatus(
     console.warn('[ORDER] getOrderPaymentStatus failed', err);
     return null;
   }
+}
+
+/**
+ * A hydrated line item used by the Order Again tab. It stores everything we
+ * need to render a card WITHOUT the home catalog — so even when a product has
+ * been removed from the store, the customer still sees their past purchase.
+ *
+ * `masterProductId` is the preferred join key for the home catalog and cart;
+ * it may be missing for legacy orders, in which case we fall back to the
+ * deduped `fallbackKey` (product_id OR normalized name+unit).
+ */
+export interface OrderAgainItem {
+  /** Stable key unique per distinct product across the customer's orders. */
+  key: string;
+  masterProductId?: string;
+  productId?: string;
+  name: string;
+  price: number;
+  unit?: string;
+  image?: string;
+  /** Total quantity ever ordered by this customer — useful for sorting. */
+  totalQty: number;
+  /** Number of distinct orders this item appeared in. */
+  orderCount: number;
+  /** ISO date of the most recent purchase. */
+  lastOrderedAt: string;
+}
+
+function orderAgainKey(it: OrderItem): string {
+  if (it.master_product_id) return `m:${it.master_product_id}`;
+  if (it.product_id) return `p:${it.product_id}`;
+  // Last-resort dedupe key for unresolved items (e.g. legacy orders that never
+  // stored a product_id). Lowercased name + unit keeps "Amul Milk 500 ml" from
+  // splintering into multiple rows due to casing/whitespace.
+  const n = (it.name || '').trim().toLowerCase();
+  const u = (it.unit || '').trim().toLowerCase();
+  return `n:${n}|${u}`;
+}
+
+/**
+ * Aggregates a customer's order history into hydrated "Order Again" line
+ * items, sorted by recency (most-recent first). Pure in-memory reduction over
+ * `Order[]` — no extra network calls.
+ *
+ * Orders are expected to come sorted placed_at DESC from `getUserOrders`, so
+ * the first occurrence of a key is also its most recent purchase.
+ */
+export function buildOrderAgainItems(orders: Order[]): OrderAgainItem[] {
+  const byKey = new Map<string, OrderAgainItem>();
+  // Track which orders contributed to which key so we can count distinct
+  // orders (not distinct line items).
+  const orderKeyAdded = new Map<string, Set<string>>();
+
+  for (const order of orders) {
+    const placedAt = order.created_at || new Date().toISOString();
+    for (const it of order.items || []) {
+      const key = orderAgainKey(it);
+      const existing = byKey.get(key);
+      if (!existing) {
+        byKey.set(key, {
+          key,
+          masterProductId: it.master_product_id || undefined,
+          productId: it.product_id || undefined,
+          name: (it.name || '').trim() || 'Item',
+          price: Number(it.price) || 0,
+          unit: it.unit || undefined,
+          image: it.image || undefined,
+          totalQty: Number(it.quantity) || 1,
+          orderCount: 1,
+          lastOrderedAt: placedAt,
+        });
+        orderKeyAdded.set(key, new Set([order.id]));
+      } else {
+        existing.totalQty += Number(it.quantity) || 1;
+        // Patch in any fields missing on the first (oldest) occurrence.
+        if (!existing.masterProductId && it.master_product_id) {
+          existing.masterProductId = it.master_product_id;
+        }
+        if (!existing.image && it.image) existing.image = it.image;
+        const seenOrders = orderKeyAdded.get(key)!;
+        if (!seenOrders.has(order.id)) {
+          seenOrders.add(order.id);
+          existing.orderCount += 1;
+        }
+      }
+    }
+  }
+
+  // Map.values() preserves insertion order, which is already recency order
+  // because orders arrive placed_at DESC.
+  return Array.from(byKey.values());
+}
+
+/**
+ * @deprecated Use {@link buildOrderAgainItems} instead — it returns hydrated
+ * items so the UI can render even when the catalog is unavailable. Kept as a
+ * thin shim so existing call sites don't break.
+ */
+export function buildOrderAgainProductIds(orders: Order[]): {
+  productIds: string[];
+  qtyByProductId: Record<string, number>;
+} {
+  const items = buildOrderAgainItems(orders);
+  const productIds: string[] = [];
+  const qtyByProductId: Record<string, number> = {};
+  for (const it of items) {
+    const id = it.masterProductId || it.productId;
+    if (!id) continue;
+    productIds.push(id);
+    qtyByProductId[id] = it.totalQty;
+  }
+  return { productIds, qtyByProductId };
 }
 
 // GET /api/orders/customer/:customerId — handled by Railway backend (reads with service role server-side)

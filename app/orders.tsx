@@ -14,16 +14,16 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { PaymentProcessingOverlay } from "../../components/PaymentProcessingOverlay";
-import { C } from "../../constants/colors";
-import { CANCELLED_STATUSES, getStatusMeta } from "../../constants/orderStatus";
-import { useAuth } from "../../context/AuthContext";
-import { usePaymentFlow } from "../../hooks/usePaymentFlow";
+import { PaymentProcessingOverlay } from "../components/PaymentProcessingOverlay";
+import { C } from "../constants/colors";
+import { CANCELLED_STATUSES, getStatusMeta } from "../constants/orderStatus";
+import { useAuth } from "../context/AuthContext";
+import { usePaymentFlow } from "../hooks/usePaymentFlow";
 import {
     getUserOrders,
     readUserOrdersCache,
     type Order,
-} from "../../lib/orderService";
+} from "../lib/orderService";
 
 function formatDate(iso: string) {
   const d = new Date(iso);
@@ -70,8 +70,6 @@ export default function OrdersScreen() {
       return;
     }
     let cancelled = false;
-    // SWR: paint cached orders instantly, then revalidate in the background
-    // after the first frame settles so the tab opens with zero skeleton.
     (async () => {
       const cached = await readUserOrdersCache(userId);
       if (cancelled) return;
@@ -117,7 +115,6 @@ export default function OrdersScreen() {
         Alert.alert("Payment unavailable", result.message);
         return;
       }
-      // pending — refresh either way (in case webhook landed during the flow)
       fetchOrders(true);
       if (result.reason === "cancelled") return;
       Alert.alert("Payment not completed", result.message ?? "Please try again.");
@@ -129,9 +126,6 @@ export default function OrdersScreen() {
     const status = item.order_status ?? "";
     const meta = getStatusMeta(status);
 
-    // "Payment pending" only matters for online orders that haven't paid yet
-    // and aren't cancelled. COD orders are always 'pending' until delivery;
-    // we don't want to show a "Pay now" CTA on those.
     const paymentMethod = (item.payment_method ?? "").toLowerCase();
     const isOnline = paymentMethod !== "cod" && paymentMethod !== "cash_on_delivery";
     const isCancelled = CANCELLED_STATUSES.includes(status as any);
@@ -223,12 +217,30 @@ export default function OrdersScreen() {
     );
   };
 
+  const Header = (
+    <View style={styles.header}>
+      <TouchableOpacity
+        style={styles.backBtn}
+        onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)/home"))}
+        activeOpacity={0.7}
+      >
+        <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
+      </TouchableOpacity>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.headerTitle}>Previous Orders</Text>
+        {orders.length > 0 && (
+          <Text style={styles.orderCount}>
+            {orders.length} order{orders.length !== 1 ? "s" : ""}
+          </Text>
+        )}
+      </View>
+    </View>
+  );
+
   if (loading) {
     return (
       <SafeAreaView style={styles.safe}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>My Orders</Text>
-        </View>
+        {Header}
         <View style={styles.centerContainer}>
           <ActivityIndicator size="large" color={C.primary} />
           <Text style={styles.loadingText}>Loading your orders...</Text>
@@ -240,9 +252,7 @@ export default function OrdersScreen() {
   if (error && orders.length === 0) {
     return (
       <SafeAreaView style={styles.safe}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>My Orders</Text>
-        </View>
+        {Header}
         <View style={styles.centerContainer}>
           <MaterialCommunityIcons name="alert-circle-outline" size={64} color={C.danger} />
           <Text style={styles.errorTitle}>Connection Error</Text>
@@ -258,12 +268,7 @@ export default function OrdersScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>My Orders</Text>
-        {orders.length > 0 && (
-          <Text style={styles.orderCount}>{orders.length} order{orders.length !== 1 ? "s" : ""}</Text>
-        )}
-      </View>
+      {Header}
 
       <FlatList
         data={orders}
@@ -303,16 +308,24 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
+    gap: 10,
+    paddingHorizontal: 12,
     paddingTop: 16,
     paddingBottom: 14,
     backgroundColor: C.card,
     borderBottomWidth: 1,
     borderBottomColor: C.border,
   },
-  headerTitle: { color: C.text, fontSize: 22, fontWeight: "900" },
-  orderCount: { color: C.textSub, fontSize: 13, fontWeight: "600" },
+  backBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: C.bgSoft,
+  },
+  headerTitle: { color: C.text, fontSize: 20, fontWeight: "900" },
+  orderCount: { color: C.textSub, fontSize: 12, fontWeight: "600", marginTop: 2 },
 
   centerContainer: {
     flex: 1,
@@ -358,7 +371,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 
-  list: { paddingTop: 14, paddingBottom: 110 },
+  list: { paddingTop: 14, paddingBottom: 40 },
 
   card: {
     backgroundColor: C.card,

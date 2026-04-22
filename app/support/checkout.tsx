@@ -428,7 +428,7 @@ export default function CheckoutScreen() {
           "Payment unavailable",
           `${result.message}\n\nYour order has been saved. You can retry payment from your Orders.`,
         );
-        router.replace("../(tabs)/orders");
+        router.replace("/orders");
         return;
       }
 
@@ -456,7 +456,7 @@ export default function CheckoutScreen() {
       Alert.alert(titleByReason[result.reason], messageByReason[result.reason], [
         {
           text: "Go to Orders",
-          onPress: () => router.replace("../(tabs)/orders"),
+          onPress: () => router.replace("/orders"),
         },
       ]);
       return;
@@ -532,7 +532,7 @@ export default function CheckoutScreen() {
               <View style={styles.itemRow}>
                 {item.image_url ? (
                   <Image
-                    source={{ uri: cdnImage(item.image_url) }}
+                    source={{ uri: cdnImage(item.image_url, 160) }}
                     style={styles.itemImage}
                     contentFit="contain"
                     cachePolicy="memory-disk"
@@ -673,11 +673,12 @@ export default function CheckoutScreen() {
                   </TouchableOpacity>
                   {p.image_url ? (
                     <Image
-                      source={{ uri: cdnImage(p.image_url) }}
+                      source={{ uri: cdnImage(p.image_url, 200) }}
                       style={styles.recoImage}
                       contentFit="contain"
                       cachePolicy="memory-disk"
                       transition={120}
+                      priority="low"
                     />
                   ) : (
                     <View style={styles.recoPlaceholder}>
@@ -972,7 +973,7 @@ export default function CheckoutScreen() {
               activeOpacity={0.85}
               onPress={() => {
                 setShowSuccess(false);
-                setTimeout(() => router.replace("../(tabs)/orders"), 200);
+                setTimeout(() => router.replace("/orders"), 200);
               }}
             >
               <MaterialCommunityIcons name="map-clock-outline" size={18} color="#fff" />

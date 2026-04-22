@@ -14,6 +14,11 @@ export default function TabLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
+        // Detaching inactive tab screens keeps the JS thread (and memory)
+        // free for the active tab — switching tabs in a grocery app feels
+        // noticeably snappier when only one feed is mounted at a time.
+        lazy: true,
+        freezeOnBlur: true,
 
         tabBarStyle: {
           backgroundColor: BG,
@@ -65,11 +70,15 @@ export default function TabLayout() {
       />
 
       <Tabs.Screen
-        name="orders"
+        name="order-again"
         options={{
-          title: "Orders",
+          title: "Order Again",
           tabBarIcon: ({ color, size }) => (
-            <MaterialCommunityIcons name="repeat" size={size} color={color} />
+            <MaterialCommunityIcons
+              name="shopping-outline"
+              size={size}
+              color={color}
+            />
           ),
         }}
       />
