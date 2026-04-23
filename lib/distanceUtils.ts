@@ -51,7 +51,7 @@ export async function getProductStoreDistance(
   customerLng: number,
 ): Promise<number> {
   const { supabaseAdmin } = await import('./supabase');
-  
+
   try {
     const { data: product, error } = await supabaseAdmin
       .from('products')
@@ -72,5 +72,49 @@ export async function getProductStoreDistance(
     );
   } catch {
     return 50;
+  }
+}
+
+/**
+ * Batched version — resolves distances for multiple products in a SINGLE
+ * round-trip instead of one per item (the checkout N+1 pattern).
+ *
+ * Replaces the `items.map(item => getProductStoreDistance(...))` pattern in
+ * checkout.tsx, which issued one DB query per cart item and blocked the fee
+ * calculation for each sequential response.
+ */
+export async function getBatchProductStoreDistances(
+  productIds: string[],
+  customerLat: number,
+  customerLng: number,
+): Promise<number[]> {
+  if (!productIds.length) return [];
+  const { supabaseAdmin } = await import('./supabase');
+
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('products')
+      .select('master_product_id, stores(latitude, longitude)')
+      .in('master_product_id', productIds)
+      .eq('is_active', true);
+
+    if (error || !data) return productIds.map(() => 50);
+
+    // Build a map of master_product_id → closest store distance.
+    const distByMasterId = new Map<string, number>();
+    for (const row of data as any[]) {
+      if (!row.master_product_id || !row.stores) continue;
+      const store = Array.isArray(row.stores) ? row.stores[0] : row.stores;
+      if (!store?.latitude || !store?.longitude) continue;
+      const d = calculateDistance(customerLat, customerLng, store.latitude, store.longitude);
+      const existing = distByMasterId.get(row.master_product_id);
+      if (existing === undefined || d < existing) {
+        distByMasterId.set(row.master_product_id, d);
+      }
+    }
+
+    return productIds.map((id) => distByMasterId.get(id) ?? 50);
+  } catch {
+    return productIds.map(() => 50);
   }
 }

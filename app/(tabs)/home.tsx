@@ -398,76 +398,6 @@ const SectionHeader = React.memo(function SectionHeader({
   );
 });
 
-// ─── Category section: 6-product grid + See-all ─────────────────────────────
-type CategorySectionProps = {
-  category: Category;
-  products: Product[];
-  cartItemsByProductId: Map<string, CartItem>;
-  onAdd: (p: Product) => void;
-  onUpdateQty: (p: Product, qty: number) => void;
-  onSeeAll: (name: string) => void;
-};
-
-const CategorySection = React.memo(
-  function CategorySection({
-    category,
-    products,
-    cartItemsByProductId,
-    onAdd,
-    onUpdateQty,
-    onSeeAll,
-  }: CategorySectionProps) {
-    const visible = useMemo(
-      () => products.slice(0, SECTION_VISIBLE_PRODUCTS),
-      [products],
-    );
-    const hasMore = products.length > SECTION_VISIBLE_PRODUCTS;
-    const handleSeeAll = useCallback(
-      () => onSeeAll(category.name),
-      [category.name, onSeeAll],
-    );
-
-    if (!products.length) return null;
-
-    return (
-      <View style={styles.section}>
-        <SectionHeader
-          title={category.name}
-          subtitle="Top picks"
-          onSeeAll={hasMore ? handleSeeAll : undefined}
-        />
-        <View style={styles.gridWrap}>
-          {visible.map((p) => (
-            <ProductCard
-              key={p.id}
-              p={p}
-              cartItem={cartItemsByProductId.get(p.id)}
-              onAdd={onAdd}
-              onUpdateQty={onUpdateQty}
-            />
-          ))}
-        </View>
-        {hasMore && (
-          <TouchableOpacity
-            style={styles.seeAllBar}
-            onPress={handleSeeAll}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.seeAllBarText}>
-              See all products in {category.name}
-            </Text>
-            <MaterialCommunityIcons
-              name="arrow-right"
-              size={16}
-              color={T.green}
-            />
-          </TouchableOpacity>
-        )}
-      </View>
-    );
-  },
-);
-
 // ─── Frequently-bought horizontal section ────────────────────────────────────
 const FrequentlyBoughtSection = React.memo(function FrequentlyBoughtSection({
   title,
@@ -1451,8 +1381,6 @@ const AddressBarBlock = React.memo(function AddressBarBlock({
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: T.cream },
 
-  // ── Scroll container ─────────────────────────────────────────────────────
-  scrollContent: { paddingBottom: 150 },
   flashListContent: { paddingBottom: 150 },
   productRow: {
     flexDirection: "row",

@@ -1,9 +1,9 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import {
     ActivityIndicator,
-    FlatList,
     InteractionManager,
     RefreshControl,
     StyleSheet,
@@ -16,21 +16,118 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { C } from "../../constants/colors";
 import { getCategoryBySlug, type Category } from "../../lib/categoryService";
-import { useCart } from "../../context/CartContext";
+import { useCart, useCartItemMap } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
 import { cdnImage } from "../../lib/imageUrl";
 import { getProductsByCategory, type Product as ServiceProduct } from "../../lib/productService";
 import StarRating from "../../components/StarRating";
 
 const FALLBACK_COLORS = [
-  "#FF6B6B", "#51CF66", "#FFD43B", "#845EF7", 
+  "#FF6B6B", "#51CF66", "#FFD43B", "#845EF7",
   "#339AF0", "#FAB005", "#E599F7", "#74C0FC"
 ];
 
 const FALLBACK_ICONS = [
-  "apple", "leaf", "cow", "cookie", 
+  "apple", "leaf", "cow", "cookie",
   "cup", "sack", "face-woman-shimmer", "home-outline"
 ];
+
+type ProductCardProps = {
+  item: ServiceProduct;
+  cartQty: number;
+  onAdd: (product: Omit<import("../../context/CartContext").CartItem, "quantity">) => void;
+  onUpdateQty: (productId: string, qty: number) => void;
+};
+
+const ProductCard = React.memo(function ProductCard({ item, cartQty, onAdd, onUpdateQty }: ProductCardProps) {
+  const hasDiscount = item.original_price != null && item.original_price > item.price;
+  const discountPct = hasDiscount
+    ? Math.round(((item.original_price! - item.price) / item.original_price!) * 100)
+    : 0;
+
+  return (
+    <View style={[styles.card, !item.in_stock && styles.cardOutOfStock]}>
+      <TouchableOpacity
+        activeOpacity={0.9}
+        onPress={() => router.push(`../product/${item.id}`)}
+      >
+        {item.image_url ? (
+          <Image
+            source={{ uri: cdnImage(item.image_url, 240) }}
+            style={styles.image}
+            contentFit="contain"
+            cachePolicy="memory-disk"
+            transition={120}
+            recyclingKey={item.id}
+            priority="low"
+          />
+        ) : (
+          <View style={styles.imagePlaceholder}>
+            <MaterialCommunityIcons name="image-off-outline" size={24} color={C.textLight} />
+          </View>
+        )}
+        {hasDiscount && (
+          <View style={styles.discountBadge}>
+            <Text style={styles.discountText}>{discountPct}% OFF</Text>
+          </View>
+        )}
+        {!item.in_stock && (
+          <View style={styles.outOfStockOverlay}>
+            <Text style={styles.outOfStockText}>Out of Stock</Text>
+          </View>
+        )}
+      </TouchableOpacity>
+
+      <View style={styles.cardBody}>
+        <Text style={styles.name} numberOfLines={2}>{item.name}</Text>
+        <View style={styles.priceRow}>
+          <Text style={styles.price}>₹{item.price}</Text>
+          {hasDiscount && (
+            <Text style={styles.originalPrice}>₹{item.original_price}</Text>
+          )}
+          <Text style={styles.unit}>{item.unit}</Text>
+        </View>
+
+        <View style={styles.ratingWrap}>
+          <StarRating rating={item.avgRating ?? 0} reviewCount={item.reviewCount} />
+        </View>
+
+        {item.in_stock ? (
+          cartQty > 0 ? (
+            <View style={styles.qtyRow}>
+              <TouchableOpacity style={styles.qtyBtn} onPress={() => onUpdateQty(item.id, cartQty - 1)}>
+                <Text style={styles.qtyBtnText}>−</Text>
+              </TouchableOpacity>
+              <Text style={styles.qtyText}>{cartQty}</Text>
+              <TouchableOpacity style={styles.qtyBtn} onPress={() => onUpdateQty(item.id, cartQty + 1)}>
+                <Text style={styles.qtyBtnText}>+</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={styles.addBtn}
+              onPress={() =>
+                onAdd({
+                  product_id: item.id,
+                  name: item.name,
+                  price: item.price,
+                  unit: item.unit,
+                  image_url: item.image_url,
+                })
+              }
+            >
+              <Text style={styles.addText}>ADD</Text>
+            </TouchableOpacity>
+          )
+        ) : (
+          <View style={styles.soldOutBtn}>
+            <Text style={styles.soldOutText}>Sold Out</Text>
+          </View>
+        )}
+      </View>
+    </View>
+  );
+});
 
 export default function CategorySlugScreen() {
   const { slug } = useLocalSearchParams<{ slug: string }>();
@@ -40,7 +137,8 @@ export default function CategorySlugScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { addItem, items, updateQty } = useCart();
+  const { addItem, updateQty } = useCart();
+  const cartItemsByProductId = useCartItemMap();
   const { location, isHydrated } = useLocation();
 
   const fetchData = useCallback(async (isRefresh = false) => {
@@ -87,6 +185,20 @@ export default function CategorySlugScreen() {
 
   const isEmpty = !loading && products.length === 0;
 
+  // Memoized render callback — stable reference across re-renders so FlashList
+  // doesn't recreate every cell when unrelated state (e.g. loading) changes.
+  const renderItem = useCallback(
+    ({ item }: ListRenderItemInfo<ServiceProduct>) => (
+      <ProductCard
+        item={item}
+        cartQty={cartItemsByProductId.get(item.id)?.quantity ?? 0}
+        onAdd={addItem}
+        onUpdateQty={updateQty}
+      />
+    ),
+    [cartItemsByProductId, addItem, updateQty],
+  );
+
   if (!category && !loading) {
     return (
       <SafeAreaView style={styles.safe}>
@@ -106,106 +218,6 @@ export default function CategorySlugScreen() {
 
   const categoryColor = category?.color || FALLBACK_COLORS[0];
   const categoryIcon = category?.icon || FALLBACK_ICONS[0];
-
-  const renderItem = ({ item }: { item: ServiceProduct }) => {
-    const cartItem = items.find((i) => i.product_id === item.id);
-    const hasDiscount = item.original_price != null && item.original_price > item.price;
-    const discountPct = hasDiscount
-      ? Math.round(((item.original_price! - item.price) / item.original_price!) * 100)
-      : 0;
-
-    return (
-      <View style={[styles.card, !item.in_stock && styles.cardOutOfStock]}>
-        <TouchableOpacity
-          activeOpacity={0.9}
-          onPress={() => router.push(`../product/${item.id}`)}
-        >
-          {item.image_url ? (
-            <Image
-              source={{ uri: cdnImage(item.image_url, 240) }}
-              style={styles.image}
-              contentFit="contain"
-              cachePolicy="memory-disk"
-              transition={120}
-              recyclingKey={item.id}
-              priority="low"
-            />
-          ) : (
-            <View style={styles.imagePlaceholder}>
-              <MaterialCommunityIcons name="image-off-outline" size={24} color={C.textLight} />
-            </View>
-          )}
-          {hasDiscount && (
-            <View style={styles.discountBadge}>
-              <Text style={styles.discountText}>{discountPct}% OFF</Text>
-            </View>
-          )}
-          {!item.in_stock && (
-            <View style={styles.outOfStockOverlay}>
-              <Text style={styles.outOfStockText}>Out of Stock</Text>
-            </View>
-          )}
-        </TouchableOpacity>
-
-        <View style={styles.cardBody}>
-          <Text style={styles.name} numberOfLines={2}>{item.name}</Text>
-          <View style={styles.priceRow}>
-            <Text style={styles.price}>₹{item.price}</Text>
-            {hasDiscount && (
-              <Text style={styles.originalPrice}>₹{item.original_price}</Text>
-            )}
-            <Text style={styles.unit}>{item.unit}</Text>
-          </View>
-
-          <View style={styles.ratingWrap}>
-            <StarRating
-              rating={item.avgRating ?? 0}
-              reviewCount={item.reviewCount}
-            />
-          </View>
-
-          {item.in_stock ? (
-            cartItem ? (
-              <View style={styles.qtyRow}>
-                <TouchableOpacity 
-                  style={styles.qtyBtn}
-                  onPress={() => updateQty(item.id, cartItem.quantity - 1)}
-                >
-                  <Text style={styles.qtyBtnText}>−</Text>
-                </TouchableOpacity>
-                <Text style={styles.qtyText}>{cartItem.quantity}</Text>
-                <TouchableOpacity 
-                  style={styles.qtyBtn}
-                  onPress={() => updateQty(item.id, cartItem.quantity + 1)}
-                >
-                  <Text style={styles.qtyBtnText}>+</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <TouchableOpacity
-                style={styles.addBtn}
-                onPress={() =>
-                  addItem({
-                    product_id: item.id,
-                    name: item.name,
-                    price: item.price,
-                    unit: item.unit,
-                    image_url: item.image_url,
-                  })
-                }
-              >
-                <Text style={styles.addText}>ADD</Text>
-              </TouchableOpacity>
-            )
-          ) : (
-            <View style={styles.soldOutBtn}>
-              <Text style={styles.soldOutText}>Sold Out</Text>
-            </View>
-          )}
-        </View>
-      </View>
-    );
-  };
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -252,17 +264,12 @@ export default function CategorySlugScreen() {
           <Text style={styles.emptyText}>No products available</Text>
         </View>
       ) : (
-        <FlatList
+        <FlashList
           data={products}
           keyExtractor={(item) => item.id}
           renderItem={renderItem}
-        numColumns={3}
-          columnWrapperStyle={styles.columnWrap}
+          numColumns={3}
           contentContainerStyle={styles.list}
-          removeClippedSubviews={true}
-          initialNumToRender={8}
-          maxToRenderPerBatch={8}
-          windowSize={5}
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
@@ -309,11 +316,6 @@ const styles = StyleSheet.create({
   list: { 
     padding: 16, 
     paddingBottom: 120,
-  },
-
-  columnWrap: { 
-    justifyContent: "space-between", 
-    marginBottom: 12,
   },
 
   card: {

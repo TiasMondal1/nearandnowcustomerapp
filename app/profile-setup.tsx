@@ -120,40 +120,23 @@ export default function ProfileSetupScreen() {
 
   const reverseGeocode = useCallback(
     async (latitude: number, longitude: number) => {
-      console.log("RG called with:", latitude, longitude);
-
-      if (!GOOGLE_MAPS_API_KEY) {
-        console.log("❌ No Google Maps API key");
-        return;
-      }
-
-      if (isGeocodingRef.current) {
-        console.log("⏳ Geocode locked");
-        return;
-      }
+      if (!GOOGLE_MAPS_API_KEY) return;
+      if (isGeocodingRef.current) return;
 
       isGeocodingRef.current = true;
       setReverseLoading(true);
 
       try {
         const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${GOOGLE_MAPS_API_KEY}`;
-        console.log("Fetching:", url);
-
         const res = await fetch(url);
         const json = await res.json();
 
-        console.log("Geocode response:", json);
-
-        if (json.status !== "OK" || !json.results?.[0]) {
-          console.log("❌ No valid geocode result");
-          return;
-        }
+        if (json.status !== "OK" || !json.results?.[0]) return;
 
         const result = json.results[0];
         setFormattedAddress(result.formatted_address || "");
-        console.log("✅ Address:", result.formatted_address);
-      } catch (e) {
-        console.log("❌ Geocode error:", e);
+      } catch {
+        // Reverse geocode is best-effort; don't surface network errors to the user.
       } finally {
         setReverseLoading(false);
         isGeocodingRef.current = false;

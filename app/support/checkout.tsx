@@ -23,7 +23,7 @@ import { useAuth } from "../../context/AuthContext";
 import { useCart } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
 import { usePaymentFlow } from "../../hooks/usePaymentFlow";
-import { getProductStoreDistance } from "../../lib/distanceUtils";
+import { getBatchProductStoreDistances } from "../../lib/distanceUtils";
 import { cdnImage } from "../../lib/imageUrl";
 import { markOrderPlaced } from "../../lib/orderHistoryFlag";
 import { createOrder, type Order } from "../../lib/orderService";
@@ -106,10 +106,11 @@ export default function CheckoutScreen() {
     const calculateMaxDistance = async () => {
       setLoadingDistance(true);
       try {
-        const distances = await Promise.all(
-          items.map((item) =>
-            getProductStoreDistance(item.product_id, location.latitude, location.longitude),
-          ),
+        // Single batched query instead of one DB round-trip per cart item.
+        const distances = await getBatchProductStoreDistances(
+          items.map((item) => item.product_id),
+          location.latitude,
+          location.longitude,
         );
         const max = Math.max(...distances);
         setMaxDistance(Math.min(max, 4));
@@ -1325,39 +1326,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 
-  // No bag toggle
-  noBagRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  noBagTitle: { color: C.text, fontSize: 14, fontWeight: "700" },
-  noBagEmoji: { fontSize: 14 },
-  noBagSub: { color: C.textSub, fontSize: 12, marginTop: 3, lineHeight: 17 },
-  toggleSwitch: {
-    width: 46,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: C.border,
-    padding: 2,
-    justifyContent: "center",
-  },
-  toggleSwitchOn: { backgroundColor: C.primary },
-  toggleKnob: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: "#fff",
-    alignSelf: "flex-start",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  toggleKnobOn: { alignSelf: "flex-end" },
-
   // Tip
   tipHeaderRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 },
   tipTitle: {
@@ -1489,93 +1457,6 @@ const styles = StyleSheet.create({
   orderForChipTextActive: {
     color: C.primary,
   },
-  inputGroup: { marginBottom: 12 },
-  inputIconRow: { flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 7 },
-  fieldLabel: { color: C.textSub, fontSize: 12, fontWeight: "700" },
-  textInputFilled: { borderColor: C.primary },
-  fieldHint: { color: C.textLight, fontSize: 11, marginTop: 4, marginLeft: 2 },
-
-  // Section
-  sectionHeader: { flexDirection: "row", alignItems: "center", marginBottom: 12, gap: 8 },
-  sectionTitle: { color: C.text, fontSize: 13, fontWeight: "900", letterSpacing: 0.3, textTransform: "uppercase" },
-  optionalTag: {
-    color: C.textLight,
-    fontSize: 10,
-    fontWeight: "600",
-    backgroundColor: C.bgSoft,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 20,
-  },
-
-  // Recipient
-  recipientBox: {
-    backgroundColor: C.card,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: C.primaryLight,
-    gap: 2,
-  },
-  recipientBoxHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 14,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  recipientBoxTitle: { color: C.text, fontSize: 13, fontWeight: "800", flex: 1 },
-  recipientBoxNote: {
-    color: C.textLight,
-    fontSize: 10,
-    fontWeight: "500",
-    backgroundColor: C.bgSoft,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 20,
-  },
-  recipientFieldRow: { flexDirection: "row", gap: 10 },
-  phoneInputRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  phonePrefix: {
-    height: 44,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: C.border,
-    backgroundColor: C.bgSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  phonePrefixText: { fontSize: 13, fontWeight: "600", color: C.text },
-  phoneInputField: { flex: 1, marginBottom: 0 },
-  recipientPreview: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginTop: 10,
-    backgroundColor: "#f0fff4",
-    borderRadius: 10,
-    paddingVertical: 9,
-    paddingHorizontal: 12,
-  },
-  recipientPreviewText: { color: C.textSub, fontSize: 12, flex: 1 },
-
-  // Accept checkbox
-  acceptRow: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 6,
-    borderWidth: 1.5,
-    borderColor: C.border,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 1,
-  },
-  checkboxActive: { backgroundColor: C.primary, borderColor: C.primary },
-  acceptText: { color: C.textSub, fontSize: 12, flex: 1, lineHeight: 18 },
-
   // Pay dock
   payDock: {
     position: "absolute",

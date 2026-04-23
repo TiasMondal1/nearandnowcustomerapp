@@ -103,27 +103,57 @@ export async function getCurrentUserFromSession(
   userId: string,
 ): Promise<{ user: AppUser; customer?: Customer } | null> {
   try {
+    // Single query: join app_users → customers in one round-trip via Supabase
+    // FK embed. Previously this was two sequential queries (user then customer)
+    // which doubled the cold-start latency on every session restore.
     const { data: appUser, error } = await supabaseAdmin
       .from('app_users')
-      .select('id, name, email, phone, role, is_activated, created_at, updated_at')
+      .select('id, name, email, phone, role, is_activated, created_at, updated_at, customers(*)')
       .eq('id', userId)
       .single();
 
     if (error || !appUser) return null;
 
-    if (appUser.role === 'customer') {
-      const { data: customer } = await supabaseAdmin
-        .from('customers')
-        .select('*')
-        .eq('user_id', appUser.id)
+    const user = {
+      id: (appUser as any).id,
+      name: (appUser as any).name,
+      email: (appUser as any).email,
+      phone: (appUser as any).phone,
+      role: (appUser as any).role,
+      is_activated: (appUser as any).is_activated,
+      created_at: (appUser as any).created_at,
+      updated_at: (appUser as any).updated_at,
+    } as AppUser;
+
+    const rawCustomer = (appUser as any).customers;
+    const customer: Customer | undefined = Array.isArray(rawCustomer)
+      ? (rawCustomer[0] as Customer | undefined)
+      : rawCustomer || undefined;
+
+    return { user, customer };
+  } catch {
+    // Fallback to two-query approach if the FK embed isn't available.
+    try {
+      const { data: appUser, error } = await supabaseAdmin
+        .from('app_users')
+        .select('id, name, email, phone, role, is_activated, created_at, updated_at')
+        .eq('id', userId)
         .single();
 
-      return { user: appUser as AppUser, customer: customer || undefined };
-    }
+      if (error || !appUser) return null;
 
-    return { user: appUser as AppUser };
-  } catch {
-    return null;
+      if ((appUser as any).role === 'customer') {
+        const { data: customer } = await supabaseAdmin
+          .from('customers')
+          .select('*')
+          .eq('user_id', (appUser as any).id)
+          .single();
+        return { user: appUser as AppUser, customer: customer || undefined };
+      }
+      return { user: appUser as AppUser };
+    } catch {
+      return null;
+    }
   }
 }
 

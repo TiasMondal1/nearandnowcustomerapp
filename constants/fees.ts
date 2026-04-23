@@ -4,7 +4,7 @@ export const DELIVERY_FEE = 25;
 // 5% GST is applied only on Platform Fee + Handling Charges.
 export const GST_RATE = 0.05;
 
-export function calcDeliveryFee(distanceKm: number): number {
+export function calcDeliveryFee(): number {
   return DELIVERY_FEE;
 }
 
@@ -29,7 +29,7 @@ export function calcOrderTotal(
 } {
   const platformFee = PLATFORM_FEE;
   const handlingFee = HANDLING_FEE;
-  const deliveryFee = calcDeliveryFee(distanceKm);
+  const deliveryFee = calcDeliveryFee();
   const gst = (platformFee + handlingFee) * GST_RATE;
   const projected = subtotal + platformFee + handlingFee + deliveryFee + gst;
   const finalPayable = Math.round(Math.max(projected - discount, 0));

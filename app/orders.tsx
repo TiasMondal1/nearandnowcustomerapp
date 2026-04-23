@@ -1,10 +1,10 @@
+import { FlashList } from "@shopify/flash-list";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
-    FlatList,
     InteractionManager,
     RefreshControl,
     StyleSheet,
@@ -31,6 +31,109 @@ function formatDate(iso: string) {
     " · " +
     d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
 }
+
+const OrderCard = React.memo(function OrderCard({
+  item,
+  paymentPhase,
+  onRetryPayment,
+}: {
+  item: Order;
+  paymentPhase: string;
+  onRetryPayment: (order: Order) => void;
+}) {
+  const status = item.order_status ?? "";
+  const meta = getStatusMeta(status);
+
+  const paymentMethod = (item.payment_method ?? "").toLowerCase();
+  const isOnline = paymentMethod !== "cod" && paymentMethod !== "cash_on_delivery";
+  const isCancelled = CANCELLED_STATUSES.includes(status as any);
+  const isDelivered = status === "order_delivered";
+  const needsPayment =
+    isOnline && item.payment_status === "pending" && !isCancelled;
+
+  const totalLabel = item.payment_status === "paid" ? "Total paid" : "Total payable";
+
+  return (
+    <View style={styles.card}>
+      <View style={styles.cardHeader}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.orderNum}>#{item.order_number || item.id.slice(0, 8).toUpperCase()}</Text>
+          <Text style={styles.orderDate}>{formatDate(item.created_at)}</Text>
+        </View>
+        <View style={{ alignItems: "flex-end", gap: 6 }}>
+          <View style={[styles.statusBadge, { backgroundColor: meta.bg }]}>
+            <Text style={[styles.statusText, { color: meta.color }]}>{meta.label}</Text>
+          </View>
+          {needsPayment && (
+            <View style={[styles.statusBadge, { backgroundColor: C.warningLight }]}>
+              <Text style={[styles.statusText, { color: C.warning }]}>Payment pending</Text>
+            </View>
+          )}
+        </View>
+      </View>
+
+      <View style={styles.itemsWrap}>
+        {item.items?.slice(0, 3).map((it, idx) => (
+          <Text key={idx} style={styles.itemLine} numberOfLines={1}>
+            • {it.name} ×{it.quantity}
+          </Text>
+        ))}
+        {(item.items?.length ?? 0) > 3 && (
+          <Text style={styles.moreItems}>+{item.items!.length - 3} more items</Text>
+        )}
+      </View>
+
+      <View style={styles.cardFooter}>
+        <View>
+          <Text style={styles.totalLabel}>{totalLabel}</Text>
+          <Text style={styles.total}>₹{Number(item.order_total).toFixed(2)}</Text>
+        </View>
+        {needsPayment ? (
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <TouchableOpacity
+              style={[styles.trackBtn, styles.secondaryBtn]}
+              onPress={() => router.push(`/order/${item.id}` as any)}
+            >
+              <Text style={[styles.trackText, { color: C.text }]}>Details</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.trackBtn, styles.payNowBtn]}
+              onPress={() => onRetryPayment(item)}
+              disabled={paymentPhase !== "idle"}
+            >
+              <MaterialCommunityIcons name="credit-card-fast-outline" size={14} color="#fff" />
+              <Text style={styles.trackText}>Pay now</Text>
+            </TouchableOpacity>
+          </View>
+        ) : isDelivered ? (
+          <TouchableOpacity
+            style={[styles.trackBtn, styles.invoiceBtn]}
+            onPress={() => router.push(`/order/${item.id}` as any)}
+          >
+            <MaterialCommunityIcons name="file-document-outline" size={14} color="#fff" />
+            <Text style={styles.trackText}>View Invoice</Text>
+          </TouchableOpacity>
+        ) : isCancelled ? (
+          <TouchableOpacity
+            style={[styles.trackBtn, styles.detailsBtn]}
+            onPress={() => router.push(`/order/${item.id}` as any)}
+          >
+            <MaterialCommunityIcons name="information-outline" size={14} color="#fff" />
+            <Text style={styles.trackText}>View Details</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={styles.trackBtn}
+            onPress={() => router.push(`/order/track/${item.id}` as any)}
+          >
+            <MaterialCommunityIcons name="map-marker-path" size={14} color="#fff" />
+            <Text style={styles.trackText}>Track Order</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  );
+});
 
 export default function OrdersScreen() {
   const { userId, user, customer } = useAuth();
@@ -122,100 +225,9 @@ export default function OrdersScreen() {
     [payForOrder, user, customer, fetchOrders],
   );
 
-  const renderOrder = ({ item }: { item: Order }) => {
-    const status = item.order_status ?? "";
-    const meta = getStatusMeta(status);
-
-    const paymentMethod = (item.payment_method ?? "").toLowerCase();
-    const isOnline = paymentMethod !== "cod" && paymentMethod !== "cash_on_delivery";
-    const isCancelled = CANCELLED_STATUSES.includes(status as any);
-    const isDelivered = status === "order_delivered";
-    const needsPayment =
-      isOnline && item.payment_status === "pending" && !isCancelled;
-
-    const totalLabel = item.payment_status === "paid" ? "Total paid" : "Total payable";
-
-    return (
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.orderNum}>#{item.order_number || item.id.slice(0, 8).toUpperCase()}</Text>
-            <Text style={styles.orderDate}>{formatDate(item.created_at)}</Text>
-          </View>
-          <View style={{ alignItems: "flex-end", gap: 6 }}>
-            <View style={[styles.statusBadge, { backgroundColor: meta.bg }]}>
-              <Text style={[styles.statusText, { color: meta.color }]}>{meta.label}</Text>
-            </View>
-            {needsPayment && (
-              <View style={[styles.statusBadge, { backgroundColor: C.warningLight }]}>
-                <Text style={[styles.statusText, { color: C.warning }]}>Payment pending</Text>
-              </View>
-            )}
-          </View>
-        </View>
-
-        <View style={styles.itemsWrap}>
-          {item.items?.slice(0, 3).map((it, idx) => (
-            <Text key={idx} style={styles.itemLine} numberOfLines={1}>
-              • {it.name} ×{it.quantity}
-            </Text>
-          ))}
-          {(item.items?.length ?? 0) > 3 && (
-            <Text style={styles.moreItems}>+{item.items!.length - 3} more items</Text>
-          )}
-        </View>
-
-        <View style={styles.cardFooter}>
-          <View>
-            <Text style={styles.totalLabel}>{totalLabel}</Text>
-            <Text style={styles.total}>₹{Number(item.order_total).toFixed(2)}</Text>
-          </View>
-          {needsPayment ? (
-            <View style={{ flexDirection: "row", gap: 8 }}>
-              <TouchableOpacity
-                style={[styles.trackBtn, styles.secondaryBtn]}
-                onPress={() => router.push(`/order/${item.id}` as any)}
-              >
-                <Text style={[styles.trackText, { color: C.text }]}>Details</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.trackBtn, styles.payNowBtn]}
-                onPress={() => handleRetryPayment(item)}
-                disabled={paymentPhase !== "idle"}
-              >
-                <MaterialCommunityIcons name="credit-card-fast-outline" size={14} color="#fff" />
-                <Text style={styles.trackText}>Pay now</Text>
-              </TouchableOpacity>
-            </View>
-          ) : isDelivered ? (
-            <TouchableOpacity
-              style={[styles.trackBtn, styles.invoiceBtn]}
-              onPress={() => router.push(`/order/${item.id}` as any)}
-            >
-              <MaterialCommunityIcons name="file-document-outline" size={14} color="#fff" />
-              <Text style={styles.trackText}>View Invoice</Text>
-            </TouchableOpacity>
-          ) : isCancelled ? (
-            <TouchableOpacity
-              style={[styles.trackBtn, styles.detailsBtn]}
-              onPress={() => router.push(`/order/${item.id}` as any)}
-            >
-              <MaterialCommunityIcons name="information-outline" size={14} color="#fff" />
-              <Text style={styles.trackText}>View Details</Text>
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              style={styles.trackBtn}
-              onPress={() => router.push(`/order/track/${item.id}` as any)}
-            >
-              <MaterialCommunityIcons name="map-marker-path" size={14} color="#fff" />
-              <Text style={styles.trackText}>Track Order</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      </View>
-    );
-  };
+  const renderOrder = useCallback(({ item }: { item: Order }) => (
+    <OrderCard item={item} paymentPhase={paymentPhase} onRetryPayment={handleRetryPayment} />
+  ), [paymentPhase, handleRetryPayment]);
 
   const Header = (
     <View style={styles.header}>
@@ -270,15 +282,11 @@ export default function OrdersScreen() {
     <SafeAreaView style={styles.safe}>
       {Header}
 
-      <FlatList
+      <FlashList
         data={orders}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.list}
         showsVerticalScrollIndicator={false}
-        removeClippedSubviews={true}
-        initialNumToRender={8}
-        maxToRenderPerBatch={8}
-        windowSize={5}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}

@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import type { Category } from './categoryService';
-import { supabaseAdmin } from './supabase';
+import { supabase } from './supabase';
 
 // Real schema columns for popularity sorting are `rating` and `rating_count`
 // (NOT `avg_rating` / `review_count`).
@@ -66,14 +66,14 @@ async function fetchAllMasterProductRows(
   const batchSize = 1000;
   let hasMore = true;
   while (hasMore) {
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await supabase
       .from('master_products')
       .select(fields)
       .eq('is_active', true)
       .range(from, from + batchSize - 1);
     if (error) throw new Error(`Database error: ${error.message}`);
     if (data && data.length > 0) {
-      allRows.push(...(data as MasterProductRow[]));
+      allRows.push(...(data as unknown as MasterProductRow[]));
       from += batchSize;
       hasMore = data.length === batchSize;
     } else {
@@ -185,7 +185,7 @@ export async function getAllProducts(_options?: {
 export async function loadMasterCatalogFast(
   limit: number = 500,
 ): Promise<{ products: Product[]; productsByCategory: Record<string, Product[]> }> {
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await supabase
     .from('master_products')
     .select(HOME_PRODUCT_FIELDS)
     .eq('is_active', true)
@@ -218,16 +218,35 @@ export async function getProductsByCategory(
   const trimmed = categoryName.trim();
   if (!trimmed) return [];
 
-  const { data, error } = await supabaseAdmin
+  // Use eq() for exact match instead of ilike() — eq() uses the B-tree index on
+  // `category` directly; ilike() forces a sequential scan even with pg_trgm.
+  // Category names are stored with consistent casing so exact match is safe.
+  // If the category name comes in with different casing, try both.
+  const { data, error } = await supabase
     .from('master_products')
     .select(HOME_PRODUCT_FIELDS)
     .eq('is_active', true)
-    .ilike('category', trimmed) // case-insensitive exact match
+    .eq('category', trimmed)
     .order('rating', { ascending: false, nullsFirst: false })
     .order('rating_count', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false });
 
   if (error) throw new Error(`Category fetch error: ${error.message}`);
+
+  // If exact match returned nothing, retry with ilike (handles casing mismatch).
+  if (!data || data.length === 0) {
+    const { data: fallback, error: ferr } = await supabase
+      .from('master_products')
+      .select(HOME_PRODUCT_FIELDS)
+      .eq('is_active', true)
+      .ilike('category', trimmed)
+      .order('rating', { ascending: false, nullsFirst: false })
+      .order('rating_count', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false });
+    if (!ferr && fallback) {
+      return (fallback || []).map((r) => masterRowToProduct(r as MasterProductRow));
+    }
+  }
   return (data || []).map((r) => masterRowToProduct(r as MasterProductRow));
 }
 
@@ -248,15 +267,30 @@ export async function searchProducts(
   const q = query.trim();
   if (!q) return [];
 
-  // Supabase requires escaping % in `or` filters. Sanitize aggressively.
+  // Fast path: SECURITY DEFINER RPC uses the pg_trgm GIN index for O(log n)
+  // substring search instead of a full table scan. Falls back to ilike if the
+  // function hasn't been deployed yet.
+  try {
+    const { data, error } = await supabase.rpc('search_products', {
+      query: q.slice(0, 64),
+      result_limit: 50,
+    });
+    if (!error && Array.isArray(data) && data.length > 0) {
+      return (data as MasterProductRow[]).map(masterRowToProduct);
+    }
+  } catch {
+    // RPC not deployed yet — fall through to ilike fallback.
+  }
+
+  // Fallback: ilike filter (full table scan, still server-side — fast enough for 44k rows).
   const safe = q.replace(/[%,]/g, ' ').slice(0, 64);
   const pattern = `%${safe}%`;
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await supabase
     .from('master_products')
     .select(HOME_PRODUCT_FIELDS)
     .eq('is_active', true)
-    .or(`name.ilike.${pattern},category.ilike.${pattern},brand.ilike.${pattern}`)
+    .or(`name.ilike.${pattern},category.ilike.${pattern}`)
     .order('rating', { ascending: false, nullsFirst: false })
     .order('rating_count', { ascending: false, nullsFirst: false })
     .limit(50);
@@ -300,20 +334,56 @@ export function getProductsForCategoryName(
 /* ───────────── Fast boot helpers (paginated) ───────────── */
 
 /**
- * Fetches only the `category` column for all active master products and tallies per-category
- * counts in memory. One small round-trip (category strings only) → no DB aggregation needed.
+ * Returns per-category product counts via a single server-side GROUP BY query.
+ * Previously this fetched all 44k category strings in 1000-row batches and
+ * counted client-side (up to 44 round-trips). Now it's one round-trip that
+ * returns only the aggregated rows — O(1) instead of O(n/1000) network calls.
+ *
+ * Requires a Postgres function or an RPC if the anon key doesn't allow
+ * direct aggregation. Falls back to the paginated approach if the RPC isn't
+ * available so existing deployments don't break.
+ *
+ * Recommended DB migration (run once in Supabase SQL editor):
+ *   CREATE OR REPLACE FUNCTION get_category_counts()
+ *   RETURNS TABLE(category text, cnt bigint)
+ *   LANGUAGE sql STABLE SECURITY DEFINER AS $$
+ *     SELECT LOWER(TRIM(COALESCE(category,'Uncategorized'))) AS category,
+ *            COUNT(*) AS cnt
+ *     FROM master_products
+ *     WHERE is_active = true
+ *     GROUP BY 1;
+ *   $$;
  */
 export async function getCategoryCounts(): Promise<{
   counts: Record<string, number>;
   total: number;
 }> {
+  // Fast path: single-query aggregate via RPC.
+  try {
+    const { data, error } = await supabase.rpc('get_category_counts');
+    if (!error && Array.isArray(data) && data.length > 0) {
+      const counts: Record<string, number> = {};
+      let total = 0;
+      for (const row of data as { category: string; cnt: number | string }[]) {
+        const key = (row.category || 'Uncategorized').toLowerCase().trim();
+        const n = Number(row.cnt) || 0;
+        counts[key] = n;
+        total += n;
+      }
+      return { counts, total };
+    }
+  } catch {
+    // RPC not deployed yet — fall through to paginated fallback.
+  }
+
+  // Fallback: paginated client-side count (legacy behaviour, O(n/1000) trips).
   const counts: Record<string, number> = {};
   let total = 0;
   let from = 0;
   const batchSize = 1000;
   let hasMore = true;
   while (hasMore) {
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await supabase
       .from('master_products')
       .select('category')
       .eq('is_active', true)
@@ -351,7 +421,7 @@ export async function getProductsPage(
   offset: number,
   limit: number = HOME_PAGE_SIZE,
 ): Promise<Product[]> {
-  let query = supabaseAdmin
+  let query = supabase
     .from('master_products')
     .select(MASTER_PRODUCT_FIELDS)
     .eq('is_active', true);
@@ -370,7 +440,7 @@ export async function getProductsPage(
 
 export async function getProductById(masterProductId: string): Promise<Product | null> {
   try {
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await supabase
       .from('master_products')
       .select(MASTER_PRODUCT_FIELDS)
       .eq('id', masterProductId)

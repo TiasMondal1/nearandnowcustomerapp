@@ -242,7 +242,8 @@ async function getUserOrdersFromSupabase(userId: string): Promise<Order[]> {
     `,
     )
     .eq('customer_id', userId)
-    .order('placed_at', { ascending: false });
+    .order('placed_at', { ascending: false })
+    .limit(50);
 
   if (error) throw new Error(error.message);
   const rows = (data || []) as unknown as BackendCustomerOrder[];
