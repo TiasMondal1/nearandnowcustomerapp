@@ -83,13 +83,14 @@ module.exports = {
         },
       ],
       [
-        "@sentry/react-native/expo",
+        "@sentry/react-native",
         {
           url: "https://sentry.io/",
           project: "react-native",
           organization: "near-now",
         },
       ],
+      "expo-web-browser",
     ],
     extra: {
       eas: {
