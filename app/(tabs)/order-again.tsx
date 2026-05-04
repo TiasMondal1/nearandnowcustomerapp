@@ -13,6 +13,9 @@ import {
     Text,
     TouchableOpacity,
     View,
+    LayoutAnimation,
+    Platform,
+    UIManager,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -38,7 +41,12 @@ import {
     type Product,
 } from "../../lib/productService";
 
-// ─── Design tokens (reused / aligned with home) ─────────────────────────────
+// Enable LayoutAnimation on Android
+if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
+    UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
+// ─── Design tokens ─────────────────────────────────────────────────────────────
 const T = {
   green: "#2D7A4F",
   greenLight: "#3DA668",
@@ -50,19 +58,519 @@ const T = {
   barkLight: "#A89282",
   cardBorder: "rgba(60,47,30,0.08)",
   tile: "#F7F5EF",
+  orderCard: "#FFFFFF",
+  orderBorder: "rgba(60,47,30,0.10)",
+  statusDelivered: "#2D7A4F",
+  statusPending: "#C97B1A",
+  statusCancelled: "#C0392B",
 };
 
-/**
- * Unified "renderable" shape. Backed by either:
- *   • an order-item (`source`) that couldn't be matched in the live catalog
- *     (still renders with stored name / price / image so the user can see it), or
- *   • an order-item PLUS a live catalog Product (`product`) that gives us
- *     current price / discount / stock and is used to add to cart.
- *
- * Keeping both means the UI renders even before the catalog cache loads, and
- * doesn't go blank for items that were only found by `products.master_product_id`
- * server-side.
- */
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Format a date string or ISO timestamp to a human-readable date. */
+function formatOrderDate(dateStr: string | null | undefined): string {
+  if (!dateStr) return "Unknown date";
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return "Unknown date";
+    return d.toLocaleDateString("en-IN", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  } catch {
+    return "Unknown date";
+  }
+}
+
+/** Format a time from ISO string. */
+function formatOrderTime(dateStr: string | null | undefined): string {
+  if (!dateStr) return "";
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return "";
+    return d.toLocaleTimeString("en-IN", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+  } catch {
+    return "";
+  }
+}
+
+/** Derive a display status from the order object. Adjust field names to match your schema. */
+function getOrderStatus(order: Order): { label: string; color: string; icon: string } {
+  const status = (order as any).status ?? (order as any).order_status ?? "";
+  switch (status.toLowerCase()) {
+    case "delivered":
+      return { label: "Delivered", color: T.statusDelivered, icon: "check-circle-outline" };
+    case "cancelled":
+    case "canceled":
+      return { label: "Cancelled", color: T.statusCancelled, icon: "close-circle-outline" };
+    case "processing":
+    case "confirmed":
+      return { label: "Processing", color: T.statusPending, icon: "clock-outline" };
+    case "out_for_delivery":
+    case "out for delivery":
+      return { label: "Out for delivery", color: T.statusPending, icon: "truck-delivery-outline" };
+    default:
+      return { label: "Completed", color: T.statusDelivered, icon: "check-circle-outline" };
+  }
+}
+
+/** Compute total from order items. Adjust field names to your schema. */
+function getOrderTotal(order: Order): number {
+  const total = (order as any).total_amount ?? (order as any).total ?? (order as any).amount;
+  if (total != null) return Number(total);
+  // Fallback: sum items
+  const items: any[] = (order as any).order_items ?? (order as any).items ?? [];
+  return items.reduce((sum, it) => sum + (Number(it.price ?? 0) * Number(it.quantity ?? 1)), 0);
+}
+
+/** Get items array from an order. */
+function getOrderItems(order: Order): any[] {
+  return (order as any).order_items ?? (order as any).items ?? [];
+}
+
+/** Unique stable id for an order. */
+function getOrderId(order: Order): string {
+  return String((order as any).id ?? (order as any).order_id ?? Math.random());
+}
+
+// ─── Previous Order Card ──────────────────────────────────────────────────────
+const PreviousOrderCard = React.memo(function PreviousOrderCard({
+  order,
+  onReorderAll,
+  allProducts,
+}: {
+  order: Order;
+  onReorderAll: (order: Order) => void;
+  allProducts: Product[] | null;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const items = getOrderItems(order);
+  const total = getOrderTotal(order);
+  const orderId = getOrderId(order);
+  const createdAt = (order as any).created_at ?? (order as any).ordered_at ?? (order as any).date;
+  const status = getOrderStatus(order);
+
+  // Build enriched item list
+  const enrichedItems = useMemo(() => {
+    const byId = new Map<string, Product>();
+    if (allProducts) for (const p of allProducts) byId.set(p.id, p);
+
+    return items.map((it: any) => {
+      const productId = it.master_product_id ?? it.product_id ?? it.id;
+      const catalog = productId ? byId.get(String(productId)) : undefined;
+      return {
+        id: String(it.id ?? Math.random()),
+        name: catalog?.name ?? it.name ?? it.product_name ?? "Item",
+        image: catalog?.image_url ?? it.image_url ?? it.image,
+        price: catalog?.price ?? Number(it.price ?? 0),
+        qty: Number(it.quantity ?? 1),
+        unit: catalog?.unit ?? it.unit ?? "",
+      };
+    });
+  }, [items, allProducts]);
+
+  const previewItems = enrichedItems.slice(0, 3);
+  const moreCount = enrichedItems.length - previewItems.length;
+
+  const toggleExpand = useCallback(() => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setExpanded((v) => !v);
+  }, []);
+
+  const handleReorder = useCallback(() => onReorderAll(order), [onReorderAll, order]);
+
+  return (
+    <View style={orderStyles.card}>
+      {/* Order header */}
+      <View style={orderStyles.cardHeader}>
+        <View style={orderStyles.headerLeft}>
+          <View style={orderStyles.orderIdRow}>
+            <MaterialCommunityIcons name="receipt" size={14} color={T.green} />
+            <Text style={orderStyles.orderId} numberOfLines={1}>
+              Order #{orderId.slice(-8).toUpperCase()}
+            </Text>
+          </View>
+          <View style={orderStyles.dateRow}>
+            <MaterialCommunityIcons name="calendar-outline" size={12} color={T.barkLight} />
+            <Text style={orderStyles.dateText}>
+              {formatOrderDate(createdAt)}
+              {formatOrderTime(createdAt) ? `  ·  ${formatOrderTime(createdAt)}` : ""}
+            </Text>
+          </View>
+        </View>
+        <View style={orderStyles.headerRight}>
+          <View style={[orderStyles.statusBadge, { borderColor: status.color + "30", backgroundColor: status.color + "12" }]}>
+            <MaterialCommunityIcons name={status.icon as any} size={11} color={status.color} />
+            <Text style={[orderStyles.statusText, { color: status.color }]}>{status.label}</Text>
+          </View>
+          <Text style={orderStyles.totalText}>₹{total.toFixed(0)}</Text>
+        </View>
+      </View>
+
+      {/* Item preview strip */}
+      <View style={orderStyles.itemStrip}>
+        {previewItems.map((it) => (
+          <View key={it.id} style={orderStyles.previewItem}>
+            <View style={orderStyles.previewImageWrap}>
+              {it.image ? (
+                <Image
+                  source={{ uri: cdnImage(it.image, 80) }}
+                  style={orderStyles.previewImage}
+                  contentFit="contain"
+                  cachePolicy="memory-disk"
+                  transition={80}
+                />
+              ) : (
+                <MaterialCommunityIcons name="package-variant-closed" size={18} color={T.barkLight} />
+              )}
+            </View>
+          </View>
+        ))}
+        {moreCount > 0 && (
+          <View style={orderStyles.moreCountBubble}>
+            <Text style={orderStyles.moreCountText}>+{moreCount}</Text>
+          </View>
+        )}
+        <View style={{ flex: 1 }} />
+        <Text style={orderStyles.itemCountText}>
+          {enrichedItems.length} item{enrichedItems.length !== 1 ? "s" : ""}
+        </Text>
+      </View>
+
+      {/* Expanded item list */}
+      {expanded && (
+        <View style={orderStyles.expandedList}>
+          {enrichedItems.map((it) => (
+            <View key={it.id} style={orderStyles.expandedItem}>
+              <View style={orderStyles.expandedImageWrap}>
+                {it.image ? (
+                  <Image
+                    source={{ uri: cdnImage(it.image, 80) }}
+                    style={orderStyles.expandedImage}
+                    contentFit="contain"
+                    cachePolicy="memory-disk"
+                  />
+                ) : (
+                  <MaterialCommunityIcons name="package-variant-closed" size={16} color={T.barkLight} />
+                )}
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={orderStyles.expandedItemName} numberOfLines={1}>{it.name}</Text>
+                {it.unit ? <Text style={orderStyles.expandedItemUnit}>{it.unit}</Text> : null}
+              </View>
+              <View style={orderStyles.expandedItemRight}>
+                <Text style={orderStyles.expandedItemQty}>×{it.qty}</Text>
+                <Text style={orderStyles.expandedItemPrice}>₹{(it.price * it.qty).toFixed(0)}</Text>
+              </View>
+            </View>
+          ))}
+          <View style={orderStyles.expandedTotal}>
+            <Text style={orderStyles.expandedTotalLabel}>Order total</Text>
+            <Text style={orderStyles.expandedTotalValue}>₹{total.toFixed(0)}</Text>
+          </View>
+        </View>
+      )}
+
+      {/* Footer actions */}
+      <View style={orderStyles.cardFooter}>
+        <TouchableOpacity style={orderStyles.expandBtn} onPress={toggleExpand} hitSlop={8}>
+          <Text style={orderStyles.expandBtnText}>{expanded ? "Hide details" : "View details"}</Text>
+          <MaterialCommunityIcons
+            name={expanded ? "chevron-up" : "chevron-down"}
+            size={14}
+            color={T.green}
+          />
+        </TouchableOpacity>
+        <TouchableOpacity style={orderStyles.reorderBtn} onPress={handleReorder} activeOpacity={0.85}>
+          <MaterialCommunityIcons name="refresh" size={14} color={T.white} />
+          <Text style={orderStyles.reorderBtnText}>Reorder All</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+});
+
+// ─── Previous Orders Section ──────────────────────────────────────────────────
+const PreviousOrdersSection = React.memo(function PreviousOrdersSection({
+  orders,
+  onReorderAll,
+  allProducts,
+}: {
+  orders: Order[];
+  onReorderAll: (order: Order) => void;
+  allProducts: Product[] | null;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  const visible = showAll ? orders : orders.slice(0, 3);
+
+  return (
+    <View style={[styles.section, { borderTopWidth: 0, paddingHorizontal: 16 }]}>
+      <View style={orderStyles.sectionHeader}>
+        <View>
+          <Text style={[styles.sectionTitle, { paddingHorizontal: 0 }]}>Previous Orders</Text>
+          <Text style={orderStyles.sectionSubtitle}>{orders.length} order{orders.length !== 1 ? "s" : ""} placed</Text>
+        </View>
+        <View style={orderStyles.historyBadge}>
+          <MaterialCommunityIcons name="history" size={14} color={T.green} />
+        </View>
+      </View>
+
+      {visible.map((order) => (
+        <PreviousOrderCard
+          key={getOrderId(order)}
+          order={order}
+          onReorderAll={onReorderAll}
+          allProducts={allProducts}
+        />
+      ))}
+
+      {orders.length > 3 && (
+        <TouchableOpacity
+          style={orderStyles.showMoreBtn}
+          onPress={() => {
+            LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+            setShowAll((v) => !v);
+          }}
+          activeOpacity={0.8}
+        >
+          <Text style={orderStyles.showMoreText}>
+            {showAll ? "Show less" : `Show ${orders.length - 3} more orders`}
+          </Text>
+          <MaterialCommunityIcons
+            name={showAll ? "chevron-up" : "chevron-down"}
+            size={15}
+            color={T.green}
+          />
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+});
+
+// ─── Order card styles ────────────────────────────────────────────────────────
+const orderStyles = StyleSheet.create({
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    marginBottom: 12,
+    paddingHorizontal: 4,
+  },
+  sectionSubtitle: {
+    fontSize: 12,
+    color: T.barkLight,
+    fontWeight: "600",
+    marginTop: 2,
+  },
+  historyBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: T.greenXLight,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  card: {
+    backgroundColor: T.orderCard,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: T.orderBorder,
+    marginBottom: 10,
+    overflow: "hidden",
+    // subtle shadow
+    shadowColor: T.bark,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  cardHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(60,47,30,0.06)",
+  },
+  headerLeft: { flex: 1, gap: 4 },
+  headerRight: { alignItems: "flex-end", gap: 5, marginLeft: 8 },
+  orderIdRow: { flexDirection: "row", alignItems: "center", gap: 5 },
+  orderId: {
+    fontSize: 13,
+    color: T.bark,
+    fontWeight: "800",
+    letterSpacing: 0.2,
+  },
+  dateRow: { flexDirection: "row", alignItems: "center", gap: 4 },
+  dateText: {
+    fontSize: 12,
+    color: T.barkLight,
+    fontWeight: "500",
+  },
+  statusBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  statusText: { fontSize: 10, fontWeight: "800", letterSpacing: 0.3 },
+  totalText: {
+    fontSize: 15,
+    color: T.bark,
+    fontWeight: "900",
+    letterSpacing: -0.3,
+  },
+  itemStrip: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    gap: 6,
+  },
+  previewItem: {},
+  previewImageWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 10,
+    backgroundColor: T.tile,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: T.cardBorder,
+  },
+  previewImage: { width: "100%", height: "100%" },
+  moreCountBubble: {
+    width: 42,
+    height: 42,
+    borderRadius: 10,
+    backgroundColor: T.greenXLight,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: T.green + "30",
+  },
+  moreCountText: { fontSize: 11, color: T.green, fontWeight: "900" },
+  itemCountText: {
+    fontSize: 12,
+    color: T.barkLight,
+    fontWeight: "600",
+    marginRight: 2,
+  },
+  expandedList: {
+    borderTopWidth: 1,
+    borderTopColor: "rgba(60,47,30,0.06)",
+    paddingHorizontal: 14,
+    paddingTop: 8,
+    paddingBottom: 4,
+    gap: 8,
+  },
+  expandedItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 4,
+  },
+  expandedImageWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: T.tile,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: T.cardBorder,
+  },
+  expandedImage: { width: "100%", height: "100%" },
+  expandedItemName: {
+    fontSize: 12,
+    color: T.bark,
+    fontWeight: "700",
+    lineHeight: 15,
+  },
+  expandedItemUnit: {
+    fontSize: 10,
+    color: T.barkLight,
+    fontWeight: "500",
+    marginTop: 1,
+  },
+  expandedItemRight: { alignItems: "flex-end", gap: 2 },
+  expandedItemQty: { fontSize: 11, color: T.barkLight, fontWeight: "600" },
+  expandedItemPrice: { fontSize: 12, color: T.bark, fontWeight: "800" },
+  expandedTotal: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    borderTopWidth: 1,
+    borderTopColor: "rgba(60,47,30,0.06)",
+    paddingTop: 8,
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  expandedTotalLabel: { fontSize: 12, color: T.barkLight, fontWeight: "700" },
+  expandedTotalValue: { fontSize: 13, color: T.bark, fontWeight: "900" },
+  cardFooter: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(60,47,30,0.06)",
+    backgroundColor: T.bg,
+  },
+  expandBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  expandBtnText: {
+    fontSize: 12,
+    color: T.green,
+    fontWeight: "700",
+  },
+  reorderBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: T.green,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  reorderBtnText: {
+    fontSize: 12,
+    color: T.white,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+  },
+  showMoreBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    paddingVertical: 10,
+    marginTop: 2,
+  },
+  showMoreText: {
+    fontSize: 13,
+    color: T.green,
+    fontWeight: "700",
+  },
+});
+
+// ─── Interfaces ────────────────────────────────────────────────────────────────
+
 interface DisplayItem {
   key: string;
   name: string;
@@ -70,13 +578,9 @@ interface DisplayItem {
   originalPrice?: number;
   image?: string;
   unit?: string;
-  /** Category string used for chip grouping. Comes from catalog or fallback. */
   category: string;
-  /** Present when we also have a matching live catalog row. */
   product?: Product;
-  /** True when the product is currently purchasable (tied to cart ADD button). */
   purchasable: boolean;
-  /** Stable id used for cart operations when `product` is missing. */
   addableId?: string;
   totalQty: number;
 }
@@ -87,7 +591,7 @@ type CategoryChipDef = {
   imageUrl?: string;
 };
 
-// ─── Product card (full catalog row) ─────────────────────────────────────────
+// ─── Product card ─────────────────────────────────────────────────────────────
 const ProductCard = React.memo(
   function ProductCard({
     p,
@@ -108,7 +612,6 @@ const ProductCard = React.memo(
     const handleOpen = useCallback(() => {
       router.push(`/product/${p.id}` as any);
     }, [p.id]);
-
     const handleAdd = useCallback(() => onAdd(p), [onAdd, p]);
     const handleMinus = useCallback(
       () => onUpdateQty(p, (cartItem?.quantity ?? 1) - 1),
@@ -134,11 +637,7 @@ const ProductCard = React.memo(
                 priority="low"
               />
             ) : (
-              <MaterialCommunityIcons
-                name="image-off-outline"
-                size={28}
-                color={T.barkLight}
-              />
+              <MaterialCommunityIcons name="image-off-outline" size={28} color={T.barkLight} />
             )}
             {hasDiscount && (
               <View style={styles.discountFlag}>
@@ -148,12 +647,8 @@ const ProductCard = React.memo(
             )}
           </View>
           <View style={styles.cardBody}>
-            <Text style={styles.unit} numberOfLines={1}>
-              {p.unit || ""}
-            </Text>
-            <Text style={styles.name} numberOfLines={2}>
-              {p.name}
-            </Text>
+            <Text style={styles.unit} numberOfLines={1}>{p.unit || ""}</Text>
+            <Text style={styles.name} numberOfLines={2}>{p.name}</Text>
             <View style={styles.priceRow}>
               <View style={{ flexShrink: 1 }}>
                 <Text style={styles.price}>₹{p.price}</Text>
@@ -163,36 +658,16 @@ const ProductCard = React.memo(
               </View>
               {cartItem ? (
                 <View style={styles.qtyBox}>
-                  <TouchableOpacity
-                    style={styles.qtyBtn}
-                    onPress={handleMinus}
-                    hitSlop={6}
-                  >
-                    <MaterialCommunityIcons
-                      name="minus"
-                      size={12}
-                      color={T.white}
-                    />
+                  <TouchableOpacity style={styles.qtyBtn} onPress={handleMinus} hitSlop={6}>
+                    <MaterialCommunityIcons name="minus" size={12} color={T.white} />
                   </TouchableOpacity>
                   <Text style={styles.qtyValue}>{cartItem.quantity}</Text>
-                  <TouchableOpacity
-                    style={styles.qtyBtn}
-                    onPress={handlePlus}
-                    hitSlop={6}
-                  >
-                    <MaterialCommunityIcons
-                      name="plus"
-                      size={12}
-                      color={T.white}
-                    />
+                  <TouchableOpacity style={styles.qtyBtn} onPress={handlePlus} hitSlop={6}>
+                    <MaterialCommunityIcons name="plus" size={12} color={T.white} />
                   </TouchableOpacity>
                 </View>
               ) : (
-                <TouchableOpacity
-                  style={styles.addBtn}
-                  activeOpacity={0.85}
-                  onPress={handleAdd}
-                >
+                <TouchableOpacity style={styles.addBtn} activeOpacity={0.85} onPress={handleAdd}>
                   <Text style={styles.addText}>ADD</Text>
                 </TouchableOpacity>
               )}
@@ -209,21 +684,9 @@ const ProductCard = React.memo(
     prev.onUpdateQty === next.onUpdateQty,
 );
 
-/**
- * Fallback card rendered when the catalog doesn't have a matching product (or
- * the catalog cache hasn't loaded yet). Shows the stored order-item info and
- * lets the user search for a live match.
- */
-const LegacyItemCard = React.memo(function LegacyItemCard({
-  item,
-}: {
-  item: DisplayItem;
-}) {
+const LegacyItemCard = React.memo(function LegacyItemCard({ item }: { item: DisplayItem }) {
   const onPress = useCallback(() => {
-    router.push({
-      pathname: "/support/search" as any,
-      params: { q: item.name },
-    });
+    router.push({ pathname: "/support/search" as any, params: { q: item.name } });
   }, [item.name]);
 
   return (
@@ -240,28 +703,16 @@ const LegacyItemCard = React.memo(function LegacyItemCard({
             priority="low"
           />
         ) : (
-          <MaterialCommunityIcons
-            name="image-off-outline"
-            size={28}
-            color={T.barkLight}
-          />
+          <MaterialCommunityIcons name="image-off-outline" size={28} color={T.barkLight} />
         )}
       </View>
       <View style={styles.cardBody}>
-        <Text style={styles.unit} numberOfLines={1}>
-          {item.unit || ""}
-        </Text>
-        <Text style={styles.name} numberOfLines={2}>
-          {item.name}
-        </Text>
+        <Text style={styles.unit} numberOfLines={1}>{item.unit || ""}</Text>
+        <Text style={styles.name} numberOfLines={2}>{item.name}</Text>
         <View style={styles.priceRow}>
           <Text style={styles.price}>₹{item.price}</Text>
           <View style={styles.findBtn}>
-            <MaterialCommunityIcons
-              name="magnify"
-              size={13}
-              color={T.green}
-            />
+            <MaterialCommunityIcons name="magnify" size={13} color={T.green} />
             <Text style={styles.findText}>FIND</Text>
           </View>
         </View>
@@ -270,7 +721,6 @@ const LegacyItemCard = React.memo(function LegacyItemCard({
   );
 });
 
-/** Group chip shown in "Frequently bought" / "More that you ordered". */
 const GroupChip = React.memo(function GroupChip({
   title,
   count,
@@ -305,11 +755,7 @@ const GroupChip = React.memo(function GroupChip({
               />
             ) : (
               <View key={`ph-${i}`} style={[styles.chipImage, styles.chipPh]}>
-                <MaterialCommunityIcons
-                  name="basket-outline"
-                  size={18}
-                  color={T.green}
-                />
+                <MaterialCommunityIcons name="basket-outline" size={18} color={T.green} />
               </View>
             ),
           )}
@@ -320,9 +766,7 @@ const GroupChip = React.memo(function GroupChip({
           </View>
         )}
       </View>
-      <Text style={styles.chipLabel} numberOfLines={2}>
-        {title}
-      </Text>
+      <Text style={styles.chipLabel} numberOfLines={2}>{title}</Text>
     </Pressable>
   );
 });
@@ -342,7 +786,7 @@ export default function OrderAgainScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // ── Product catalog (used to enrich order-items) ─────────────────────────
+  // ── Product catalog ─────────────────────────────────────────────────────
   useEffect(() => {
     if (allProducts) return;
     let cancelled = false;
@@ -350,23 +794,15 @@ export default function OrderAgainScreen() {
       try {
         const cached = await readHomeCatalogCache();
         if (!cancelled && cached?.products) setAllProducts(cached.products);
-      } catch {
-        /* cache read is best-effort */
-      }
+      } catch { /* best-effort */ }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [allProducts]);
 
-  // ── Orders (SWR pattern) ──────────────────────────────────────────────────
+  // ── Orders (SWR pattern) ────────────────────────────────────────────────
   const fetchOrders = useCallback(
     async (opts?: { isRefresh?: boolean }) => {
-      if (!userId) {
-        setOrders([]);
-        setLoading(false);
-        return;
-      }
+      if (!userId) { setOrders([]); setLoading(false); return; }
       if (!opts?.isRefresh) setLoading(true);
       try {
         const data = await getUserOrders(userId);
@@ -374,11 +810,7 @@ export default function OrderAgainScreen() {
         setError(null);
       } catch (err) {
         console.warn("[OrderAgain] fetch failed", err);
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Could not load your orders. Please try again.",
-        );
+        setError(err instanceof Error ? err.message : "Could not load your orders. Please try again.");
       } finally {
         setLoading(false);
       }
@@ -387,27 +819,17 @@ export default function OrderAgainScreen() {
   );
 
   useEffect(() => {
-    if (!userId) {
-      setLoading(false);
-      setOrders([]);
-      return;
-    }
+    if (!userId) { setLoading(false); setOrders([]); return; }
     let cancelled = false;
     (async () => {
       const cached = await readUserOrdersCache(userId);
       if (cancelled) return;
-      if (cached && cached.length > 0) {
-        setOrders(cached);
-        setLoading(false);
-      }
+      if (cached && cached.length > 0) { setOrders(cached); setLoading(false); }
     })();
     const task = InteractionManager.runAfterInteractions(() => {
       if (!cancelled) fetchOrders();
     });
-    return () => {
-      cancelled = true;
-      task.cancel();
-    };
+    return () => { cancelled = true; task.cancel(); };
   }, [fetchOrders, userId]);
 
   const onRefresh = useCallback(async () => {
@@ -416,27 +838,45 @@ export default function OrderAgainScreen() {
     setRefreshing(false);
   }, [fetchOrders]);
 
-  // ── Build unified DisplayItems from orders + catalog ─────────────────────
-  //
-  // The list renders from `buildOrderAgainItems` FIRST (everything the
-  // customer has ever bought, hydrated from `order_items`). For any item
-  // whose `masterProductId` maps to a live catalog row we swap in the
-  // catalog data for richer rendering (discount, original price) and more
-  // importantly a cart-compatible id. Items without a catalog match still
-  // render via the fallback card.
+  // ── Reorder all items from a previous order ─────────────────────────────
+  const handleReorderAll = useCallback(
+    (order: Order) => {
+      const items = getOrderItems(order);
+      const byId = new Map<string, Product>();
+      if (allProducts) for (const p of allProducts) byId.set(p.id, p);
+
+      let addedCount = 0;
+      for (const it of items) {
+        const productId = it.master_product_id ?? it.product_id ?? it.id;
+        const catalog = productId ? byId.get(String(productId)) : undefined;
+        if (catalog) {
+          addItem({
+            product_id: catalog.id,
+            name: catalog.name,
+            price: catalog.price,
+            unit: catalog.unit,
+            image_url: catalog.image_url,
+          });
+          addedCount++;
+        }
+      }
+      if (addedCount > 0) {
+        router.push("/(tabs)/cart" as any);
+      }
+    },
+    [addItem, allProducts],
+  );
+
+  // ── Build DisplayItems ─────────────────────────────────────────────────
   const displayItems = useMemo<DisplayItem[]>(() => {
     if (!orders || orders.length === 0) return [];
     const orderItems = buildOrderAgainItems(orders);
     if (orderItems.length === 0) return [];
-
     const byMasterId = new Map<string, Product>();
     if (allProducts) for (const p of allProducts) byMasterId.set(p.id, p);
 
     const matchByName = (item: OrderAgainItem): Product | undefined => {
       if (!allProducts) return undefined;
-      // Last-ditch name fuzzy match for legacy orders with no master_product_id.
-      // We compare on lowercased/trimmed name; if multiple products share a
-      // name we prefer the one whose unit also matches.
       const nameKey = (item.name || "").trim().toLowerCase();
       if (!nameKey) return undefined;
       const unitKey = (item.unit || "").trim().toLowerCase();
@@ -452,10 +892,7 @@ export default function OrderAgainScreen() {
 
     const out: DisplayItem[] = [];
     for (const it of orderItems) {
-      const catalog =
-        (it.masterProductId && byMasterId.get(it.masterProductId)) ||
-        matchByName(it);
-
+      const catalog = (it.masterProductId && byMasterId.get(it.masterProductId)) || matchByName(it);
       if (catalog) {
         out.push({
           key: `c:${catalog.id}`,
@@ -477,8 +914,6 @@ export default function OrderAgainScreen() {
           price: it.price,
           image: it.image,
           unit: it.unit,
-          // Without a catalog match we can't reliably bucket the item, so it
-          // falls into "Others" and lands in the "More" group chip.
           category: "Others",
           purchasable: false,
           totalQty: it.totalQty,
@@ -488,30 +923,23 @@ export default function OrderAgainScreen() {
     return out;
   }, [orders, allProducts]);
 
-  // Items grouped by raw category (used for chip rendering + carousels).
   const itemsByCategory = useMemo<Record<string, DisplayItem[]>>(() => {
     const out: Record<string, DisplayItem[]> = {};
-    for (const it of displayItems) {
-      (out[it.category] ||= []).push(it);
-    }
+    for (const it of displayItems) (out[it.category] ||= []).push(it);
     return out;
   }, [displayItems]);
 
-  // Bucket categories → top-level groups for section headers and chips.
   const { chips, itemsByGroup } = useMemo(() => {
     const chips: CategoryChipDef[] = [];
     const byGroup: Record<string, DisplayItem[]> = {};
-
     const allGroupOrder = [...CATEGORY_GROUPS, DEFAULT_GROUP].map((g) => g.id);
     const categoriesByGroup = new Map<string, string[]>();
-
     for (const cat of Object.keys(itemsByCategory)) {
       const grp = getGroupForCategoryName(cat);
       const list = categoriesByGroup.get(grp.id) || [];
       list.push(cat);
       categoriesByGroup.set(grp.id, list);
     }
-
     for (const gid of allGroupOrder) {
       const cats = categoriesByGroup.get(gid);
       if (!cats) continue;
@@ -519,63 +947,46 @@ export default function OrderAgainScreen() {
       for (const cat of cats) {
         const list = itemsByCategory[cat] || [];
         groupItems.push(...list);
-        chips.push({
-          name: cat,
-          count: list.length,
-          imageUrl: list[0]?.image,
-        });
+        chips.push({ name: cat, count: list.length, imageUrl: list[0]?.image });
       }
       byGroup[gid] = groupItems;
     }
-
     return { chips, itemsByGroup: byGroup };
   }, [itemsByCategory]);
 
-  // Blinkit-style: first 6 chips are the hero grid.
   const primaryChips = chips.slice(0, 6);
   const secondaryChips = chips.slice(6);
 
-  // Handlers
   const handleAdd = useCallback(
     (p: Product) =>
-      addItem({
-        product_id: p.id,
-        name: p.name,
-        price: p.price,
-        unit: p.unit,
-        image_url: p.image_url,
-      }),
+      addItem({ product_id: p.id, name: p.name, price: p.price, unit: p.unit, image_url: p.image_url }),
     [addItem],
   );
   const handleUpdateQty = useCallback(
     (p: Product, qty: number) => updateQty(p.id, qty),
     [updateQty],
   );
-
   const handleChipPress = useCallback((chip: CategoryChipDef) => {
-    const slug = chip.name
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "");
+    const slug = chip.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
     router.push(`/category/${slug}` as any);
   }, []);
-
   const renderDisplayItem = useCallback(
-    ({ item }: { item: DisplayItem }) =>
-      item.product ? (
-        <ProductCard
-          p={item.product}
-          cartItem={cartItemsByProductId.get(item.product.id)}
-          onAdd={handleAdd}
-          onUpdateQty={handleUpdateQty}
-        />
-      ) : (
-        <LegacyItemCard item={item} />
-      ),
+    ({ item }: { item: DisplayItem }) => (
+      <View style={{ width: 148 }}>
+        {item.product ? (
+          <ProductCard
+            p={item.product}
+            cartItem={cartItemsByProductId.get(item.product.id)}
+            onAdd={handleAdd}
+            onUpdateQty={handleUpdateQty}
+          />
+        ) : (
+          <LegacyItemCard item={item} />
+        )}
+      </View>
+    ),
     [cartItemsByProductId, handleAdd, handleUpdateQty],
   );
-
   const keyExtractor = useCallback((item: DisplayItem) => item.key, []);
 
   // ── Empty / loading states ────────────────────────────────────────────────
@@ -584,19 +995,12 @@ export default function OrderAgainScreen() {
       <SafeAreaView style={styles.safe} edges={["top"]}>
         <HeaderBlock />
         <View style={styles.centerEmpty}>
-          <MaterialCommunityIcons
-            name="account-outline"
-            size={64}
-            color={T.barkLight}
-          />
+          <MaterialCommunityIcons name="account-outline" size={64} color={T.barkLight} />
           <Text style={styles.emptyTitle}>Sign in to see your orders</Text>
           <Text style={styles.emptyText}>
             Reorder your favourites in one tap once you&apos;re signed in.
           </Text>
-          <TouchableOpacity
-            style={styles.primaryBtn}
-            onPress={() => router.push("/phone" as any)}
-          >
+          <TouchableOpacity style={styles.primaryBtn} onPress={() => router.push("/phone" as any)}>
             <Text style={styles.primaryBtnText}>Sign in</Text>
           </TouchableOpacity>
         </View>
@@ -621,19 +1025,12 @@ export default function OrderAgainScreen() {
       <SafeAreaView style={styles.safe} edges={["top"]}>
         <HeaderBlock />
         <View style={styles.centerEmpty}>
-          <MaterialCommunityIcons
-            name="basket-outline"
-            size={64}
-            color={T.barkLight}
-          />
+          <MaterialCommunityIcons name="basket-outline" size={64} color={T.barkLight} />
           <Text style={styles.emptyTitle}>No past orders yet</Text>
           <Text style={styles.emptyText}>
             Once you place your first order, come back here to reorder in a tap.
           </Text>
-          <TouchableOpacity
-            style={styles.primaryBtn}
-            onPress={() => router.replace("/(tabs)/home" as any)}
-          >
+          <TouchableOpacity style={styles.primaryBtn} onPress={() => router.replace("/(tabs)/home" as any)}>
             <Text style={styles.primaryBtnText}>Start shopping</Text>
           </TouchableOpacity>
         </View>
@@ -641,7 +1038,7 @@ export default function OrderAgainScreen() {
     );
   }
 
-  // ── Render full "Order Again" screen ─────────────────────────────────────
+  // ── Full screen ─────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <HeaderBlock />
@@ -661,28 +1058,33 @@ export default function OrderAgainScreen() {
       >
         {error && !orders?.length ? (
           <View style={styles.errorCard}>
-            <MaterialCommunityIcons
-              name="alert-circle-outline"
-              size={24}
-              color={C.danger}
-            />
+            <MaterialCommunityIcons name="alert-circle-outline" size={24} color={C.danger} />
             <Text style={styles.errorText}>{error}</Text>
           </View>
         ) : null}
 
+        {/* ── Previous Orders — user's full order history with dates ────── */}
+        {orders && orders.length > 0 && (
+          <PreviousOrdersSection
+            orders={orders}
+            onReorderAll={handleReorderAll}
+            allProducts={allProducts}
+          />
+        )}
+
+        {/* ── Frequently bought category chips ─────────────────────────── */}
         {primaryChips.length > 0 && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Frequently bought</Text>
             <View style={styles.chipGrid}>
               {primaryChips.map((chip) => {
                 const items = itemsByCategory[chip.name] || [];
-                const sampleImages = items.map((p) => p.image);
                 return (
                   <GroupChip
                     key={chip.name}
                     title={chip.name}
                     count={chip.count}
-                    sampleImages={sampleImages}
+                    sampleImages={items.map((p) => p.image)}
                     onPress={() => handleChipPress(chip)}
                   />
                 );
@@ -697,13 +1099,12 @@ export default function OrderAgainScreen() {
             <View style={styles.chipGrid}>
               {secondaryChips.map((chip) => {
                 const items = itemsByCategory[chip.name] || [];
-                const sampleImages = items.map((p) => p.image);
                 return (
                   <GroupChip
                     key={chip.name}
                     title={chip.name}
                     count={chip.count}
-                    sampleImages={sampleImages}
+                    sampleImages={items.map((p) => p.image)}
                     onPress={() => handleChipPress(chip)}
                   />
                 );
@@ -712,7 +1113,7 @@ export default function OrderAgainScreen() {
           </View>
         )}
 
-        {/* Per-group horizontal carousels */}
+        {/* ── Per-group horizontal carousels ───────────────────────────── */}
         {[...CATEGORY_GROUPS, DEFAULT_GROUP].map((g) => {
           const items = itemsByGroup[g.id];
           if (!items || items.length === 0) return null;
@@ -735,7 +1136,7 @@ export default function OrderAgainScreen() {
           );
         })}
 
-        {/* Full "Previously Bought" grid */}
+        {/* ── Previously Bought full grid ───────────────────────────────── */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Previously Bought</Text>
           <View style={styles.grid}>
@@ -760,7 +1161,7 @@ export default function OrderAgainScreen() {
   );
 }
 
-// ─── Header ─────────────────────────────────────────────────────────────────
+// ─── Header ──────────────────────────────────────────────────────────────────
 const HeaderBlock = React.memo(function HeaderBlock() {
   return (
     <View style={styles.header}>
@@ -790,7 +1191,7 @@ const styles = StyleSheet.create({
   },
   headerSub: { fontSize: 13, color: T.barkLight, marginTop: 3 },
 
-  scrollContent: { paddingBottom: 130, paddingTop: 4 },
+  scrollContent: { paddingBottom: 130, paddingTop: 0 },
 
   centerEmpty: {
     flex: 1,
@@ -799,18 +1200,8 @@ const styles = StyleSheet.create({
     padding: 32,
     gap: 10,
   },
-  emptyTitle: {
-    color: T.bark,
-    fontSize: 17,
-    fontWeight: "800",
-    marginTop: 6,
-  },
-  emptyText: {
-    color: T.barkLight,
-    fontSize: 14,
-    textAlign: "center",
-    lineHeight: 20,
-  },
+  emptyTitle: { color: T.bark, fontSize: 17, fontWeight: "800", marginTop: 6 },
+  emptyText: { color: T.barkLight, fontSize: 14, textAlign: "center", lineHeight: 20 },
   primaryBtn: {
     marginTop: 16,
     paddingHorizontal: 24,
@@ -832,28 +1223,44 @@ const styles = StyleSheet.create({
   },
   errorText: { color: C.danger, flex: 1, fontSize: 13, fontWeight: "600" },
 
-  section: { marginTop: 20, paddingHorizontal: 14 },
+  // ── Section wrapper ────────────────────────────────────────────────────────
+  // Each section sits inside a white card-like band separated by a thin
+  // divider, so the eye moves cleanly from one group to the next.
+  section: {
+    marginTop: 0,
+    paddingHorizontal: 0,
+    // Separator line above every section (except the very first which has the
+    // order cards above it — handled by marginTop on the scroll content).
+    borderTopWidth: 8,
+    borderTopColor: T.bg,
+    backgroundColor: T.white,
+    paddingTop: 18,
+    paddingBottom: 18,
+  },
   sectionTitle: {
     fontSize: 17,
     color: T.bark,
     fontWeight: "900",
     letterSpacing: -0.2,
-    marginBottom: 10,
-    paddingHorizontal: 4,
+    marginBottom: 12,
+    paddingHorizontal: 16,
   },
 
+  // ── Category chip grid (Frequently bought / More that you ordered) ─────────
+  // 3-column grid that fills full width; each chip is self-contained.
   chipGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
+    paddingHorizontal: 10,
   },
   chipOuter: {
     width: "33.33%",
-    padding: 4,
+    padding: 6,
     alignItems: "center",
   },
   chipImageWrap: {
     width: "100%",
-    aspectRatio: 1.1,
+    aspectRatio: 1.05,
     borderRadius: 14,
     backgroundColor: T.greenXLight,
     alignItems: "center",
@@ -869,8 +1276,8 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   chipImage: {
-    width: 44,
-    height: 44,
+    width: 42,
+    height: 42,
     borderRadius: 10,
     backgroundColor: T.white,
   },
@@ -889,36 +1296,54 @@ const styles = StyleSheet.create({
   chipCountText: { color: T.green, fontSize: 10, fontWeight: "800" },
   chipLabel: {
     marginTop: 6,
-    fontSize: 12,
+    fontSize: 11.5,
     color: T.bark,
     fontWeight: "700",
     textAlign: "center",
     lineHeight: 15,
   },
 
-  hListContent: { paddingHorizontal: 4, gap: 10, paddingVertical: 4 },
+  // ── Horizontal carousel (per-group) ────────────────────────────────────────
+  // Cards in the carousel keep a fixed width (140) because they scroll
+  // horizontally — that's intentional and correct here.
+  hListContent: {
+    paddingHorizontal: 16,
+    gap: 10,
+    paddingVertical: 2,
+  },
 
+  // ── Previously Bought — responsive 2-column grid ───────────────────────────
+  // Using 2 columns (50% each) instead of 3 × fixed-140px cards so nothing
+  // overflows. Cards fill their cell width via flex: 1.
   grid: {
     flexDirection: "row",
     flexWrap: "wrap",
+    paddingHorizontal: 10,
   },
   gridCell: {
-    width: "33.33%",
-    padding: 4,
+    width: "50%",
+    padding: 6,
   },
 
-  // ── Card ─────────────────────────────────────────────────────────────────
+  // ── Product / legacy card ──────────────────────────────────────────────────
+  // Remove the fixed `width: 140` — cards in the grid should be fluid.
+  // The horizontal carousel wraps cards in its own fixed-width container, so
+  // fluid width is fine there too (FlatList gives each item natural size).
   card: {
-    width: 140,
+    flex: 1,                 // fills the gridCell width
+    minWidth: 130,           // guard for very narrow cells
     backgroundColor: T.white,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: T.cardBorder,
     overflow: "hidden",
   },
+  // Cards inside the horizontal FlatList need an explicit width because flex
+  // has no parent constraint in a horizontal scroll. We apply this via an
+  // inline style on the FlatList renderItem wrapper (see renderDisplayItem).
   imageWrap: {
     width: "100%",
-    height: 100,
+    height: 110,
     backgroundColor: T.tile,
     alignItems: "center",
     justifyContent: "center",
@@ -934,25 +1359,10 @@ const styles = StyleSheet.create({
     backgroundColor: T.green,
     borderBottomRightRadius: 8,
   },
-  discountFlagText: {
-    color: T.white,
-    fontSize: 10,
-    fontWeight: "900",
-    lineHeight: 11,
-  },
-  discountFlagOff: {
-    color: T.white,
-    fontSize: 7.5,
-    fontWeight: "800",
-    lineHeight: 9,
-  },
+  discountFlagText: { color: T.white, fontSize: 10, fontWeight: "900", lineHeight: 11 },
+  discountFlagOff: { color: T.white, fontSize: 7.5, fontWeight: "800", lineHeight: 9 },
   cardBody: { padding: 8 },
-  unit: {
-    fontSize: 10,
-    color: T.barkLight,
-    fontWeight: "700",
-    marginBottom: 3,
-  },
+  unit: { fontSize: 10, color: T.barkLight, fontWeight: "700", marginBottom: 3 },
   name: {
     fontSize: 12,
     color: T.bark,
@@ -967,12 +1377,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 4,
   },
-  price: {
-    color: T.bark,
-    fontSize: 13,
-    fontWeight: "900",
-    letterSpacing: -0.3,
-  },
+  price: { color: T.bark, fontSize: 13, fontWeight: "900", letterSpacing: -0.3 },
   oldPrice: {
     color: T.barkLight,
     fontSize: 10,
@@ -990,12 +1395,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  addText: {
-    fontSize: 11.5,
-    color: T.green,
-    fontWeight: "900",
-    letterSpacing: 0.8,
-  },
+  addText: { fontSize: 11.5, color: T.green, fontWeight: "900", letterSpacing: 0.8 },
   findBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -1009,12 +1409,7 @@ const styles = StyleSheet.create({
     minWidth: 46,
     justifyContent: "center",
   },
-  findText: {
-    fontSize: 11,
-    color: T.green,
-    fontWeight: "900",
-    letterSpacing: 0.5,
-  },
+  findText: { fontSize: 11, color: T.green, fontWeight: "900", letterSpacing: 0.5 },
   qtyBox: {
     flexDirection: "row",
     alignItems: "center",

@@ -43,6 +43,8 @@ export interface TrackingOrder {
   delivery_longitude?: number;
   estimated_delivery_time?: string;
   store_orders?: TrackingStoreOrder[];
+  /** 4-digit delivery verification PIN, generated when order is dispatched */
+  delivery_otp?: string;
 }
 
 export interface TrackingStoreLocation {

@@ -27,7 +27,6 @@ import { getBatchProductStoreDistances } from "../../lib/distanceUtils";
 import { cdnImage } from "../../lib/imageUrl";
 import { markOrderPlaced } from "../../lib/orderHistoryFlag";
 import { createOrder, type Order } from "../../lib/orderService";
-import { clearSavedPaymentMethodsCache } from "../../lib/razorpayService";
 import {
     getPaymentSelection,
     subscribePaymentSelection,
@@ -38,6 +37,7 @@ import {
     getMemoryHomeCache,
     type Product,
 } from "../../lib/productService";
+import { clearSavedPaymentMethodsCache } from "../../lib/razorpayService";
 
 export default function CheckoutScreen() {
   const { items, appliedCoupon, removeCoupon, discount, clearCart, addItem, updateQty } = useCart();
@@ -311,21 +311,18 @@ export default function CheckoutScreen() {
     };
 
     if (options.optimistic) {
-      // COD path — show success modal IMMEDIATELY and create order in the background.
-      setShowSuccess(true);
+      // COD path — navigate to confirmation page after order is created.
       try {
         const created = await createOrder(orderPayload);
-        // Only clear the cart once we know the order succeeded — preserves the user's
-        // items if the network/API hiccups so they can retry without re-adding.
-        clearCart();
         // Flip the "has placed an order" flag so the Preferred Payment card
         // on the payment-options screen unlocks on the NEXT checkout flow.
         // Fire-and-forget; failing to persist this is non-fatal.
         markOrderPlaced().catch(() => {});
+        // Navigate to order confirmation page with 40-second add-more window
+        // Cart is NOT cleared here - user can add more items during the window
+        router.replace(`/order/confirmation/${created.id}` as any);
         return created;
       } catch (err: unknown) {
-        // Roll back the optimistic UI and surface the error.
-        setShowSuccess(false);
         const message =
           err instanceof Error ? err.message : "Something went wrong placing your order.";
         Alert.alert("Order failed", `${message}\n\nYour cart is safe — please try again.`);
@@ -407,8 +404,6 @@ export default function CheckoutScreen() {
       });
 
       if (result.status === "paid") {
-        setShowSuccess(true);
-        clearCart();
         // Flip the "has placed an order" flag so the Preferred Payment card
         // on the payment-options screen unlocks on the NEXT checkout flow.
         markOrderPlaced().catch(() => {});
@@ -416,6 +411,8 @@ export default function CheckoutScreen() {
         // for this payment shows up on the very next visit to the
         // payment-options screen (instead of the stale empty cache).
         clearSavedPaymentMethodsCache();
+        // Navigate to order confirmation page with 40-second add-more window
+        router.replace(`/order/confirmation/${internalOrder.id}` as any);
         return;
       }
 

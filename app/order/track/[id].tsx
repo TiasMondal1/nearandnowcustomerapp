@@ -2,29 +2,32 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useMemo, useState } from "react";
 import {
-  ActivityIndicator,
-  Linking,
-  Platform,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Linking,
+    Platform,
+    Pressable,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import MapView, { Marker, PROVIDER_GOOGLE, Polyline, type Region } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { C } from "../../../constants/colors";
 import {
-  CANCELLED_STATUSES,
-  ORDER_TIMELINE,
-  type OrderStatus,
-  getStatusMeta,
-  getTimelineIndex,
+    CANCELLED_STATUSES,
+    ORDER_TIMELINE,
+    type OrderStatus,
+    getStatusMeta,
+    getTimelineIndex,
 } from "../../../constants/orderStatus";
 import { useOrderTracking } from "../../../hooks/useOrderTracking";
+import {
+    shouldShowOTP
+} from "../../../lib/orderService";
 
 function formatTime(iso: string) {
   if (!iso) return "";
@@ -64,11 +67,27 @@ export default function TrackOrderScreen() {
   const [showHistory, setShowHistory] = useState(false);
   const [showItems, setShowItems] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-
   const order = data?.order;
+  const status = (order?.status ?? "pending_at_store") as OrderStatus;
+
+  // Get delivery OTP from backend response or generate locally as fallback
+  const deliveryOTP = useMemo(() => {
+    // Prefer OTP from backend (synced with rider app)
+    if (order?.delivery_otp) {
+      return order.delivery_otp;
+    }
+    // Fallback: generate locally if backend doesn't provide one yet
+    // This ensures the customer always sees an OTP when the order is dispatched
+    if (shouldShowOTP(status)) {
+      // Use order ID to generate a deterministic OTP so it's consistent across refreshes
+      const hash = id?.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) ?? 0;
+      return String(1000 + (hash % 9000)).padStart(4, '0');
+    }
+    return null;
+  }, [order?.delivery_otp, status, id]);
+
   const storeOrders = order?.store_orders ?? [];
   const isMultiStore = storeOrders.length > 1;
-  const status = (order?.status ?? "pending_at_store") as OrderStatus;
   const meta = getStatusMeta(status);
   const isCancelled = CANCELLED_STATUSES.includes(status);
 
@@ -352,6 +371,36 @@ export default function TrackOrderScreen() {
           </View>
         )}
 
+        {/* ─── Delivery OTP Card ────────────────────────────────────────────── */}
+        {deliveryOTP && shouldShowOTP(status) && !isCancelled && (
+          <View style={styles.otpCard}>
+            <View style={styles.otpHeader}>
+              <View style={styles.otpIconWrap}>
+                <MaterialCommunityIcons name="shield-key" size={24} color={C.primary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.otpTitle}>Delivery Verification PIN</Text>
+                <Text style={styles.otpSub}>
+                  Share this PIN with your delivery partner to confirm delivery
+                </Text>
+              </View>
+            </View>
+            <View style={styles.otpDisplay}>
+              {deliveryOTP.split('').map((digit, idx) => (
+                <View key={idx} style={styles.otpDigit}>
+                  <Text style={styles.otpDigitText}>{digit}</Text>
+                </View>
+              ))}
+            </View>
+            <View style={styles.otpWarning}>
+              <MaterialCommunityIcons name="information-outline" size={14} color={C.warning} />
+              <Text style={styles.otpWarningText}>
+                Do not share this PIN until you receive your order
+              </Text>
+            </View>
+          </View>
+        )}
+
         {/* ─── Delivered card ──────────────────────────────────────────────── */}
         {status === "order_delivered" && (
           <View style={styles.deliveredCard}>
@@ -454,7 +503,7 @@ export default function TrackOrderScreen() {
                           {formatDateTime(event.created_at)}
                         </Text>
                       )}
-                      {event.notes && <Text style={styles.timelineNotes}>{event.notes}</Text>}
+                      {'notes' in event && event.notes && <Text style={styles.timelineNotes}>{event.notes}</Text>}
                     </View>
                   </View>
                 );
@@ -899,4 +948,81 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   primaryBtnText: { color: "#fff", fontWeight: "800", fontSize: 13 },
+
+  // OTP Card
+  otpCard: {
+    margin: 16,
+    marginTop: 12,
+    padding: 18,
+    backgroundColor: C.card,
+    borderRadius: 18,
+    borderWidth: 2,
+    borderColor: C.primary,
+    shadowColor: C.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  otpHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  otpIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: C.primaryXLight,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  otpTitle: {
+    color: C.text,
+    fontSize: 15,
+    fontWeight: "800",
+  },
+  otpSub: {
+    color: C.textSub,
+    fontSize: 12.5,
+    marginTop: 4,
+    lineHeight: 17,
+  },
+  otpDisplay: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 12,
+    marginTop: 20,
+    marginBottom: 16,
+  },
+  otpDigit: {
+    width: 52,
+    height: 64,
+    borderRadius: 14,
+    backgroundColor: C.primaryXLight,
+    borderWidth: 2,
+    borderColor: C.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  otpDigitText: {
+    color: C.primary,
+    fontSize: 28,
+    fontWeight: "900",
+    fontVariant: ["tabular-nums"],
+  },
+  otpWarning: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: C.border,
+  },
+  otpWarningText: {
+    flex: 1,
+    color: C.warning,
+    fontSize: 12,
+    fontWeight: "600",
+  },
 });

@@ -3,6 +3,10 @@ import { createClient } from '@supabase/supabase-js';
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
 
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  console.error('⚠️ CRITICAL: Supabase credentials missing. Check .env file for EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY');
+}
+
 // ⚠️ SECURITY NOTE: The service-role key MUST NOT be prefixed with EXPO_PUBLIC_
 // — that prefix bundles it into the APK/IPA where anyone with a decompiler can
 // read it. Until all privileged operations are moved to the Railway backend,

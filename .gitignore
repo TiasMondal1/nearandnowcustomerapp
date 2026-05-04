@@ -33,6 +33,17 @@ yarn-error.*
 # local env files
 .env
 .env*.local
+.env.local
+.env.backend
+.env.production
+.env.staging
+
+# Security - Never commit these files
+google-service-account.json
+*.keystore
+*.jks
+credentials.json
+service-account*.json
 
 # typescript
 *.tsbuildinfo
@@ -42,5 +53,3 @@ app-example
 # generated native folders
 /ios
 /android
-
-.env.local
