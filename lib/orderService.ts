@@ -661,79 +661,11 @@ export async function getUserOrders(userId: string): Promise<Order[]> {
   }
 }
 
-// ─── Delivery OTP Functions ─────────────────────────────────────────────────
+// ─── Delivery OTP ────────────────────────────────────────────────────────────
 
 /**
- * Generates a random 4-digit PIN for delivery verification.
- */
-export function generateDeliveryOTP(): string {
-  return Math.floor(1000 + Math.random() * 9000).toString();
-}
-
-/**
- * Stores the delivery OTP locally for the given order.
- * The OTP is generated when the order status changes to 'in_transit' (dispatched).
- */
-const DELIVERY_OTP_KEY = 'nn_delivery_otp';
-
-interface DeliveryOTPCache {
-  [orderId: string]: {
-    otp: string;
-    generatedAt: number;
-  };
-}
-
-export async function storeDeliveryOTP(orderId: string, otp: string): Promise<void> {
-  if (!orderId || !otp) return;
-  try {
-    const raw = await AsyncStorage.getItem(DELIVERY_OTP_KEY);
-    const cache: DeliveryOTPCache = raw ? JSON.parse(raw) : {};
-    cache[orderId] = {
-      otp,
-      generatedAt: Date.now(),
-    };
-    await AsyncStorage.setItem(DELIVERY_OTP_KEY, JSON.stringify(cache));
-  } catch {
-    // Best-effort storage
-  }
-}
-
-export async function getDeliveryOTP(orderId: string): Promise<string | null> {
-  if (!orderId) return null;
-  try {
-    const raw = await AsyncStorage.getItem(DELIVERY_OTP_KEY);
-    if (!raw) return null;
-    const cache: DeliveryOTPCache = JSON.parse(raw);
-    return cache[orderId]?.otp ?? null;
-  } catch {
-    return null;
-  }
-}
-
-export async function clearDeliveryOTP(orderId: string): Promise<void> {
-  if (!orderId) return;
-  try {
-    const raw = await AsyncStorage.getItem(DELIVERY_OTP_KEY);
-    if (!raw) return;
-    const cache: DeliveryOTPCache = JSON.parse(raw);
-    delete cache[orderId];
-    await AsyncStorage.setItem(DELIVERY_OTP_KEY, JSON.stringify(cache));
-  } catch {
-    // Ignore
-  }
-}
-
-/**
- * Checks if an OTP should be generated for the order based on its status.
- * OTP is generated when order reaches 'in_transit' status (order dispatched).
- */
-export function shouldGenerateOTP(status: string): boolean {
-  return status === 'in_transit';
-}
-
-/**
- * Statuses where the OTP should be displayed to the customer.
- * Shows after dispatch until delivery.
+ * Statuses where the delivery OTP should be displayed to the customer.
+ * The OTP is stored on the order and shown from order_picked_up until delivered.
  */
 export function shouldShowOTP(status: string): boolean {
   return ['in_transit', 'order_picked_up'].includes(status);

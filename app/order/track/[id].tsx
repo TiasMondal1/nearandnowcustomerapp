@@ -1,8 +1,9 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
+    Animated,
     Linking,
     Platform,
     Pressable,
@@ -25,9 +26,9 @@ import {
     getTimelineIndex,
 } from "../../../constants/orderStatus";
 import { useOrderTracking } from "../../../hooks/useOrderTracking";
-import {
-    shouldShowOTP
-} from "../../../lib/orderService";
+import { shouldShowOTP } from "../../../lib/orderService";
+
+const ADD_MORE_WINDOW_SECONDS = 40;
 
 function formatTime(iso: string) {
   if (!iso) return "";
@@ -70,21 +71,44 @@ export default function TrackOrderScreen() {
   const order = data?.order;
   const status = (order?.status ?? "pending_at_store") as OrderStatus;
 
-  // Get delivery OTP from backend response or generate locally as fallback
+  // ─── Add-more window timer ────────────────────────────────────────────────
+  const [addMoreSecsLeft, setAddMoreSecsLeft] = useState<number>(ADD_MORE_WINDOW_SECONDS);
+  const addMoreProgress = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (!order?.placed_at) return;
+    const placed = new Date(order.placed_at).getTime();
+    const elapsed = Math.floor((Date.now() - placed) / 1000);
+    const initial = Math.max(0, ADD_MORE_WINDOW_SECONDS - elapsed);
+    setAddMoreSecsLeft(initial);
+    if (initial <= 0) return;
+
+    const interval = setInterval(() => {
+      setAddMoreSecsLeft((prev) => {
+        const next = Math.max(0, prev - 1);
+        if (next === 0) clearInterval(interval);
+        return next;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [order?.placed_at]);
+
+  useEffect(() => {
+    Animated.timing(addMoreProgress, {
+      toValue: addMoreSecsLeft / ADD_MORE_WINDOW_SECONDS,
+      duration: 800,
+      useNativeDriver: false,
+    }).start();
+  }, [addMoreSecsLeft]);
+
+  const showAddMoreWindow =
+    addMoreSecsLeft > 0 && status === "pending_at_store";
+
+  // ─── Delivery OTP — stored on the order, shown to customer at handoff ───
   const deliveryOTP = useMemo(() => {
-    // Prefer OTP from backend (synced with rider app)
-    if (order?.delivery_otp) {
-      return order.delivery_otp;
-    }
-    // Fallback: generate locally if backend doesn't provide one yet
-    // This ensures the customer always sees an OTP when the order is dispatched
-    if (shouldShowOTP(status)) {
-      // Use order ID to generate a deterministic OTP so it's consistent across refreshes
-      const hash = id?.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) ?? 0;
-      return String(1000 + (hash % 9000)).padStart(4, '0');
-    }
-    return null;
-  }, [order?.delivery_otp, status, id]);
+    if (!shouldShowOTP(status)) return null;
+    return (order as any)?.delivery_otp ?? null;
+  }, [status, order]);
 
   const storeOrders = order?.store_orders ?? [];
   const isMultiStore = storeOrders.length > 1;
@@ -236,6 +260,43 @@ export default function TrackOrderScreen() {
             </View>
           )}
         </View>
+
+        {/* ─── Add-more window ─────────────────────────────────────────────── */}
+        {showAddMoreWindow && (
+          <View style={styles.addMoreBox}>
+            <View style={styles.addMoreTop}>
+              <View style={styles.addMoreIconWrap}>
+                <MaterialCommunityIcons name="cart-plus" size={22} color={C.primary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.addMoreTitle}>Want to add something?</Text>
+                <Text style={styles.addMoreSub}>
+                  You have{" "}
+                  <Text style={styles.addMoreCount}>{addMoreSecsLeft}s</Text> to add more items
+                  before the store starts preparing your order.
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.addMoreBarTrack}>
+              <Animated.View
+                style={[
+                  styles.addMoreBarFill,
+                  { width: addMoreProgress.interpolate({ inputRange: [0, 1], outputRange: ["0%", "100%"] }) },
+                ]}
+              />
+            </View>
+
+            <TouchableOpacity
+              style={styles.addMoreBtn}
+              activeOpacity={0.85}
+              onPress={() => router.push("/" as any)}
+            >
+              <MaterialCommunityIcons name="plus" size={16} color="#fff" />
+              <Text style={styles.addMoreBtnText}>Add more items</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* ─── Map ──────────────────────────────────────────────────────────── */}
         {!isCancelled && status !== "order_delivered" && mapRegion && !isMultiStore ? (
@@ -1024,5 +1085,80 @@ const styles = StyleSheet.create({
     color: C.warning,
     fontSize: 12,
     fontWeight: "600",
+  },
+
+  // Add-more window
+  addMoreBox: {
+    marginHorizontal: 16,
+    marginBottom: 12,
+    padding: 16,
+    backgroundColor: C.card,
+    borderRadius: 18,
+    borderWidth: 2,
+    borderColor: C.primary,
+    shadowColor: C.primary,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 4,
+    gap: 12,
+  },
+  addMoreTop: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  addMoreIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: C.primaryXLight,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  addMoreTitle: {
+    color: C.text,
+    fontSize: 15,
+    fontWeight: "800",
+  },
+  addMoreSub: {
+    color: C.textSub,
+    fontSize: 13,
+    marginTop: 3,
+    lineHeight: 18,
+  },
+  addMoreCount: {
+    color: C.primary,
+    fontWeight: "900",
+  },
+  addMoreBarTrack: {
+    height: 5,
+    backgroundColor: C.border,
+    borderRadius: 3,
+    overflow: "hidden",
+  },
+  addMoreBarFill: {
+    height: 5,
+    backgroundColor: C.primary,
+    borderRadius: 3,
+  },
+  addMoreBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: C.primary,
+    paddingVertical: 11,
+    borderRadius: 12,
+    shadowColor: C.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  addMoreBtnText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "800",
   },
 });
