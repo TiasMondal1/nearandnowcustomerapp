@@ -133,7 +133,7 @@ export default function OtpScreen() {
                 return (
                   <TextInput
                     key={idx}
-                    ref={(el) => (inputsRef.current[idx] = el)}
+                    ref={(el) => { inputsRef.current[idx] = el; }}
                     style={[
                       styles.otpBox,
                       isFocused && styles.otpBoxFocused,

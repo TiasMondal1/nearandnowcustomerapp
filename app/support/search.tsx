@@ -18,10 +18,24 @@ import { useCartItemMap, useCart } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
 import { cdnImage } from "../../lib/imageUrl";
 import { searchProducts, type Product } from "../../lib/productService";
+import { getNearbyProductFilter } from "../../lib/storeService";
 import StarRating from "../../components/StarRating";
 
 export default function SearchScreen() {
   const { location } = useLocation();
+  // Cache the nearby product filter so we don't re-call Supabase on every keystroke.
+  const nearbyIdsRef = useRef<Set<string> | undefined>(undefined);
+  const lastLocationKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!location) { nearbyIdsRef.current = undefined; return; }
+    const key = `${location.latitude.toFixed(3)},${location.longitude.toFixed(3)}`;
+    if (lastLocationKeyRef.current === key) return;
+    lastLocationKeyRef.current = key;
+    getNearbyProductFilter(location.latitude, location.longitude).then((filter) => {
+      nearbyIdsRef.current = filter?.productIds;
+    });
+  }, [location?.latitude, location?.longitude]);
   const { addItem, updateQty } = useCart();
   const cartItemsByProductId = useCartItemMap();
   // Allow `/support/search?q=Amul+Milk` (used by the Order Again fallback card
@@ -57,10 +71,7 @@ export default function SearchScreen() {
 
     const timeout = setTimeout(async () => {
       try {
-        const data = await searchProducts(
-          trimmed,
-          location ? { lat: location.latitude, lng: location.longitude } : undefined,
-        );
+        const data = await searchProducts(trimmed, { nearbyIds: nearbyIdsRef.current });
         // Discard stale responses: another query has been typed since this one started.
         if (myId !== requestIdRef.current) return;
         setResults(data);

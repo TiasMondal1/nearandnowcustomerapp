@@ -143,11 +143,7 @@ export default function CheckoutScreen() {
           for (const arr of Object.values(cache.productsByCategory)) flat.push(...arr);
           allProducts = flat;
         } else {
-          allProducts = await getAllProducts(
-            location
-              ? { lat: location.latitude, lng: location.longitude }
-              : undefined,
-          );
+          allProducts = await getAllProducts();
         }
         const cartIds = new Set(items.map((i) => i.product_id));
 

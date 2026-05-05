@@ -20,6 +20,7 @@ import { useCart, useCartItemMap } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
 import { cdnImage } from "../../lib/imageUrl";
 import { getProductsByCategory, type Product as ServiceProduct } from "../../lib/productService";
+import { getNearbyProductFilter } from "../../lib/storeService";
 import StarRating from "../../components/StarRating";
 
 const FALLBACK_COLORS = [
@@ -153,11 +154,12 @@ export default function CategorySlugScreen() {
         setProducts([]);
         return;
       }
-      const loc = location;
-      const productsData = await getProductsByCategory(
-        categoryData.name,
-        loc ? { lat: loc.latitude, lng: loc.longitude } : undefined,
-      );
+      let nearbyIds: Set<string> | undefined;
+      if (location) {
+        const filter = await getNearbyProductFilter(location.latitude, location.longitude);
+        nearbyIds = filter?.productIds;
+      }
+      const productsData = await getProductsByCategory(categoryData.name, { nearbyIds });
 
       setCategory(categoryData);
       setProducts(productsData);

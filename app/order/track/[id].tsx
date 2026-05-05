@@ -447,7 +447,7 @@ export default function TrackOrderScreen() {
               </View>
             </View>
             <View style={styles.otpDisplay}>
-              {deliveryOTP.split('').map((digit, idx) => (
+              {deliveryOTP.split('').map((digit: string, idx: number) => (
                 <View key={idx} style={styles.otpDigit}>
                   <Text style={styles.otpDigitText}>{digit}</Text>
                 </View>

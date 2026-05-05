@@ -277,18 +277,31 @@ export async function createOrder(input: CreateOrderInput): Promise<Order> {
     noteParts.push(`Tip: ₹${input.tip_amount.toFixed(2)}`);
   }
 
-  // ─── 2. Pick any active store (fallback until nearest-store is wired) ────
+  // ─── 2. Pick the nearest active store to the delivery address ────────────
   let fallbackStoreId: string | null = null;
   try {
-    const { data: stores } = await supabaseAdmin
-      .from('stores')
-      .select('id')
-      .eq('is_active', true)
-      .limit(1);
-    fallbackStoreId = (stores && stores[0]?.id) || null;
+    const { getNearbyActiveStores } = await import('./storeService');
+    const nearby = await getNearbyActiveStores(
+      input.delivery_latitude,
+      input.delivery_longitude,
+      // Use a generous radius so orders still go through even if the customer
+      // is slightly outside the 4 km browse radius (e.g. they moved after
+      // adding items). We still pick the single nearest store.
+      50,
+    );
+    fallbackStoreId = nearby[0]?.id ?? null;
+
+    // Hard fallback: if PostGIS-style distance lookup returns nothing (e.g. no
+    // lat/lng on stores yet), grab any active store so the order still records.
+    if (!fallbackStoreId) {
+      const { data: anyStore } = await supabaseAdmin
+        .from('stores')
+        .select('id')
+        .eq('is_active', true)
+        .limit(1);
+      fallbackStoreId = anyStore?.[0]?.id ?? null;
+    }
   } catch {
-    // If there isn't even one active store, we still create the order — it
-    // just won't get a store_orders row. Delivery ops can reassign later.
     fallbackStoreId = null;
   }
 

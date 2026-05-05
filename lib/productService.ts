@@ -58,7 +58,11 @@ interface MasterProductRow {
 
 async function fetchAllMasterProductRows(
   fields: string = MASTER_PRODUCT_FIELDS,
+  nearbyIds?: Set<string>,
 ): Promise<MasterProductRow[]> {
+  // If a nearby filter was requested but no stores are nearby, return nothing.
+  if (nearbyIds !== undefined && nearbyIds.size === 0) return [];
+
   const allRows: MasterProductRow[] = [];
   let from = 0;
   // Supabase default row cap per request is 1000. Use the full window to minimize
@@ -66,11 +70,12 @@ async function fetchAllMasterProductRows(
   const batchSize = 1000;
   let hasMore = true;
   while (hasMore) {
-    const { data, error } = await supabase
+    let q = supabase
       .from('master_products')
       .select(fields)
-      .eq('is_active', true)
-      .range(from, from + batchSize - 1);
+      .eq('is_active', true);
+    if (nearbyIds) q = q.in('id', [...nearbyIds]);
+    const { data, error } = await q.range(from, from + batchSize - 1);
     if (error) throw new Error(`Database error: ${error.message}`);
     if (data && data.length > 0) {
       allRows.push(...(data as unknown as MasterProductRow[]));
@@ -129,17 +134,15 @@ function masterRowToProduct(data: MasterProductRow): Product {
 }
 
 /**
- * Single DB pass for home / categories: all active master products + group by category string.
- * Options kept for API compatibility; catalog is no longer filtered by store location.
+ * Single DB pass for home / categories: active master products + group by category.
+ * Pass `nearbyIds` (from getNearbyProductFilter) to restrict to nearby-store inventory.
  */
-export async function loadMasterCatalog(_options?: {
-  lat?: number;
-  lng?: number;
-  radiusKm?: number;
+export async function loadMasterCatalog(options?: {
+  nearbyIds?: Set<string>;
 }): Promise<{ products: Product[]; productsByCategory: Record<string, Product[]> }> {
   // Home catalog does NOT need description text — use the lean field list to shave
   // payload + parse cost noticeably.
-  const rows = await fetchAllMasterProductRows(HOME_PRODUCT_FIELDS);
+  const rows = await fetchAllMasterProductRows(HOME_PRODUCT_FIELDS, options?.nearbyIds);
   const products = rows.map(masterRowToProduct);
   const productsByCategory: Record<string, Product[]> = {};
   for (const p of products) {
@@ -164,12 +167,10 @@ export async function loadMasterCatalog(_options?: {
   return { products, productsByCategory };
 }
 
-export async function getAllProducts(_options?: {
-  lat?: number;
-  lng?: number;
-  radiusKm?: number;
+export async function getAllProducts(options?: {
+  nearbyIds?: Set<string>;
 }): Promise<Product[]> {
-  const rows = await fetchAllMasterProductRows();
+  const rows = await fetchAllMasterProductRows(MASTER_PRODUCT_FIELDS, options?.nearbyIds);
   return rows.map(masterRowToProduct);
 }
 
@@ -184,11 +185,19 @@ export async function getAllProducts(_options?: {
  */
 export async function loadMasterCatalogFast(
   limit: number = 500,
+  nearbyIds?: Set<string>,
 ): Promise<{ products: Product[]; productsByCategory: Record<string, Product[]> }> {
-  const { data, error } = await supabase
+  // If a nearby filter was requested but no stores are nearby, return nothing.
+  if (nearbyIds !== undefined && nearbyIds.size === 0) {
+    return { products: [], productsByCategory: {} };
+  }
+
+  let q = supabase
     .from('master_products')
     .select(HOME_PRODUCT_FIELDS)
-    .eq('is_active', true)
+    .eq('is_active', true);
+  if (nearbyIds) q = q.in('id', [...nearbyIds]);
+  const { data, error } = await q
     .order('rating', { ascending: false, nullsFirst: false })
     .order('rating_count', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false })
@@ -213,36 +222,33 @@ export async function loadMasterCatalogFast(
  */
 export async function getProductsByCategory(
   categoryName: string,
-  _options?: { lat?: number; lng?: number; radiusKm?: number },
+  options?: { nearbyIds?: Set<string> },
 ): Promise<Product[]> {
   const trimmed = categoryName.trim();
   if (!trimmed) return [];
 
-  // Use eq() for exact match instead of ilike() — eq() uses the B-tree index on
-  // `category` directly; ilike() forces a sequential scan even with pg_trgm.
-  // Category names are stored with consistent casing so exact match is safe.
-  // If the category name comes in with different casing, try both.
-  const { data, error } = await supabase
-    .from('master_products')
-    .select(HOME_PRODUCT_FIELDS)
-    .eq('is_active', true)
-    .eq('category', trimmed)
-    .order('rating', { ascending: false, nullsFirst: false })
-    .order('rating_count', { ascending: false, nullsFirst: false })
-    .order('created_at', { ascending: false });
+  // If a nearby filter is set but empty, no stores are nearby — return nothing.
+  if (options?.nearbyIds !== undefined && options.nearbyIds.size === 0) return [];
 
+  const buildQuery = (useIlike = false) => {
+    let q = supabase
+      .from('master_products')
+      .select(HOME_PRODUCT_FIELDS)
+      .eq('is_active', true);
+    if (options?.nearbyIds) q = q.in('id', [...options.nearbyIds]);
+    q = useIlike ? q.ilike('category', trimmed) : q.eq('category', trimmed);
+    return q
+      .order('rating', { ascending: false, nullsFirst: false })
+      .order('rating_count', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false });
+  };
+
+  const { data, error } = await buildQuery(false);
   if (error) throw new Error(`Category fetch error: ${error.message}`);
 
   // If exact match returned nothing, retry with ilike (handles casing mismatch).
   if (!data || data.length === 0) {
-    const { data: fallback, error: ferr } = await supabase
-      .from('master_products')
-      .select(HOME_PRODUCT_FIELDS)
-      .eq('is_active', true)
-      .ilike('category', trimmed)
-      .order('rating', { ascending: false, nullsFirst: false })
-      .order('rating_count', { ascending: false, nullsFirst: false })
-      .order('created_at', { ascending: false });
+    const { data: fallback, error: ferr } = await buildQuery(true);
     if (!ferr && fallback) {
       return (fallback || []).map((r) => masterRowToProduct(r as MasterProductRow));
     }
@@ -262,35 +268,43 @@ export async function getProductsByCategory(
  */
 export async function searchProducts(
   query: string,
-  _options?: { lat?: number; lng?: number; radiusKm?: number },
+  options?: { nearbyIds?: Set<string> },
 ): Promise<Product[]> {
   const q = query.trim();
   if (!q) return [];
 
-  // Fast path: SECURITY DEFINER RPC uses the pg_trgm GIN index for O(log n)
-  // substring search instead of a full table scan. Falls back to ilike if the
-  // function hasn't been deployed yet.
-  try {
-    const { data, error } = await supabase.rpc('search_products', {
-      query: q.slice(0, 64),
-      result_limit: 50,
-    });
-    if (!error && Array.isArray(data) && data.length > 0) {
-      return (data as MasterProductRow[]).map(masterRowToProduct);
-    }
-  } catch {
-    // RPC not deployed yet — fall through to ilike fallback.
-  }
+  // If a nearby filter is set but empty, no stores are nearby — return nothing.
+  if (options?.nearbyIds !== undefined && options.nearbyIds.size === 0) return [];
 
-  // Fallback: ilike filter (full table scan, still server-side — fast enough for 44k rows).
   const safe = q.replace(/[%,]/g, ' ').slice(0, 64);
   const pattern = `%${safe}%`;
 
-  const { data, error } = await supabase
+  // Fast path: SECURITY DEFINER RPC for pg_trgm GIN index search.
+  // Note: RPC doesn't support arbitrary IN filters, so when a nearby filter is
+  // active we skip straight to ilike which supports it.
+  if (!options?.nearbyIds) {
+    try {
+      const { data, error } = await supabase.rpc('search_products', {
+        query: q.slice(0, 64),
+        result_limit: 50,
+      });
+      if (!error && Array.isArray(data) && data.length > 0) {
+        return (data as MasterProductRow[]).map(masterRowToProduct);
+      }
+    } catch {
+      // RPC not deployed yet — fall through to ilike fallback.
+    }
+  }
+
+  // Fallback / nearby-filtered path: ilike with optional IN filter.
+  let dbq = supabase
     .from('master_products')
     .select(HOME_PRODUCT_FIELDS)
     .eq('is_active', true)
-    .or(`name.ilike.${pattern},category.ilike.${pattern}`)
+    .or(`name.ilike.${pattern},category.ilike.${pattern}`);
+  if (options?.nearbyIds) dbq = dbq.in('id', [...options.nearbyIds]);
+
+  const { data, error } = await dbq
     .order('rating', { ascending: false, nullsFirst: false })
     .order('rating_count', { ascending: false, nullsFirst: false })
     .limit(50);
@@ -299,12 +313,10 @@ export async function searchProducts(
   return (data || []).map((r) => masterRowToProduct(r as MasterProductRow));
 }
 
-export async function getAllProductsByCategory(_options?: {
-  lat?: number;
-  lng?: number;
-  radiusKm?: number;
+export async function getAllProductsByCategory(options?: {
+  nearbyIds?: Set<string>;
 }): Promise<Record<string, Product[]>> {
-  const { productsByCategory } = await loadMasterCatalog(_options);
+  const { productsByCategory } = await loadMasterCatalog(options);
   return productsByCategory;
 }
 
@@ -415,20 +427,23 @@ export function getCountForCategoryName(
 /**
  * Paginated fetch from master_products. Returns exactly `limit` rows at a given offset.
  * If `category` is provided, filters case-insensitively on `master_products.category`.
+ * Pass `nearbyIds` to restrict results to products available in nearby stores.
  */
 export async function getProductsPage(
   category: string | null,
   offset: number,
   limit: number = HOME_PAGE_SIZE,
+  nearbyIds?: Set<string>,
 ): Promise<Product[]> {
+  if (nearbyIds !== undefined && nearbyIds.size === 0) return [];
+
   let query = supabase
     .from('master_products')
     .select(MASTER_PRODUCT_FIELDS)
     .eq('is_active', true);
 
-  if (category) {
-    query = query.ilike('category', category.trim());
-  }
+  if (category) query = query.ilike('category', category.trim());
+  if (nearbyIds) query = query.in('id', [...nearbyIds]);
 
   const { data, error } = await query
     .order('created_at', { ascending: false })

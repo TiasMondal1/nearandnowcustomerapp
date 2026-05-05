@@ -57,6 +57,7 @@ import {
     writeHomeCatalogCache,
     type Product,
 } from "../../lib/productService";
+import { getNearbyProductFilter } from "../../lib/storeService";
 
 // ─── Design tokens ──────────────────────────────────────────────────────────
 const T = {
@@ -535,7 +536,12 @@ export default function HomeScreen() {
   const [liveAddress, setLiveAddress] = useState<string | null>(__liveAddressCache);
   const [locationFetching, setLocationFetching] = useState(false);
 
-  const { location } = useLocation();
+  // null = no location set (show all); Set = computed filter (may be empty = no stores)
+  const [nearbyIds, setNearbyIds] = useState<Set<string> | null>(null);
+  const [noStoresNearby, setNoStoresNearby] = useState(false);
+  const lastFilteredLocationKey = useRef<string | null>(null);
+
+  const { location, isHydrated } = useLocation();
   const { addItem, updateQty } = useCart();
   const cartItemsByProductId = useCartItemMap();
   const totalQty = useMemo(() => {
@@ -570,24 +576,26 @@ export default function HomeScreen() {
 
   /**
    * Full background refresh — fetches the entire catalog and overwrites cache.
-   * Used by pull-to-refresh and as the "fill" step after `fetchFreshFast`.
+   * Pass `filter` when the user has a location set so only nearby products load.
    */
-  const fetchFresh = useCallback(async () => {
+  const fetchFresh = useCallback(async (filter?: Set<string>) => {
     try {
       const [categoriesData, catalog] = await Promise.all([
         getAllCategories(),
-        loadMasterCatalog(),
+        loadMasterCatalog({ nearbyIds: filter }),
       ]);
       setCategories(categoriesData);
       setProductsByCategory(catalog.productsByCategory);
-      // Defer the AsyncStorage write so it never blocks the render thread.
-      InteractionManager.runAfterInteractions(() => {
-        writeHomeCatalogCache({
-          products: catalog.products,
-          productsByCategory: catalog.productsByCategory,
-          categories: categoriesData,
+      // Only persist to cache when no location filter (cache is global, not per-location).
+      if (!filter) {
+        InteractionManager.runAfterInteractions(() => {
+          writeHomeCatalogCache({
+            products: catalog.products,
+            productsByCategory: catalog.productsByCategory,
+            categories: categoriesData,
+          });
         });
-      });
+      }
     } catch (error) {
       console.error("Failed to load home:", error);
     }
@@ -595,37 +603,36 @@ export default function HomeScreen() {
 
   /**
    * Cold-start fast path — fetches only the top-500 most-popular products
-   * (one round-trip, ~30–80 KB) so the home grid paints with real data in
-   * ~120–400 ms instead of 1–5 s. The full catalog is then loaded in the
-   * background so search / filter remain responsive.
+   * (one round-trip) so the home grid paints with real data quickly.
+   * Pass `filter` to restrict results to nearby-store inventory.
    */
-  const fetchFreshFast = useCallback(async () => {
+  const fetchFreshFast = useCallback(async (filter?: Set<string>) => {
     try {
       const [categoriesData, fastCatalog] = await Promise.all([
         getAllCategories(),
-        loadMasterCatalogFast(500),
+        loadMasterCatalogFast(500, filter),
       ]);
       setCategories(categoriesData);
       setProductsByCategory(fastCatalog.productsByCategory);
       setLoading(false);
-      // Background-fill: hydrate the rest of the catalog without blocking
-      // the user. This is what powers fast category browsing later.
+      // Background-fill: hydrate the rest of the catalog.
       InteractionManager.runAfterInteractions(() => {
-        loadMasterCatalog()
+        loadMasterCatalog({ nearbyIds: filter })
           .then((full) => {
             setProductsByCategory(full.productsByCategory);
-            writeHomeCatalogCache({
-              products: full.products,
-              productsByCategory: full.productsByCategory,
-              categories: categoriesData,
-            });
+            if (!filter) {
+              writeHomeCatalogCache({
+                products: full.products,
+                productsByCategory: full.productsByCategory,
+                categories: categoriesData,
+              });
+            }
           })
           .catch(() => {});
       });
     } catch (error) {
       console.error("Failed to load home (fast):", error);
-      // Fall back to the full fetch so the user still sees content eventually.
-      await fetchFresh();
+      await fetchFresh(filter);
       setLoading(false);
     }
   }, [fetchFresh]);
@@ -639,8 +646,8 @@ export default function HomeScreen() {
    *      happens in <500 ms instead of waiting on the full catalog fetch.
    *
    * Note: no dependency on LocationContext.isHydrated. The catalog is
-   * location-independent, so blocking on hydration just adds 50–100 ms of
-   * dead time on every cold start.
+   * location-independent on cold start; the location effect below applies
+   * the nearby filter once hydration completes.
    */
   useEffect(() => {
     if (didInitialFetch.current) return;
@@ -683,6 +690,40 @@ export default function HomeScreen() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── Nearby store filter — recompute when user location changes ────────────
+  // Runs after isHydrated so we never block the cold-start paint. When the
+  // location changes significantly (>~110 m) we compute a new nearby filter
+  // and reload the catalog so the user only sees products from active stores
+  // within 4 km of their delivery address.
+  useEffect(() => {
+    if (!isHydrated || !location) {
+      // No location — clear any previously-applied filter (show all products).
+      if (nearbyIds !== null) {
+        setNearbyIds(null);
+        setNoStoresNearby(false);
+        fetchFresh(undefined);
+      }
+      return;
+    }
+
+    // Round to 3 decimal places (~110 m grid) to avoid re-firing on GPS jitter.
+    const key = `${location.latitude.toFixed(3)},${location.longitude.toFixed(3)}`;
+    if (lastFilteredLocationKey.current === key) return;
+    lastFilteredLocationKey.current = key;
+
+    let cancelled = false;
+    (async () => {
+      const filter = await getNearbyProductFilter(location.latitude, location.longitude);
+      if (cancelled || !filter) return;
+      const noStores = filter.storeIds.length === 0;
+      setNearbyIds(filter.productIds);
+      setNoStoresNearby(noStores);
+      await fetchFresh(noStores ? undefined : filter.productIds);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location?.latitude, location?.longitude, isHydrated]);
 
   // ── Live reverse-geocode from device GPS ──────────────────────────────────
   // Deferred past first paint: GPS + reverse-geocode is a 500–2000 ms call
@@ -771,9 +812,9 @@ export default function HomeScreen() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchFresh();
+    await fetchFresh(noStoresNearby ? undefined : nearbyIds ?? undefined);
     setRefreshing(false);
-  }, [fetchFresh]);
+  }, [fetchFresh, nearbyIds, noStoresNearby]);
 
   const categoriesWithProducts = useMemo(
     () =>
@@ -897,17 +938,33 @@ export default function HomeScreen() {
       }
 
       if (categoriesWithProducts.length === 0) {
-        out.push({
-          kind: "empty",
-          icon: !location ? "store-off-outline" : "package-variant-closed",
-          title: !location ? "Set your location" : "No products found",
-          message: !location
-            ? "We'll show you what's fresh and available nearby."
-            : "No products available near you at the moment.",
-          cta: !location
-            ? { label: "Choose Location", onPress: () => router.push("/location") }
-            : undefined,
-        });
+        const emptyItem: HomeListItem = (() => {
+          if (!location) {
+            return {
+              kind: "empty" as const,
+              icon: "store-off-outline" as const,
+              title: "Set your location",
+              message: "We'll show you what's fresh and available nearby.",
+              cta: { label: "Choose Location", onPress: () => router.push("/location") },
+            };
+          }
+          if (noStoresNearby) {
+            return {
+              kind: "empty" as const,
+              icon: "map-marker-off-outline" as const,
+              title: "No stores near you",
+              message: "We don't have a delivery store within 4 km of your location yet.",
+              cta: { label: "Change Location", onPress: () => router.push("/location") },
+            };
+          }
+          return {
+            kind: "empty" as const,
+            icon: "package-variant-closed" as const,
+            title: "No products found",
+            message: "No products available near you at the moment.",
+          };
+        })();
+        out.push(emptyItem);
       } else {
         for (const c of categoriesWithProducts) {
           const products = getProductsForCategoryName(productsByCategory, c.name);
@@ -975,6 +1032,7 @@ export default function HomeScreen() {
     productsByCategory,
     filteredProducts,
     location,
+    noStoresNearby,
     handleSelectCategory,
   ]);
 
