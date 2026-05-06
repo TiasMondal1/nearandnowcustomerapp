@@ -33,7 +33,7 @@ module.exports = {
     },
     android: {
       adaptiveIcon: {
-        backgroundColor: "#000000",
+        backgroundColor: "#ffffff",
         foregroundImage: "./assets/images/adaptive-icon-foreground.png",
         monochromeImage: "./assets/images/adaptive-icon-monochrome.png",
       },
@@ -66,10 +66,10 @@ module.exports = {
           image: "./assets/images/splash-icon.png",
           imageWidth: 240,
           resizeMode: "contain",
-          backgroundColor: "#000000",
+          backgroundColor: "#ffffff",
           dark: {
             image: "./assets/images/splash-icon.png",
-            backgroundColor: "#000000",
+            backgroundColor: "#ffffff",
           },
         },
       ],
