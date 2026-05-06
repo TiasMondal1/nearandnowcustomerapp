@@ -6,12 +6,12 @@ import { supabase } from './supabase';
 // Real schema columns for popularity sorting are `rating` and `rating_count`
 // (NOT `avg_rating` / `review_count`).
 const MASTER_PRODUCT_FIELDS =
-  'id,name,category,base_price,discounted_price,unit,image_url,description,is_loose,is_active,created_at,rating,rating_count';
+  'id,name,category,base_price,discounted_price,gst_rate,unit,image_url,description,is_loose,is_active,created_at,rating,rating_count';
 
 // Lean field list used by the home catalog load. Excludes the potentially large `description`
 // field, which the home screen never renders — slashes payload size & parse time.
 const HOME_PRODUCT_FIELDS =
-  'id,name,category,base_price,discounted_price,unit,image_url,is_loose,is_active,created_at,rating,rating_count';
+  'id,name,category,base_price,discounted_price,gst_rate,unit,image_url,is_loose,is_active,created_at,rating,rating_count';
 
 /** Default page size for incremental home load. */
 export const HOME_PAGE_SIZE = 20;
@@ -45,6 +45,7 @@ interface MasterProductRow {
   category: string;
   base_price?: number | string | null;
   discounted_price?: number | string | null;
+  gst_rate?: number | string | null;
   unit?: string | null;
   image_url?: string | null;
   description?: string | null;
@@ -88,19 +89,22 @@ async function fetchAllMasterProductRows(
   return allRows;
 }
 
+function parseNum(v: number | string | null | undefined): number {
+  if (v == null) return 0;
+  const n = typeof v === 'string' ? parseFloat(v) : Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
 function masterRowToProduct(data: MasterProductRow): Product {
-  const price =
-    data.discounted_price != null
-      ? typeof data.discounted_price === 'string'
-        ? parseFloat(data.discounted_price)
-        : Number(data.discounted_price)
-      : 0;
-  const originalPrice =
-    data.base_price != null
-      ? typeof data.base_price === 'string'
-        ? parseFloat(data.base_price)
-        : Number(data.base_price)
-      : undefined;
+  const isLoose = data.is_loose ?? false;
+  const gstRate = isLoose ? 0 : parseNum(data.gst_rate);
+  const preTax = parseNum(data.discounted_price);
+  // Add GST on top of the discounted (pre-tax) price, matching the website.
+  const price = preTax + (preTax * gstRate) / 100;
+  const preTaxBase = parseNum(data.base_price);
+  const originalPrice = preTaxBase > 0
+    ? preTaxBase + (preTaxBase * gstRate) / 100
+    : undefined;
 
   const avgRating =
     data.rating == null
