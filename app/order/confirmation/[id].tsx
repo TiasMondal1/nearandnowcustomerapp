@@ -149,7 +149,7 @@ export default function OrderConfirmationScreen() {
   );
 
   const handleGoToCart = useCallback(() => {
-    router.push("/support/cart");
+    router.push("/cart");
   }, []);
 
   const handleTrackOrder = useCallback(() => {

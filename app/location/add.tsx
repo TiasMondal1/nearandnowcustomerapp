@@ -21,8 +21,9 @@ import { C } from "../../constants/colors";
 import { useAuth } from "../../context/AuthContext";
 import { useLocation } from "../../context/LocationContext";
 import { createAddress } from "../../lib/addressService";
+import { getGoogleMapsApiKey } from "../../lib/mapsEnv";
 
-const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyAaEh8Qu-k6nT5BphpHcOUBOZ5RJ7F2QTQ";
+const GOOGLE_MAPS_API_KEY = getGoogleMapsApiKey();
 
 const LABELS = ["Home", "Work", "Other"] as const;
 

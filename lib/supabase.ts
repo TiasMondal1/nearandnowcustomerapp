@@ -18,10 +18,9 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 // Migration path: move createOrder, getUserOrdersFromSupabase, getCategoryCounts,
 // getProductsByCategory, etc. to POST/GET endpoints on the Railway backend and
 // remove supabaseAdmin from this file entirely.
-const SUPABASE_SERVICE_ROLE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ||
-  process.env.EXPO_PUBLIC_SUPABASE_SERVICE_ROLE_KEY ||
-  '';
+//
+// Never read EXPO_PUBLIC_SUPABASE_SERVICE_ROLE_KEY — that prefix bundles the key into the app binary.
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 

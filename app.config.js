@@ -12,6 +12,8 @@
  * builds, so process.env.EXPO_PUBLIC_* is populated here.
  */
 const googleMapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || "";
+const easProjectId =
+  process.env.EAS_PROJECT_ID || process.env.EXPO_PUBLIC_EAS_PROJECT_ID || "";
 
 module.exports = {
   expo: {
@@ -94,7 +96,8 @@ module.exports = {
     ],
     extra: {
       eas: {
-        projectId: "YOUR_EAS_PROJECT_ID",
+        // EAS injects EAS_PROJECT_ID during cloud builds; for local dev set EXPO_PUBLIC_EAS_PROJECT_ID in .env
+        ...(easProjectId ? { projectId: easProjectId } : {}),
       },
     },
     experiments: {

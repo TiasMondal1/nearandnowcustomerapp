@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Location from "expo-location";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
     Alert,
     KeyboardAvoidingView,
@@ -18,8 +18,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { C } from "../constants/colors";
 import { useAuth } from "../context/AuthContext";
 import { updateCustomerProfile } from "../lib/authService";
-
-const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyAaEh8Qu-k6nT5BphpHcOUBOZ5RJ7F2QTQ";
+import { getGoogleMapsApiKey } from "../lib/mapsEnv";
 
 export default function ProfileSetupScreen() {
   const params = useLocalSearchParams();
@@ -41,21 +40,22 @@ export default function ProfileSetupScreen() {
   const [postalCode, setPostalCode] = useState("");
   const [formattedAddress, setFormattedAddress] = useState("");
 
+  // Broad India view until we can read the device location (no city-specific default).
   const [region, setRegion] = useState<Region>({
-    latitude: 22.5726,
-    longitude: 88.3639,
-    latitudeDelta: 0.01,
-    longitudeDelta: 0.01,
+    latitude: 20.5937,
+    longitude: 78.9629,
+    latitudeDelta: 18,
+    longitudeDelta: 18,
   });
-  const [coords, setCoords] = useState<{ latitude: number; longitude: number }>(
-    {
-      latitude: 22.5726,
-      longitude: 88.3639,
-    },
-  );
+  const [coords, setCoords] = useState<{ latitude: number; longitude: number }>({
+    latitude: 20.5937,
+    longitude: 78.9629,
+  });
 
   const [loading, setLoading] = useState(false);
   const [reverseLoading, setReverseLoading] = useState(false);
+
+  const GOOGLE_MAPS_API_KEY = getGoogleMapsApiKey();
 
   const hasAddressFields =
     house.trim().length > 0 ||
@@ -142,8 +142,36 @@ export default function ProfileSetupScreen() {
         isGeocodingRef.current = false;
       }
     },
-    [],
+    [GOOGLE_MAPS_API_KEY],
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { status } = await Location.getForegroundPermissionsAsync();
+        if (status !== "granted") return;
+        const loc = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        if (cancelled || !loc?.coords) return;
+        const { latitude, longitude } = loc.coords;
+        setCoords({ latitude, longitude });
+        setRegion({
+          latitude,
+          longitude,
+          latitudeDelta: 0.02,
+          longitudeDelta: 0.02,
+        });
+        reverseGeocode(latitude, longitude);
+      } catch {
+        // Keep map at country-level default until the user taps "Current location".
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [reverseGeocode]);
 
   const handleRegionChangeComplete = (r: Region) => {
     setRegion(r);
@@ -302,6 +330,7 @@ export default function ProfileSetupScreen() {
                     style={styles.map}
                     provider={PROVIDER_GOOGLE}
                     region={region}
+                    onRegionChangeComplete={handleRegionChangeComplete}
                   >
                     <Marker
                       coordinate={{

@@ -14,6 +14,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { C } from "../../constants/colors";
 
+const SUPPORT_PHONE_E164 = (process.env.EXPO_PUBLIC_SUPPORT_PHONE || "").trim();
+
 export default function SupportScreen() {
   return (
     <SafeAreaView style={styles.safe}>
@@ -34,24 +36,21 @@ export default function SupportScreen() {
 
         <Section title="Contact Us">
           <SupportAction
-            icon="chat-processing-outline"
-            title="Live Chat"
-            subtitle="Chat with our support team"
-            badge="Coming Soon"
-          />
-          <SupportAction
             icon="email-outline"
             title="Email Us"
             subtitle="support@nearandnow.app"
             onPress={() => Linking.openURL("mailto:support@nearandnow.app")}
+            isLast={!SUPPORT_PHONE_E164}
           />
-          <SupportAction
-            icon="phone-outline"
-            title="Call Support"
-            subtitle="+91 98765 43210"
-            onPress={() => Linking.openURL("tel:+919876543210")}
-            isLast
-          />
+          {SUPPORT_PHONE_E164 ? (
+            <SupportAction
+              icon="phone-outline"
+              title="Call Support"
+              subtitle={SUPPORT_PHONE_E164}
+              onPress={() => Linking.openURL(`tel:${SUPPORT_PHONE_E164.replace(/\s/g, "")}`)}
+              isLast
+            />
+          ) : null}
         </Section>
 
         <Section title="FAQs">

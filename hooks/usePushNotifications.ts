@@ -1,4 +1,6 @@
+import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
+import { router } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 
@@ -14,6 +16,27 @@ Notifications.setNotificationHandler({
   }),
 });
 
+function resolveEasProjectId(): string | undefined {
+  const fromEnv = process.env.EXPO_PUBLIC_EAS_PROJECT_ID?.trim();
+  if (fromEnv) return fromEnv;
+  const extra = Constants.expoConfig?.extra as { eas?: { projectId?: string } } | undefined;
+  const id = extra?.eas?.projectId?.trim();
+  return id || undefined;
+}
+
+function navigateFromPushData(data: Record<string, unknown> | undefined) {
+  if (!data) return;
+  const raw =
+    data.orderId ??
+    data.order_id ??
+    data.customer_order_id ??
+    data.customerOrderId;
+  const orderId = typeof raw === 'string' && raw.length > 0 ? raw : undefined;
+  if (orderId) {
+    router.push(`/order/track/${orderId}` as any);
+  }
+}
+
 export function usePushNotifications(userId: string | null) {
   const [expoPushToken, setExpoPushToken] = useState<string | null>(null);
   const notificationListener = useRef<Notifications.Subscription | null>(null);
@@ -26,15 +49,24 @@ export function usePushNotifications(userId: string | null) {
       if (token) setExpoPushToken(token);
     });
 
+    void Notifications.getLastNotificationResponseAsync().then((response) => {
+      const data = response?.notification.request.content
+        .data as Record<string, unknown> | undefined;
+      navigateFromPushData(data);
+    });
+
     notificationListener.current = Notifications.addNotificationReceivedListener(
-      (_n: Notifications.Notification) => {
-        // Foreground notification received
+      (_notification: Notifications.Notification) => {
+        // Foreground: alert/banner/sound handled by setNotificationHandler above.
       },
     );
 
     responseListener.current = Notifications.addNotificationResponseReceivedListener(
-      (_r: Notifications.NotificationResponse) => {
-        // User tapped a notification — navigate to order if needed
+      (response: Notifications.NotificationResponse) => {
+        const data = response.notification.request.content.data as
+          | Record<string, unknown>
+          | undefined;
+        navigateFromPushData(data);
       },
     );
 
@@ -68,12 +100,13 @@ async function registerForPushNotifications(userId: string): Promise<string | nu
 
     if (finalStatus !== 'granted') return null;
 
-    const tokenData = await Notifications.getExpoPushTokenAsync({
-      projectId: process.env.EXPO_PUBLIC_EAS_PROJECT_ID,
-    });
+    const projectId = resolveEasProjectId();
+    const tokenData = projectId
+      ? await Notifications.getExpoPushTokenAsync({ projectId })
+      : await Notifications.getExpoPushTokenAsync();
+
     const token = tokenData.data;
 
-    // Register token with backend so server can send push notifications
     await apiFetch('/api/push-token', {
       method: 'POST',
       body: JSON.stringify({ userId, token, platform: Platform.OS }),

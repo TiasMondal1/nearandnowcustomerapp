@@ -30,13 +30,15 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
+# local env files — never commit secrets (keep .env.example tracked)
 .env
-.env*.local
+.env.*
+!.env.example
 .env.local
 .env.backend
 .env.production
 .env.staging
+.env.client-safe
 
 # Security - Never commit these files
 google-service-account.json

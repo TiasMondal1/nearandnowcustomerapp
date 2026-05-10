@@ -16,6 +16,8 @@ import {
 import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { getGoogleMapsApiKey } from "../../lib/mapsEnv";
+
 const T = {
   green: "#2D7A4F",
   greenLight: "#3DA668",
@@ -31,9 +33,7 @@ const T = {
   shadow: "rgba(45,122,79,0.12)",
 };
 
-const GOOGLE_MAPS_API_KEY =
-  process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ||
-  "AIzaSyAaEh8Qu-k6nT5BphpHcOUBOZ5RJ7F2QTQ";
+const GOOGLE_MAPS_API_KEY = getGoogleMapsApiKey();
 
 // Single Places Autocomplete session token keeps pricing correct across
 // predictions+details within one user search.

@@ -50,10 +50,6 @@ function Avatar({ initial }: { initial: string }) {
       <View style={styles.avatarFallback}>
         <Text style={styles.avatarText}>{initial}</Text>
       </View>
-      <Text style={styles.avatarHint}>
-        <MaterialCommunityIcons name="camera-plus-outline" size={11} color={C.textLight} />{" "}
-        Profile photo coming soon
-      </Text>
     </View>
   );
 }
@@ -351,8 +347,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   avatarText: { color: "#fff", fontSize: 34, fontWeight: "900" },
-  avatarHint: { color: C.textLight, fontSize: 12, marginTop: 12 },
-
   // Error banner
   errorBanner: {
     flexDirection: "row",

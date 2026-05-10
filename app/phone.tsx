@@ -45,12 +45,6 @@ export default function PhoneScreen() {
     }
   };
 
-  const handleContinueWithPassword = () => {
-    if (!isValid) return;
-    const fullPhone = `+91${phone}`;
-    router.push({ pathname: "/login-password", params: { phone: fullPhone } });
-  };
-
   return (
     <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView
@@ -99,26 +93,6 @@ export default function PhoneScreen() {
             >
               <Text style={styles.primaryButtonText}>
                 {loadingOtp ? "Sending..." : "Continue with OTP"}
-              </Text>
-            </TouchableOpacity>
-
-            <View style={styles.separatorRow}>
-              <View style={styles.separatorLine} />
-              <Text style={styles.separatorText}>or</Text>
-              <View style={styles.separatorLine} />
-            </View>
-
-            <TouchableOpacity
-              activeOpacity={isValid ? 0.85 : 1}
-              onPress={handleContinueWithPassword}
-              style={[
-                styles.secondaryButton,
-                !isValid && styles.secondaryButtonDisabled,
-              ]}
-              disabled={!isValid}
-            >
-              <Text style={styles.secondaryButtonText}>
-                Login with password
               </Text>
             </TouchableOpacity>
 
@@ -225,39 +199,6 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: {
     opacity: 0.45,
-  },
-  separatorRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginTop: 4,
-  },
-  separatorLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: "#e5e7eb",
-  },
-  separatorText: {
-    fontSize: 11,
-    color: "#6b7280",
-  },
-  secondaryButton: {
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#ffffff",
-    borderWidth: 2,
-    borderColor: "#e5e7eb",
-  },
-  secondaryButtonDisabled: {
-    backgroundColor: "#f9fafb",
-    borderColor: "#e5e7eb",
-  },
-  secondaryButtonText: {
-    fontSize: 15,
-    fontWeight: "500",
-    color: "#1f2937",
   },
   termsText: {
     fontSize: 11,

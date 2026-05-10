@@ -861,7 +861,7 @@ export default function OrderAgainScreen() {
         }
       }
       if (addedCount > 0) {
-        router.push("/(tabs)/cart" as any);
+        router.push("/cart");
       }
     },
     [addItem, allProducts],
