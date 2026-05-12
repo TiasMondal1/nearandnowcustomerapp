@@ -1,4 +1,4 @@
-import { supabase, supabaseAdmin } from './supabase';
+import { supabaseAdmin } from './supabase';
 
 export interface AppUser {
   id: string;
@@ -36,11 +36,29 @@ export interface AuthResponse {
 const getApiBase = () =>
   (process.env.EXPO_PUBLIC_API_BASE_URL || '').toString().replace(/\/$/, '');
 
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit,
+  timeoutMs = 15000,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err: any) {
+    if (err?.name === 'AbortError') throw new Error('Request timed out. Check your connection and try again.');
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function sendOTP(phone: string): Promise<void> {
   const apiBase = getApiBase();
-  const url = apiBase ? `${apiBase}/api/auth/send-otp` : '/api/auth/send-otp';
+  if (!apiBase) throw new Error('API base URL is not configured.');
+  const url = `${apiBase}/api/auth/send-otp`;
 
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ phone }),
@@ -51,8 +69,8 @@ export async function sendOTP(phone: string): Promise<void> {
     try {
       const text = await response.text();
       try {
-        const error = JSON.parse(text);
-        message = error.message || error.error || message;
+        const parsed = JSON.parse(text);
+        message = parsed.message || parsed.error || message;
       } catch {
         if (text) message = text;
       }
@@ -67,9 +85,10 @@ export async function verifyOTP(
   name = 'Customer',
 ): Promise<AuthResponse> {
   const apiBase = getApiBase();
-  const url = apiBase ? `${apiBase}/api/auth/verify-otp` : '/api/auth/verify-otp';
+  if (!apiBase) throw new Error('API base URL is not configured.');
+  const url = `${apiBase}/api/auth/verify-otp`;
 
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ phone, otp: String(otp).trim(), name }),

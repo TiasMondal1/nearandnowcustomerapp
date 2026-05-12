@@ -13,7 +13,6 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { C } from "../../constants/colors";
 import {
     CATEGORY_GROUPS,
     DEFAULT_GROUP,
@@ -24,39 +23,37 @@ import { useLocation } from "../../context/LocationContext";
 import { getAllCategories, type Category } from "../../lib/categoryService";
 import { cdnImage } from "../../lib/imageUrl";
 import {
-    getCategoryCounts,
     getCountForCategoryName,
-    readHomePageCache,
-    writeHomePageCache,
+    readHomeCatalogCache,
 } from "../../lib/productService";
+import { getAllActiveProductIds } from "../../lib/storeService";
 
-const FALLBACK_TILE_COLORS = [
-  "#E6F4EA", "#FEF3C7", "#DBEAFE", "#FCE7F3",
-  "#EDE9FE", "#D1FAE5", "#FFE4E6", "#FEF9C3",
+const T = {
+  green: "#2D7A4F",
+  greenXLight: "#EAF6EE",
+  cream: "#FAFAF7",
+  bark: "#3C2F1E",
+  barkMid: "#6B5744",
+  barkLight: "#A89282",
+  white: "#FFFFFF",
+  card: "#FFFFFF",
+  cardBorder: "rgba(60,47,30,0.08)",
+  shadow: "rgba(0,0,0,0.08)",
+};
+
+const CAT_TINTS = [
+  "#E8F5E9", "#FFF8E1", "#E3F2FD", "#FCE4EC",
+  "#EDE7F6", "#E0F7FA", "#FBE9E7", "#F9FBE7",
 ];
 
 const FALLBACK_ICONS = [
-  "apple",
-  "leaf",
-  "cow",
-  "cookie",
-  "cup",
-  "sack",
-  "face-woman-shimmer",
-  "home-outline",
+  "apple", "leaf", "cow", "cookie",
+  "cup", "sack", "face-woman-shimmer", "home-outline",
 ];
 
 type CategoryWithTint = Category & { tint: string; iconName: string };
+type Section = { group: CategoryGroupDef; items: CategoryWithTint[] };
 
-type Section = {
-  group: CategoryGroupDef;
-  items: CategoryWithTint[];
-};
-
-/**
- * One tile — memoized so scrolling a large grouped grid doesn't re-render
- * every tile when the header re-renders.
- */
 const CategoryTile = React.memo(function CategoryTile({
   item,
   onPress,
@@ -71,7 +68,7 @@ const CategoryTile = React.memo(function CategoryTile({
       onPress={handlePress}
       style={({ pressed }) => [
         styles.tile,
-        pressed && { transform: [{ scale: 0.97 }], opacity: 0.9 },
+        pressed && { transform: [{ scale: 0.96 }], opacity: 0.88 },
       ]}
     >
       <View style={[styles.tileImageWrap, { backgroundColor: item.tint }]}>
@@ -88,8 +85,8 @@ const CategoryTile = React.memo(function CategoryTile({
         ) : (
           <MaterialCommunityIcons
             name={item.iconName as any}
-            size={34}
-            color={C.primary}
+            size={32}
+            color={T.green}
           />
         )}
       </View>
@@ -107,52 +104,80 @@ export default function CategoriesScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  const buildCountsFromProductsByCategory = useCallback(
+    (productsByCategory: Record<string, unknown[]>) => {
+      const counts: Record<string, number> = {};
+      for (const [cat, prods] of Object.entries(productsByCategory)) {
+        counts[cat.toLowerCase().trim()] = prods.length;
+      }
+      return counts;
+    },
+    [],
+  );
+
   const fetchData = useCallback(async (_isRefresh = false) => {
     try {
-      const [categoriesData, countsData] = await Promise.all([
+      // Try home catalog cache first — it's already filtered to active store products
+      const [cached, categoriesData] = await Promise.all([
+        readHomeCatalogCache(),
         getAllCategories(),
-        getCategoryCounts(),
       ]);
+
       setCategories(categoriesData);
-      setCategoryCounts(countsData.counts);
-      writeHomePageCache({
-        categories: categoriesData,
-        categoryCounts: countsData,
-        firstPage: [],
-      });
+
+      if (cached?.productsByCategory) {
+        setCategoryCounts(buildCountsFromProductsByCategory(cached.productsByCategory as Record<string, unknown[]>));
+      } else {
+        // No cache yet — build counts from active product IDs
+        const activeIds = await getAllActiveProductIds();
+        // Use active IDs to count per category via a lightweight query
+        const { data } = await import("../../lib/supabase").then(async ({ supabase }) =>
+          supabase
+            .from("master_products")
+            .select("category")
+            .eq("is_active", true)
+            .in("id", [...activeIds].slice(0, 5000)),
+        );
+        if (data) {
+          const counts: Record<string, number> = {};
+          for (const row of data as { category: string | null }[]) {
+            const key = (row.category || "Uncategorized").toLowerCase().trim();
+            counts[key] = (counts[key] || 0) + 1;
+          }
+          setCategoryCounts(counts);
+        }
+      }
     } catch (error) {
-      console.error("Failed to fetch data:", error);
+      console.error("Failed to fetch categories:", error);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [buildCountsFromProductsByCategory]);
 
-  // Paint from cache ASAP.
+  // Paint from home catalog cache immediately
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const cached = await readHomePageCache();
-      if (cancelled || !cached) return;
-      setCategories(cached.categories);
-      setCategoryCounts(cached.categoryCounts.counts);
-      setLoading(false);
+      const [cached, categoriesData] = await Promise.all([
+        readHomeCatalogCache(),
+        getAllCategories(),
+      ]);
+      if (cancelled) return;
+      if (cached?.productsByCategory) {
+        setCategories(categoriesData);
+        setCategoryCounts(buildCountsFromProductsByCategory(cached.productsByCategory as Record<string, unknown[]>));
+        setLoading(false);
+      }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    return () => { cancelled = true; };
+  }, [buildCountsFromProductsByCategory]);
 
   useEffect(() => {
     if (!isHydrated) return;
     fetchData();
   }, [isHydrated, fetchData]);
 
-  /**
-   * Build Blinkit-style sections: buckets categories into their logical group
-   * ("Grocery & Kitchen", "Snacks & Drinks", etc) while dropping groups that
-   * have zero live categories — keeps the screen compact on sparse catalogs.
-   */
   const sections = useMemo<Section[]>(() => {
     const byGroupId = new Map<string, CategoryWithTint[]>();
     let tintIdx = 0;
@@ -163,29 +188,22 @@ export default function CategoriesScreen() {
       const group = getGroupForCategoryName(cat.name);
       const enriched: CategoryWithTint = {
         ...cat,
-        tint:
-          cat.color ||
-          FALLBACK_TILE_COLORS[tintIdx++ % FALLBACK_TILE_COLORS.length],
-        iconName:
-          cat.icon ||
-          FALLBACK_ICONS[Math.abs(cat.name.length) % FALLBACK_ICONS.length],
+        tint: cat.color || CAT_TINTS[tintIdx++ % CAT_TINTS.length],
+        iconName: cat.icon || FALLBACK_ICONS[Math.abs(cat.name.length) % FALLBACK_ICONS.length],
       };
 
       const list = byGroupId.get(group.id);
-      if (list) {
-        list.push(enriched);
-      } else {
-        byGroupId.set(group.id, [enriched]);
-      }
+      if (list) list.push(enriched);
+      else byGroupId.set(group.id, [enriched]);
     }
 
     const out: Section[] = [];
     for (const g of CATEGORY_GROUPS) {
       const items = byGroupId.get(g.id);
-      if (items && items.length) out.push({ group: g, items });
+      if (items?.length) out.push({ group: g, items });
     }
     const rest = byGroupId.get(DEFAULT_GROUP.id);
-    if (rest && rest.length) out.push({ group: DEFAULT_GROUP, items: rest });
+    if (rest?.length) out.push({ group: DEFAULT_GROUP, items: rest });
     return out;
   }, [categories, categoryCounts]);
 
@@ -202,11 +220,14 @@ export default function CategoriesScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={["top"]}>
         <View style={styles.header}>
-          <Text style={styles.title}>Shop by category</Text>
-          <Text style={styles.subtitle}>Fresh groceries delivered fast</Text>
+          <View style={styles.headerAccent} />
+          <View>
+            <Text style={styles.title}>Categories</Text>
+            <Text style={styles.subtitle}>Browse everything we carry</Text>
+          </View>
         </View>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={C.primary} />
+          <ActivityIndicator size="large" color={T.green} />
           <Text style={styles.loadingText}>Loading categories…</Text>
         </View>
       </SafeAreaView>
@@ -216,8 +237,11 @@ export default function CategoriesScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <View style={styles.header}>
-        <Text style={styles.title}>Shop by category</Text>
-        <Text style={styles.subtitle}>Fresh groceries delivered fast</Text>
+        <View style={styles.headerAccent} />
+        <View>
+          <Text style={styles.title}>Categories</Text>
+          <Text style={styles.subtitle}>Browse everything we carry</Text>
+        </View>
       </View>
 
       <ScrollView
@@ -228,32 +252,29 @@ export default function CategoriesScreen() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            tintColor={C.primary}
-            colors={[C.primary]}
+            tintColor={T.green}
+            colors={[T.green]}
           />
         }
       >
         {sections.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <MaterialCommunityIcons
-              name="view-grid-outline"
-              size={64}
-              color={C.textLight}
-            />
-            <Text style={styles.emptyTitle}>No categories available</Text>
+            <View style={styles.emptyIconWrap}>
+              <MaterialCommunityIcons name="view-grid-outline" size={40} color={T.green} />
+            </View>
+            <Text style={styles.emptyTitle}>No categories yet</Text>
             <Text style={styles.emptyText}>Check back soon for new categories</Text>
           </View>
         ) : (
           sections.map(({ group, items }) => (
             <View key={group.id} style={styles.sectionWrap}>
-              <Text style={styles.sectionTitle}>{group.title}</Text>
+              <View style={styles.sectionTitleRow}>
+                <View style={styles.sectionTitleAccent} />
+                <Text style={styles.sectionTitle}>{group.title}</Text>
+              </View>
               <View style={styles.grid}>
                 {items.map((it) => (
-                  <CategoryTile
-                    key={it.id}
-                    item={it}
-                    onPress={handleTilePress}
-                  />
+                  <CategoryTile key={it.id} item={it} onPress={handleTilePress} />
                 ))}
               </View>
             </View>
@@ -265,48 +286,42 @@ export default function CategoriesScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: C.bg,
-  },
+  safe: { flex: 1, backgroundColor: T.cream },
 
   header: {
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 10,
-    backgroundColor: C.card,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 18,
+    paddingTop: 14,
+    paddingBottom: 12,
+    backgroundColor: T.white,
     borderBottomWidth: 1,
-    borderBottomColor: C.borderSoft,
+    borderBottomColor: T.cardBorder,
   },
-
+  headerAccent: {
+    width: 4,
+    height: 26,
+    borderRadius: 2,
+    backgroundColor: T.green,
+  },
   title: {
-    color: C.text,
     fontSize: 22,
     fontWeight: "900",
+    color: T.bark,
+    letterSpacing: -0.4,
   },
-
   subtitle: {
-    color: C.textSub,
-    fontSize: 13,
-    marginTop: 4,
+    fontSize: 12,
+    color: T.barkLight,
+    fontWeight: "500",
+    marginTop: 2,
   },
 
-  loadingContainer: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 12,
-  },
+  loadingContainer: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12 },
+  loadingText: { color: T.barkLight, fontSize: 14, fontWeight: "500" },
 
-  loadingText: {
-    color: C.textSub,
-    fontSize: 14,
-  },
-
-  scrollContent: {
-    paddingBottom: 130,
-    paddingTop: 8,
-  },
+  scrollContent: { paddingBottom: 130, paddingTop: 4 },
 
   emptyContainer: {
     flex: 1,
@@ -315,57 +330,71 @@ const styles = StyleSheet.create({
     paddingTop: 80,
     gap: 12,
   },
-
-  emptyTitle: {
-    color: C.text,
-    fontSize: 17,
-    fontWeight: "800",
+  emptyIconWrap: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: T.greenXLight,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+    borderColor: "rgba(45,122,79,0.15)",
   },
-
-  emptyText: {
-    color: C.textSub,
-    fontSize: 14,
-  },
+  emptyTitle: { fontSize: 17, fontWeight: "800", color: T.bark },
+  emptyText: { fontSize: 14, color: T.barkLight, fontWeight: "500" },
 
   sectionWrap: {
     paddingHorizontal: 14,
-    paddingTop: 16,
+    paddingTop: 20,
     paddingBottom: 4,
+  },
+  sectionTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 12,
+    paddingHorizontal: 4,
+  },
+  sectionTitleAccent: {
+    width: 4,
+    height: 18,
+    borderRadius: 2,
+    backgroundColor: T.green,
   },
   sectionTitle: {
     fontSize: 17,
-    color: C.text,
+    color: T.bark,
     fontWeight: "900",
-    letterSpacing: -0.2,
-    paddingHorizontal: 4,
-    marginBottom: 10,
+    letterSpacing: -0.3,
   },
 
-  grid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-  },
+  grid: { flexDirection: "row", flexWrap: "wrap" },
 
   tile: {
     width: "25%",
-    paddingHorizontal: 4,
+    paddingHorizontal: 5,
     paddingVertical: 6,
     alignItems: "center",
+    gap: 6,
   },
   tileImageWrap: {
     width: "100%",
     aspectRatio: 1,
-    borderRadius: 14,
+    borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
+    shadowColor: T.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 4,
+    elevation: 2,
   },
   tileImage: { width: "100%", height: "100%" },
   tileLabel: {
-    marginTop: 6,
     fontSize: 11.5,
-    color: C.text,
-    fontWeight: "600",
+    color: T.bark,
+    fontWeight: "700",
     textAlign: "center",
     lineHeight: 14,
   },

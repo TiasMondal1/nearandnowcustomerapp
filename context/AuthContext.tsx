@@ -19,7 +19,7 @@ interface AuthContextType {
   isLoading: boolean;
   isAuthenticated: boolean;
   sendOTPCode: (phone: string) => Promise<void>;
-  verifyOTPCode: (phone: string, otp: string, name?: string) => Promise<void>;
+  verifyOTPCode: (phone: string, otp: string, name?: string) => Promise<{ isNewUser: boolean }>;
   logoutUser: () => Promise<void>;
   updateUserProfile: (data: Parameters<typeof updateCustomerProfile>[1]) => Promise<void>;
 }
@@ -117,12 +117,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             fresh.customer ? JSON.stringify(fresh.customer) : '',
           ),
         ]);
-      } else if (fresh === null) {
-        // Only log out on a definitive "user not found" (null); network errors throw.
-        await clearStoredSession();
       }
+      // Never auto-logout from background revalidation — only explicit logoutUser() clears the session.
+      // Returning null here means the DB query couldn't find/reach the user (RLS, network, etc.),
+      // which is NOT a reason to sign out.
     } catch {
-      // Offline / transient error: keep optimistic session as-is.
+      // Network / permission error: keep the optimistic session as-is.
     }
   };
 
@@ -150,6 +150,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const verifyOTPCode = async (phone: string, otp: string, name = 'Customer') => {
     const response = await verifyOTP(phone, otp, name);
+    const isNewUser = !response.customer;
 
     setUser(response.user);
     setCustomer(response.customer || null);
@@ -166,6 +167,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         response.customer ? JSON.stringify(response.customer) : '',
       ),
     ]);
+
+    return { isNewUser };
   };
 
   const logoutUser = async () => {

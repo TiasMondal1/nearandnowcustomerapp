@@ -58,6 +58,29 @@ export async function getMasterProductIdsForStores(storeIds: string[]): Promise<
   return ids;
 }
 
+/** In-memory cache for all active-store product IDs (session-scoped). */
+let _cachedActiveProductIds: Set<string> | null = null;
+
+/**
+ * Returns the set of master_product_ids that are listed in ANY active store
+ * (regardless of location). Used as a base filter so we never show master
+ * products that no active store actually carries.
+ *
+ * Result is cached in memory for the session — subsequent calls are O(1).
+ */
+export async function getAllActiveProductIds(): Promise<Set<string>> {
+  if (_cachedActiveProductIds) return _cachedActiveProductIds;
+  const { data: stores, error } = await supabase
+    .from('stores')
+    .select('id')
+    .eq('is_active', true);
+  if (error || !stores?.length) return new Set();
+  const storeIds = (stores as { id: string }[]).map((s) => s.id);
+  const ids = await getMasterProductIdsForStores(storeIds);
+  _cachedActiveProductIds = ids;
+  return ids;
+}
+
 /**
  * Single call that returns which stores are nearby and which master products
  * they carry. Call this once per location change, then pass the result to

@@ -57,7 +57,7 @@ import {
     writeHomeCatalogCache,
     type Product,
 } from "../../lib/productService";
-import { getNearbyProductFilter } from "../../lib/storeService";
+import { getAllActiveProductIds, getNearbyProductFilter } from "../../lib/storeService";
 
 // ─── Design tokens ──────────────────────────────────────────────────────────
 const T = {
@@ -315,6 +315,11 @@ const ProductCard = React.memo(
     prev.onUpdateQty === next.onUpdateQty,
 );
 
+const CAT_TINTS = [
+  "#E8F5E9", "#FFF8E1", "#E3F2FD", "#FCE4EC",
+  "#EDE7F6", "#E0F7FA", "#FBE9E7", "#F9FBE7",
+];
+
 // ─── Category Tile (for the "Shop by Category" visual grid) ─────────────────
 const CategoryTile = React.memo(function CategoryTile({
   item,
@@ -326,13 +331,14 @@ const CategoryTile = React.memo(function CategoryTile({
   onPress: () => void;
 }) {
   const icon = item.icon || FALLBACK_ICONS[index % FALLBACK_ICONS.length];
+  const tint = item.color || CAT_TINTS[index % CAT_TINTS.length];
   return (
     <TouchableOpacity
       style={styles.catTile}
       activeOpacity={0.8}
       onPress={onPress}
     >
-      <View style={styles.catTileIconWrap}>
+      <View style={[styles.catTileIconWrap, { backgroundColor: tint }]}>
         {item.image_url ? (
           <ExpoImage
             source={{ uri: cdnImage(item.image_url, 180) }}
@@ -370,6 +376,7 @@ const SectionHeader = React.memo(function SectionHeader({
 }) {
   return (
     <View style={styles.sectionHeader}>
+      <View style={styles.sectionTitleAccent} />
       <View style={{ flex: 1 }}>
         <Text style={styles.sectionTitle} numberOfLines={1}>
           {title}
@@ -658,9 +665,10 @@ export default function HomeScreen() {
       // Case 1: memory cache already used in initial state.
       if (initialCache) {
         if (!isHomeCatalogCacheFresh(initialCache)) {
-          // Refresh after first paint settles.
-          InteractionManager.runAfterInteractions(() => {
-            if (!cancelled) fetchFresh();
+          InteractionManager.runAfterInteractions(async () => {
+            if (cancelled) return;
+            const filter = await getAllActiveProductIds();
+            if (!cancelled) fetchFresh(filter.size > 0 ? filter : undefined);
           });
         }
         return;
@@ -674,15 +682,18 @@ export default function HomeScreen() {
         setProductsByCategory(cached.productsByCategory);
         setLoading(false);
         if (!isHomeCatalogCacheFresh(cached)) {
-          InteractionManager.runAfterInteractions(() => {
-            if (!cancelled) fetchFresh();
+          InteractionManager.runAfterInteractions(async () => {
+            if (cancelled) return;
+            const filter = await getAllActiveProductIds();
+            if (!cancelled) fetchFresh(filter.size > 0 ? filter : undefined);
           });
         }
         return;
       }
 
-      // Case 3: no cache at all → fast network path.
-      await fetchFreshFast();
+      // Case 3: no cache at all → get active store filter then fast network path.
+      const filter = await getAllActiveProductIds();
+      if (!cancelled) await fetchFreshFast(filter.size > 0 ? filter : undefined);
     })();
 
     return () => {
@@ -698,11 +709,15 @@ export default function HomeScreen() {
   // within 4 km of their delivery address.
   useEffect(() => {
     if (!isHydrated || !location) {
-      // No location — clear any previously-applied filter (show all products).
+      // No location — fall back to all active-store products (not raw master catalog).
       if (nearbyIds !== null) {
         setNearbyIds(null);
         setNoStoresNearby(false);
-        fetchFresh(undefined);
+        let cancelled = false;
+        getAllActiveProductIds().then((filter) => {
+          if (!cancelled) fetchFresh(filter.size > 0 ? filter : undefined);
+        });
+        return () => { cancelled = true; };
       }
       return;
     }
@@ -1347,65 +1362,56 @@ const AddressBarBlock = React.memo(function AddressBarBlock({
   onPressOut: () => void;
   onProfilePress: () => void;
 }) {
+  const locationLabel = location?.label;
+  const addressText = liveAddress
+    ? liveAddress
+    : location?.address
+      ? location.address
+      : location?.label
+        ? location.label
+        : null;
+
   return (
     <View style={styles.addressBarBg}>
-      <LinearGradient
-        colors={[T.greenXLight, T.cream]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 0, y: 1 }}
-        style={StyleSheet.absoluteFillObject}
-        pointerEvents="none"
-      />
       <View style={styles.appBar}>
         <Pressable
           style={{ flex: 1 }}
           onPress={() => router.push("/select-location")}
+          android_ripple={{ color: "rgba(45,122,79,0.08)", borderless: false }}
         >
           <View style={styles.deliveryLabelRow}>
-            <MaterialCommunityIcons
-              name="map-marker-outline"
-              size={14}
-              color={T.green}
-            />
-            <Text style={styles.deliveryLabelText}>Delivery to</Text>
+            <View style={styles.deliveryDot} />
+            <Text style={styles.deliveryLabelText}>
+              {locationLabel ?? "Delivery to"}
+            </Text>
             {locationFetching && (
               <ActivityIndicator
                 size="small"
                 color={T.green}
-                style={{ marginLeft: 4 }}
+                style={{ marginLeft: 4, transform: [{ scale: 0.75 }] }}
               />
             )}
           </View>
           <View style={styles.locationInlineRow}>
             <Text style={styles.deliveryAddressText} numberOfLines={1}>
-              {liveAddress
-                ? liveAddress
-                : location
-                  ? location.address
-                    ? `${location.label ? location.label + " · " : ""}${location.address}`
-                    : location.label || "Your location"
-                  : "Set delivery address"}
+              {addressText ?? "Set delivery address"}
             </Text>
             <MaterialCommunityIcons
               name="chevron-down"
-              size={16}
-              color={T.bark}
+              size={15}
+              color={T.barkLight}
             />
           </View>
         </Pressable>
 
         <View style={styles.headerActions}>
-          <TouchableOpacity style={styles.walletBtn} activeOpacity={0.8}>
-            <LinearGradient
-              colors={[T.greenXLight, "#d4edda"]}
-              style={StyleSheet.absoluteFillObject}
-            />
-            <MaterialCommunityIcons
-              name="wallet-outline"
-              size={16}
-              color={T.green}
-            />
-            <Text style={styles.walletText}>₹0</Text>
+          <TouchableOpacity
+            style={styles.walletBtn}
+            activeOpacity={0.8}
+            onPress={() => router.push("/wallet" as any)}
+          >
+            <MaterialCommunityIcons name="wallet-outline" size={15} color={T.green} />
+            <Text style={styles.walletText}>Wallet</Text>
           </TouchableOpacity>
 
           <Animated.View style={profileAnimatedStyle}>
@@ -1455,33 +1461,43 @@ const styles = StyleSheet.create({
   },
 
   // ── Address bar block (scrolls away) ─────────────────────────────────────
-  addressBarBg: { backgroundColor: T.cream },
+  addressBarBg: {
+    backgroundColor: T.white,
+    borderBottomWidth: 1,
+    borderBottomColor: T.cardBorder,
+  },
   appBar: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 18,
-    paddingTop: 10,
-    paddingBottom: 10,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 12,
     gap: 12,
   },
   deliveryLabelRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
-    marginBottom: 3,
+    gap: 6,
+    marginBottom: 2,
+  },
+  deliveryDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: T.green,
   },
   deliveryLabelText: {
-    fontSize: 12,
+    fontSize: 11,
     color: T.green,
-    fontWeight: "700",
-    letterSpacing: 0.4,
+    fontWeight: "800",
+    letterSpacing: 0.5,
     textTransform: "uppercase",
   },
   deliveryAddressText: {
-    fontSize: 16,
-    fontWeight: "800",
+    fontSize: 15,
+    fontWeight: "700",
     color: T.bark,
-    letterSpacing: -0.3,
+    letterSpacing: -0.2,
     flex: 1,
   },
   locationInlineRow: {
@@ -1495,27 +1511,26 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
-    paddingHorizontal: 11,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     borderRadius: 20,
-    overflow: "hidden",
-    borderWidth: 1.5,
-    borderColor: "rgba(45,122,79,0.18)",
     backgroundColor: T.greenXLight,
+    borderWidth: 1.5,
+    borderColor: "rgba(45,122,79,0.2)",
   },
-  walletText: { fontSize: 13, fontWeight: "800", color: T.green },
+  walletText: { fontSize: 12, fontWeight: "800", color: T.green },
   profileBtn: { padding: 3 },
   profileAvatar: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: "center",
     justifyContent: "center",
     shadowColor: T.green,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.28,
-    shadowRadius: 8,
-    elevation: 6,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 5,
   },
 
   // ── Sticky search ────────────────────────────────────────────────────────
@@ -1564,31 +1579,39 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 18,
-    marginBottom: 10,
+    paddingTop: 20,
+    marginBottom: 12,
     gap: 10,
+  },
+  sectionTitleAccent: {
+    width: 4,
+    height: 18,
+    borderRadius: 2,
+    backgroundColor: T.green,
+    marginRight: 2,
   },
   sectionTitle: {
     fontSize: 17,
     color: T.bark,
-    fontWeight: "800",
-    letterSpacing: -0.2,
+    fontWeight: "900",
+    letterSpacing: -0.3,
   },
   sectionSub: {
     fontSize: 11.5,
     color: T.barkLight,
     fontWeight: "500",
-    marginTop: 1,
+    marginTop: 2,
   },
   seeAllBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 2,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 20,
     backgroundColor: T.greenXLight,
     borderWidth: 1,
-    borderColor: "rgba(45,122,79,0.18)",
+    borderColor: "rgba(45,122,79,0.2)",
   },
   seeAllText: {
     fontSize: 12,
@@ -1643,15 +1666,17 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   catTileIconWrap: {
-    width: 64,
-    height: 64,
-    borderRadius: 18,
-    backgroundColor: T.greenXLight,
+    width: 68,
+    height: 68,
+    borderRadius: 20,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "rgba(45,122,79,0.15)",
     overflow: "hidden",
+    shadowColor: T.shadowDark,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 2,
   },
   catTileImg: { width: "100%", height: "100%" },
   catTileLabel: {
@@ -1702,7 +1727,7 @@ const styles = StyleSheet.create({
   cardOutOfStock: { opacity: 0.62 },
   imageWrap: {
     position: "relative",
-    backgroundColor: T.imageBg,
+    backgroundColor: T.white,
     paddingHorizontal: 8,
     paddingVertical: 6,
   },

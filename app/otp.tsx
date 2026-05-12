@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
+    Image,
     KeyboardAvoidingView,
     Platform,
     StyleSheet,
@@ -81,8 +82,8 @@ export default function OtpScreen() {
     }
     try {
       setLoading(true);
-      await verifyOTPCode(phone, code);
-      router.replace("/(tabs)/home");
+      const { isNewUser } = await verifyOTPCode(phone, code);
+      router.replace(isNewUser ? "/onboarding" : "/welcome");
     } catch (err: any) {
       Alert.alert("Error", err?.message || "Verification failed");
       setDigits(["", "", "", "", "", ""]);
@@ -117,6 +118,15 @@ export default function OtpScreen() {
         keyboardVerticalOffset={Platform.OS === "ios" ? 80 : 0}
       >
         <View style={styles.container}>
+          {/* Logo */}
+          <View style={styles.logoSection}>
+            <Image
+              source={require("../assets/near_now_image.png")}
+              style={styles.logo}
+              resizeMode="contain"
+            />
+          </View>
+
           <View style={styles.header}>
             <Text style={styles.pageName}>OTP Verification</Text>
             <Text style={styles.title}>Enter the code</Text>
@@ -201,16 +211,18 @@ export default function OtpScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: C.bg },
+  safeArea: { flex: 1, backgroundColor: "#FFFFFF" },
   flex: { flex: 1 },
   container: {
     flex: 1,
     paddingHorizontal: 24,
-    paddingTop: 24,
+    paddingTop: 16,
     paddingBottom: 32,
     justifyContent: "space-between",
   },
-  header: { paddingTop: 32, gap: 6 },
+  logoSection: { alignItems: "center", paddingTop: 4 },
+  logo: { width: 160, height: 145 },
+  header: { gap: 6 },
   pageName: {
     fontSize: 11,
     color: "#6b7280",

@@ -2,6 +2,7 @@ import { router } from "expo-router";
 import React, { useState } from "react";
 import {
     Alert,
+    Image,
     KeyboardAvoidingView,
     Platform,
     StyleSheet,
@@ -53,15 +54,20 @@ export default function PhoneScreen() {
         keyboardVerticalOffset={Platform.OS === "ios" ? 80 : 0}
       >
         <View style={styles.container}>
-          <View style={styles.topSection}>
-            <Text style={styles.title}>Let&apos;s get you in</Text>
-            <Text style={styles.subtitle}>
-              Enter your phone number to continue
-            </Text>
+          {/* Logo */}
+          <View style={styles.logoSection}>
+            <Image
+              source={require("../assets/near_now_image.png")}
+              style={styles.logo}
+              resizeMode="contain"
+            />
           </View>
 
+          {/* Input */}
           <View style={styles.inputBlock}>
-            <Text style={styles.label}>Phone number</Text>
+            <Text style={styles.title}>Let&apos;s get you in</Text>
+            <Text style={styles.subtitle}>Enter your phone number to continue</Text>
+
             <View style={styles.phoneRow}>
               <View style={styles.countryCodeContainer}>
                 <Text style={styles.countryCodeText}>+91</Text>
@@ -77,10 +83,11 @@ export default function PhoneScreen() {
               />
             </View>
             <Text style={styles.helperText}>
-              We’ll send you a one-time code to verify your number.
+              We&apos;ll send you a one-time code to verify your number.
             </Text>
           </View>
 
+          {/* Bottom */}
           <View style={styles.bottomSection}>
             <TouchableOpacity
               activeOpacity={isValid && !loadingOtp ? 0.85 : 1}
@@ -92,13 +99,13 @@ export default function PhoneScreen() {
               disabled={!isValid || loadingOtp}
             >
               <Text style={styles.primaryButtonText}>
-                {loadingOtp ? "Sending..." : "Continue with OTP"}
+                {loadingOtp ? "Sending…" : "Continue with OTP"}
               </Text>
             </TouchableOpacity>
 
             <Text style={styles.termsText}>
               By continuing, you agree to our{" "}
-              <Text style={styles.termsLink}>Terms</Text> &{" "}
+              <Text style={styles.termsLink}>Terms</Text> &amp;{" "}
               <Text style={styles.termsLink}>Privacy Policy</Text>.
             </Text>
           </View>
@@ -109,52 +116,44 @@ export default function PhoneScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: C.bg,
-  },
-  flex: {
-    flex: 1,
-  },
+  safeArea: { flex: 1, backgroundColor: "#FFFFFF" },
+  flex: { flex: 1 },
   container: {
     flex: 1,
-    paddingHorizontal: 24,
-    paddingTop: 24,
-    paddingBottom: 32,
+    paddingHorizontal: 28,
+    paddingTop: 16,
+    paddingBottom: 36,
     justifyContent: "space-between",
   },
-  topSection: {
-    paddingTop: 32,
+
+  logoSection: {
+    alignItems: "center",
+    paddingTop: 16,
   },
+  logo: {
+    width: 200,
+    height: 180,
+  },
+
+  inputBlock: { gap: 10 },
   title: {
-    fontSize: 32,
-    fontWeight: "700",
+    fontSize: 28,
+    fontWeight: "800",
     color: "#1f2937",
-    letterSpacing: 0.5,
+    letterSpacing: -0.3,
+    marginBottom: 2,
   },
-  subtitle: {
-    marginTop: 8,
-    fontSize: 14,
-    color: "#6b7280",
-  },
-  inputBlock: {
-    marginTop: 32,
-  },
-  label: {
-    fontSize: 13,
-    color: "#4b5563",
-    marginBottom: 8,
-    fontWeight: "600",
-  },
+  subtitle: { fontSize: 14, color: "#6b7280" },
   phoneRow: {
     flexDirection: "row",
     alignItems: "center",
-    borderRadius: 12,
-    backgroundColor: "#ffffff",
+    borderRadius: 14,
+    backgroundColor: "#FFFFFF",
     borderWidth: 2,
     borderColor: "#e5e7eb",
     paddingHorizontal: 12,
     paddingVertical: 6,
+    marginTop: 8,
   },
   countryCodeContainer: {
     paddingHorizontal: 12,
@@ -165,11 +164,7 @@ const styles = StyleSheet.create({
     borderColor: "#d1d5db",
     marginRight: 8,
   },
-  countryCodeText: {
-    color: "#1f2937",
-    fontSize: 14,
-    fontWeight: "600",
-  },
+  countryCodeText: { color: "#1f2937", fontSize: 14, fontWeight: "600" },
   phoneInput: {
     flex: 1,
     paddingVertical: 10,
@@ -177,38 +172,28 @@ const styles = StyleSheet.create({
     color: "#1f2937",
     letterSpacing: 1,
   },
-  helperText: {
-    marginTop: 8,
-    fontSize: 12,
-    color: "#6b7280",
-  },
-  bottomSection: {
-    gap: 14,
-  },
+  helperText: { fontSize: 12, color: "#6b7280" },
+
+  bottomSection: { gap: 14 },
   primaryButton: {
-    borderRadius: 12,
-    paddingVertical: 14,
+    borderRadius: 14,
+    paddingVertical: 15,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: C.primary,
+    shadowColor: C.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.28,
+    shadowRadius: 8,
+    elevation: 6,
   },
-  primaryButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#FFFFFF",
-  },
-  buttonDisabled: {
-    opacity: 0.45,
-  },
+  primaryButtonText: { fontSize: 16, fontWeight: "700", color: "#FFFFFF" },
+  buttonDisabled: { opacity: 0.45, shadowOpacity: 0, elevation: 0 },
   termsText: {
     fontSize: 11,
-    color: "#6b7280",
+    color: "#9ca3af",
     textAlign: "center",
     lineHeight: 16,
-    marginTop: 4,
   },
-  termsLink: {
-    color: C.primary,
-    fontWeight: "600",
-  },
+  termsLink: { color: C.primary, fontWeight: "600" },
 });

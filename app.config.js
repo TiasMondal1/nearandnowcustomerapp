@@ -21,7 +21,7 @@ module.exports = {
     slug: "near-and-now-customer",
     version: "1.0.0",
     orientation: "portrait",
-    icon: "./assets/images/icon.png",
+    icon: "./assets/near_now_image.png",
     scheme: "nearandnow",
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
@@ -36,7 +36,7 @@ module.exports = {
     android: {
       adaptiveIcon: {
         backgroundColor: "#ffffff",
-        foregroundImage: "./assets/images/adaptive-icon-foreground.png",
+        foregroundImage: "./assets/near_now_image.png",
         monochromeImage: "./assets/images/adaptive-icon-monochrome.png",
       },
       edgeToEdgeEnabled: true,
@@ -65,12 +65,12 @@ module.exports = {
       [
         "expo-splash-screen",
         {
-          image: "./assets/images/splash-icon.png",
+          image: "./assets/near_now_image.png",
           imageWidth: 240,
           resizeMode: "contain",
           backgroundColor: "#ffffff",
           dark: {
-            image: "./assets/images/splash-icon.png",
+            image: "./assets/near_now_image.png",
             backgroundColor: "#ffffff",
           },
         },
