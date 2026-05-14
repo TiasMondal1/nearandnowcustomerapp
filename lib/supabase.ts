@@ -19,8 +19,17 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 // getProductsByCategory, etc. to POST/GET endpoints on the Railway backend and
 // remove supabaseAdmin from this file entirely.
 //
-// Never read EXPO_PUBLIC_SUPABASE_SERVICE_ROLE_KEY — that prefix bundles the key into the app binary.
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+// ⚠️ TEMPORARY DEV WORKAROUND: For local development only, we fall back to
+// EXPO_PUBLIC_SUPABASE_SERVICE_ROLE_KEY if the non-public version isn't available.
+// This is NOT secure for production builds - remove before production deployment.
+const SUPABASE_SERVICE_ROLE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.EXPO_PUBLIC_SUPABASE_SERVICE_ROLE_KEY ||
+  '';
+
+if (process.env.EXPO_PUBLIC_SUPABASE_SERVICE_ROLE_KEY && !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  console.warn('⚠️ DEV MODE: Using EXPO_PUBLIC_SUPABASE_SERVICE_ROLE_KEY. This is insecure for production!');
+}
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 

@@ -355,15 +355,26 @@ export default function OrderConfirmationScreen() {
           </View>
         </View>
 
-        {/* Track Order Button */}
-        <TouchableOpacity
-          style={styles.trackOrderBtn}
-          activeOpacity={0.85}
-          onPress={handleTrackOrder}
-        >
-          <MaterialCommunityIcons name="map-marker-path" size={20} color="#fff" />
-          <Text style={styles.trackOrderText}>Track Your Order</Text>
-        </TouchableOpacity>
+        {/* Action Buttons */}
+        <View style={styles.actionButtons}>
+          <TouchableOpacity
+            style={[styles.actionButton, styles.trackOrderBtn]}
+            activeOpacity={0.85}
+            onPress={handleTrackOrder}
+          >
+            <MaterialCommunityIcons name="map-marker-path" size={20} color="#fff" />
+            <Text style={styles.actionButtonText}>Track Order</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionButton, styles.invoicePreviewBtn]}
+            activeOpacity={0.85}
+            onPress={() => router.push(`/order/invoice/${id}` as any)}
+          >
+            <MaterialCommunityIcons name="file-document-outline" size={20} color="#fff" />
+            <Text style={styles.actionButtonText}>View Invoice</Text>
+          </TouchableOpacity>
+        </View>
 
         {/* Delivery Info */}
         <View style={styles.deliveryInfo}>
@@ -662,26 +673,37 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
 
-  // Track Order Button
-  trackOrderBtn: {
+  // Action Buttons
+  actionButtons: {
+    flexDirection: "row",
+    gap: 12,
+    paddingHorizontal: 16,
+    marginTop: 24,
+  },
+  actionButton: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 10,
-    backgroundColor: C.primary,
-    marginHorizontal: 16,
-    marginTop: 24,
+    gap: 8,
     paddingVertical: 16,
     borderRadius: 14,
-    shadowColor: C.primary,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 5,
   },
-  trackOrderText: {
+  trackOrderBtn: {
+    backgroundColor: C.primary,
+    shadowColor: C.primary,
+  },
+  invoicePreviewBtn: {
+    backgroundColor: C.success,
+    shadowColor: C.success,
+  },
+  actionButtonText: {
     color: "#fff",
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: "800",
   },
 

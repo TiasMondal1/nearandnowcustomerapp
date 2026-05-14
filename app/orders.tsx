@@ -1,5 +1,5 @@
-import { FlashList } from "@shopify/flash-list";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { FlashList } from "@shopify/flash-list";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import {
@@ -108,7 +108,7 @@ const OrderCard = React.memo(function OrderCard({
         ) : isDelivered ? (
           <TouchableOpacity
             style={[styles.trackBtn, styles.invoiceBtn]}
-            onPress={() => router.push(`/order/${item.id}` as any)}
+            onPress={() => router.push(`/order/invoice/${item.id}` as any)}
           >
             <MaterialCommunityIcons name="file-document-outline" size={14} color="#fff" />
             <Text style={styles.trackText}>View Invoice</Text>

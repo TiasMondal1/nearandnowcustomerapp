@@ -16,11 +16,11 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { PaymentProcessingOverlay } from "../../components/PaymentProcessingOverlay";
 import { C } from "../../constants/colors";
 import {
-  CANCELLED_STATUSES,
-  ORDER_TIMELINE,
-  TERMINAL_STATUSES,
-  getStatusMeta,
-  getTimelineIndex,
+    CANCELLED_STATUSES,
+    ORDER_TIMELINE,
+    TERMINAL_STATUSES,
+    getStatusMeta,
+    getTimelineIndex,
 } from "../../constants/orderStatus";
 import { useAuth } from "../../context/AuthContext";
 import { usePaymentFlow } from "../../hooks/usePaymentFlow";
@@ -321,6 +321,15 @@ export default function OrderDetailScreen() {
                   {order.payment_status === "paid" ? "Paid" : "Pending"}
                 </Text>
               </View>
+              <TouchableOpacity
+                style={styles.viewInvoiceBtn}
+                activeOpacity={0.85}
+                onPress={() => router.push(`/order/invoice/${order.id}` as any)}
+              >
+                <MaterialCommunityIcons name="file-document-outline" size={18} color="#fff" />
+                <Text style={styles.viewInvoiceBtnText}>View Tax Invoice</Text>
+                <MaterialCommunityIcons name="chevron-right" size={18} color="#fff" />
+              </TouchableOpacity>
             </View>
           </View>
         ) : !isCancelled ? (
@@ -716,6 +725,29 @@ const styles = StyleSheet.create({
     color: C.text,
     fontSize: 14,
     fontWeight: "700",
+  },
+  viewInvoiceBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: C.success,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    marginTop: 8,
+    shadowColor: C.success,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  viewInvoiceBtnText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "800",
+    flex: 1,
+    textAlign: "center",
   },
 
   itemsCard: {
