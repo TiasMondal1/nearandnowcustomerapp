@@ -1,7 +1,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants from 'expo-constants';
 
+const _extra = (Constants.expoConfig?.extra ?? {}) as Record<string, string>;
 const getApiBase = () =>
-  (process.env.EXPO_PUBLIC_API_BASE_URL || '').replace(/\/$/, '');
+  (
+    process.env.EXPO_PUBLIC_API_BASE_URL ||
+    _extra.apiBaseUrl ||
+    'https://near-and-now-backend.vercel.app'
+  ).replace(/\/+$/, '');
 
 const API_TIMEOUT_MS = 30000; // 30 seconds
 

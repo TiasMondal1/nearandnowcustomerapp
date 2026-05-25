@@ -1,3 +1,4 @@
+import Constants from 'expo-constants';
 import { supabaseAdmin } from './supabase';
 
 export interface AppUser {
@@ -33,8 +34,14 @@ export interface AuthResponse {
   token: string;
 }
 
-const getApiBase = () =>
-  (process.env.EXPO_PUBLIC_API_BASE_URL || '').toString().replace(/\/$/, '');
+const getApiBase = () => {
+  const extra = (Constants.expoConfig?.extra ?? {}) as Record<string, string>;
+  return (
+    process.env.EXPO_PUBLIC_API_BASE_URL ||
+    extra.apiBaseUrl ||
+    'https://near-and-now-backend.vercel.app'
+  ).replace(/\/+$/, '');
+};
 
 async function fetchWithTimeout(
   url: string,

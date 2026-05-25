@@ -1,10 +1,16 @@
 import { createClient } from '@supabase/supabase-js';
+import Constants from 'expo-constants';
 
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
-const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
+// Two-layer fallback: Metro-inlined process.env (local + EAS builds with vars set)
+// → Constants.expoConfig.extra (always baked in by app.config.js, catches any case
+// where Metro inlining didn't fire — e.g. no EAS env vars configured).
+const extra = (Constants.expoConfig?.extra ?? {}) as Record<string, string>;
+
+const SUPABASE_URL = (process.env.EXPO_PUBLIC_SUPABASE_URL || extra.supabaseUrl || '').replace(/\/+$/, '');
+const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || extra.supabaseAnonKey || '';
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  console.error('⚠️ CRITICAL: Supabase credentials missing. Check .env file for EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY');
+  console.error('⚠️ CRITICAL: Supabase credentials missing. Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY in EAS dashboard (expo.dev → project → Environment Variables).');
 }
 
 // ⚠️ SECURITY NOTE: The service-role key MUST NOT be prefixed with EXPO_PUBLIC_
