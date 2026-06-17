@@ -72,9 +72,85 @@ const androidDir = path.join(rootDir, "android");
 const isWin = process.platform === "win32";
 const gradleWrapper = isWin ? "gradlew.bat" : "gradlew";
 const gradle = path.join(androidDir, gradleWrapper);
+const localPropertiesPath = path.join(androidDir, "local.properties");
+
+// Gradle/AGP can't parse class files from Java 21+ toolchains newer than what
+// this project's Gradle version supports (fails with "Unsupported class file
+// major version"). Pin JAVA_HOME to a verified Java 17 install for the Gradle
+// child process instead of relying on android/gradle.properties, since
+// android/ is gitignored and gets wiped by `expo prebuild --clean`.
+const resolveJava17Home = () => {
+  if (process.platform !== "darwin") return "";
+  const candidates = [];
+  const javaHomeResult = spawnSync("/usr/libexec/java_home", ["-v", "17"], { encoding: "utf8" });
+  const javaHomeCandidate = (javaHomeResult.stdout || "").trim();
+  if (javaHomeResult.status === 0 && javaHomeCandidate) {
+    candidates.push(javaHomeCandidate);
+  }
+  // Homebrew openjdk@17 is keg-only by default and may not be visible to /usr/libexec/java_home.
+  candidates.push("/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home");
+  candidates.push("/usr/local/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home");
+
+  for (const candidate of candidates) {
+    const versionCheck = spawnSync(path.join(candidate, "bin", "java"), ["-version"], { encoding: "utf8" });
+    const versionText = `${versionCheck.stdout || ""}\n${versionCheck.stderr || ""}`;
+    const majorMatch = versionText.match(/version "(?:1\.)?(\d+)/);
+    const major = majorMatch ? Number(majorMatch[1]) : NaN;
+    if (major === 17) return candidate;
+  }
+  return "";
+};
+
+const java17Home = process.env.JAVA_HOME ? "" : resolveJava17Home();
+if (java17Home) {
+  console.log("Using Java home:", java17Home);
+} else if (process.env.JAVA_HOME) {
+  console.log("Using JAVA_HOME from environment:", process.env.JAVA_HOME);
+} else if (process.platform === "darwin") {
+  console.warn(
+    "JDK 17 not found on macOS. Install it (e.g. brew install openjdk@17) and/or set JAVA_HOME to JDK 17."
+  );
+}
+
+const resolveAndroidSdkDir = () => {
+  const winCandidates =
+    process.platform === "win32"
+      ? [
+          process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "Android", "Sdk") : null,
+          process.env.USERPROFILE ? path.join(process.env.USERPROFILE, "AppData", "Local", "Android", "Sdk") : null,
+          "C:\\Android\\Sdk",
+        ]
+      : [];
+
+  const candidates = [
+    process.env.ANDROID_HOME,
+    process.env.ANDROID_SDK_ROOT,
+    path.join(process.env.HOME || "", "Library/Android/sdk"),
+    "/opt/android-sdk",
+    ...winCandidates,
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    const adbPath = path.join(candidate, "platform-tools", isWin ? "adb.exe" : "adb");
+    if (fs.existsSync(adbPath)) return candidate;
+  }
+  return "";
+};
+
+const sdkDir = resolveAndroidSdkDir();
+if (sdkDir && !fs.existsSync(localPropertiesPath)) {
+  const escapedSdkDir = sdkDir.replace(/\\/g, "\\\\");
+  fs.writeFileSync(localPropertiesPath, `sdk.dir=${escapedSdkDir}\n`, "utf8");
+  console.log("Using Android SDK:", sdkDir);
+} else if (!sdkDir && !fs.existsSync(localPropertiesPath)) {
+  console.warn("Android SDK not found. Set ANDROID_HOME/ANDROID_SDK_ROOT or create android/local.properties with sdk.dir.");
+}
 
 const env = {
   ...process.env,
+  ...(java17Home ? { JAVA_HOME: java17Home } : {}),
+  ...(java17Home ? { PATH: `${path.join(java17Home, "bin")}:${process.env.PATH || ""}` } : {}),
+  ...(sdkDir ? { ANDROID_HOME: sdkDir, ANDROID_SDK_ROOT: sdkDir } : {}),
   JAVA_TOOL_OPTIONS:
     "--enable-native-access=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED",
 };
@@ -100,6 +176,9 @@ const bundleDirs = [
   path.join(androidDir, "app/build/intermediates/assets"),
   path.join(androidDir, "app/build/intermediates/merged_assets"),
   path.join(androidDir, "app/build/generated/assets"),
+  // Stale per-ABI shrunk-resource files from a previous split-APK build cause
+  // buildReleasePreBundle to fail when switching to an AAB build. Clear them always.
+  path.join(androidDir, "app/build/intermediates/shrunk_resources_proto_format"),
 ];
 bundleDirs.forEach((dir) => {
   if (fs.existsSync(dir)) {
@@ -134,7 +213,7 @@ const targets = {
   },
   aab: {
     task: "bundleRelease",
-    props: [],
+    props: ["-PaabBuild=true"],
     out: "android/app/build/outputs/bundle/release/app-release.aab",
   },
 };
