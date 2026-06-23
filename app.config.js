@@ -27,7 +27,7 @@ module.exports = {
     name: "Near & Now",
     slug: "near-and-now-customer",
     version: "1.0.0",
-    orientation: "portrait",
+    orientation: "default",
     icon: "./assets/near_now_image.png",
     scheme: "nearandnow",
     userInterfaceStyle: "automatic",

@@ -267,6 +267,54 @@ keyPassword=CHANGE_ME
   note("keystore.properties.example: created");
 }
 
+// ─── 7. AndroidManifest.xml — tablet support ────────────────────────────────
+const manifestPath = path.join(appDir, "src/main/AndroidManifest.xml");
+if (fs.existsSync(manifestPath)) {
+  let mf = fs.readFileSync(manifestPath, "utf8");
+  let mfChanged = false;
+
+  // Add <supports-screens> if missing.
+  if (!mf.includes("<supports-screens")) {
+    mf = mf.replace(
+      /(\s*<application\s)/,
+      `\n  <supports-screens\n    android:smallScreens="true"\n    android:normalScreens="true"\n    android:largeScreens="true"\n    android:xlargeScreens="true"\n    android:resizeable="true"/>$1`,
+    );
+    note("AndroidManifest.xml: added <supports-screens> for tablet support");
+    mfChanged = true;
+  }
+
+  // Change screenOrientation from portrait to unspecified.
+  if (mf.includes('android:screenOrientation="portrait"')) {
+    mf = mf.replace('android:screenOrientation="portrait"', 'android:screenOrientation="unspecified"');
+    note("AndroidManifest.xml: changed screenOrientation portrait → unspecified");
+    mfChanged = true;
+  }
+
+  // Add smallestScreenSize to configChanges if missing.
+  if (!mf.includes("smallestScreenSize") && mf.includes("android:configChanges=")) {
+    mf = mf.replace(
+      /android:configChanges="([^"]+)"/,
+      (_, existing) => `android:configChanges="${existing}|smallestScreenSize"`,
+    );
+    note("AndroidManifest.xml: added smallestScreenSize to configChanges");
+    mfChanged = true;
+  }
+
+  // Add android:resizeableActivity="true" to the MainActivity if missing.
+  if (!mf.includes("android:resizeableActivity") && mf.includes("android:screenOrientation")) {
+    mf = mf.replace(
+      /android:screenOrientation="[^"]+"/,
+      (match) => `${match} android:resizeableActivity="true"`,
+    );
+    note("AndroidManifest.xml: added resizeableActivity=true");
+    mfChanged = true;
+  }
+
+  if (mfChanged) {
+    fs.writeFileSync(manifestPath, mf, "utf8");
+  }
+}
+
 if (changes.length === 0) {
   console.log("Android project already patched — nothing to do.");
 } else {
