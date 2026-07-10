@@ -269,6 +269,16 @@ async function getUserOrdersFromSupabase(userId: string): Promise<Order[]> {
 export async function createOrder(input: CreateOrderInput): Promise<Order> {
   assertSupabaseAdminConfigured();
 
+  // ─── 0. Email must be verified before ordering ───────────────────────────
+  const { data: buyer } = await supabaseAdmin
+    .from('app_users')
+    .select('email_verified_at')
+    .eq('id', input.user_id)
+    .maybeSingle();
+  if (!buyer?.email_verified_at) {
+    throw new Error('Please verify your email before placing an order');
+  }
+
   // ─── 1. Fold extras into notes ────────────────────────────────────────────
   const noteParts: string[] = [];
   if (input.notes) noteParts.push(input.notes);

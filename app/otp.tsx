@@ -21,6 +21,7 @@ import { sendOTP } from "../lib/authService";
 export default function OtpScreen() {
   const params = useLocalSearchParams();
   const phone = typeof params.phone === "string" ? params.phone : "";
+  const email = typeof params.email === "string" ? params.email : "";
 
   const { verifyOTPCode } = useAuth();
 
@@ -82,8 +83,12 @@ export default function OtpScreen() {
     }
     try {
       setLoading(true);
-      const { isNewUser } = await verifyOTPCode(phone, code);
-      router.replace(isNewUser ? "/onboarding" : "/welcome");
+      const { isNewUser } = await verifyOTPCode(phone, code, "Customer", email || undefined);
+      if (isNewUser) {
+        router.replace({ pathname: "/verify-email", params: { email } });
+      } else {
+        router.replace("/welcome");
+      }
     } catch (err: any) {
       Alert.alert("Error", err?.message || "Verification failed");
       setDigits(["", "", "", "", "", ""]);

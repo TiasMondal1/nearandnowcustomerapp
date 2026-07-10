@@ -47,7 +47,6 @@ export default function OnboardingScreen() {
   // Name step
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
-  const [email, setEmail] = useState("");
 
   // Location step
   const [locationLabel, setLocationLabel] = useState<LocationLabel>("Home");
@@ -60,8 +59,7 @@ export default function OnboardingScreen() {
   const [saving, setSaving] = useState(false);
 
   const fullName = `${firstName.trim()} ${lastName.trim()}`.trim();
-  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
-  const nameValid = firstName.trim().length > 0 && lastName.trim().length > 0 && emailValid;
+  const nameValid = firstName.trim().length > 0 && lastName.trim().length > 0;
   const locationValid = addressLine.trim().length > 0 && city.trim().length > 0;
 
   const handleDetectLocation = async () => {
@@ -97,7 +95,6 @@ export default function OnboardingScreen() {
       const fullAddress = [addressLine.trim(), city.trim(), pincode.trim()].filter(Boolean).join(", ");
       await updateUserProfile({
         name: fullName || undefined,
-        email: email.trim() || undefined,
         surname: lastName.trim() || undefined,
         address: addressLine.trim(),
         city: city.trim(),
@@ -150,11 +147,8 @@ export default function OnboardingScreen() {
             <NameStep
               firstName={firstName}
               lastName={lastName}
-              email={email}
               onFirstName={setFirstName}
               onLastName={setLastName}
-              onEmail={setEmail}
-              emailValid={emailValid}
               valid={nameValid}
               onNext={() => setStep("location")}
             />
@@ -185,13 +179,13 @@ export default function OnboardingScreen() {
 /* ── Name step ──────────────────────────────────────────────── */
 
 function NameStep({
-  firstName, lastName, email,
-  onFirstName, onLastName, onEmail,
-  emailValid, valid, onNext,
+  firstName, lastName,
+  onFirstName, onLastName,
+  valid, onNext,
 }: {
-  firstName: string; lastName: string; email: string;
-  onFirstName: (v: string) => void; onLastName: (v: string) => void; onEmail: (v: string) => void;
-  emailValid: boolean; valid: boolean; onNext: () => void;
+  firstName: string; lastName: string;
+  onFirstName: (v: string) => void; onLastName: (v: string) => void;
+  valid: boolean; onNext: () => void;
 }) {
   return (
     <View style={styles.stepContent}>
@@ -220,15 +214,6 @@ function NameStep({
             />
           </View>
         </View>
-        <Field
-          label="Email address"
-          value={email}
-          onChangeText={onEmail}
-          placeholder="johndoe@gmail.com"
-          keyboardType="email-address"
-          autoCapitalize="none"
-          error={email.length > 0 && !emailValid ? "Enter a valid email address" : undefined}
-        />
       </View>
 
       <TouchableOpacity

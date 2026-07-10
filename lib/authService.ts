@@ -1,10 +1,12 @@
 import Constants from 'expo-constants';
+import { apiFetch } from './apiClient';
 import { supabaseAdmin } from './supabase';
 
 export interface AppUser {
   id: string;
   name: string;
   email: string | null;
+  email_verified_at?: string | null;
   phone: string | null;
   role: 'customer' | 'shopkeeper' | 'delivery_partner';
   is_activated: boolean;
@@ -32,6 +34,7 @@ export interface AuthResponse {
   user: AppUser;
   customer?: Customer;
   token: string;
+  isNewUser: boolean;
 }
 
 const getApiBase = () => {
@@ -90,6 +93,7 @@ export async function verifyOTP(
   phone: string,
   otp: string,
   name = 'Customer',
+  email?: string,
 ): Promise<AuthResponse> {
   const apiBase = getApiBase();
   if (!apiBase) throw new Error('API base URL is not configured.');
@@ -98,7 +102,7 @@ export async function verifyOTP(
   const response = await fetchWithTimeout(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ phone, otp: String(otp).trim(), name }),
+    body: JSON.stringify({ phone, otp: String(otp).trim(), name, email }),
   });
 
   const text = await response.text();
@@ -122,6 +126,7 @@ export async function verifyOTP(
     user: data.user as AppUser,
     customer: data.customer,
     token: data.token,
+    isNewUser: Boolean(data.isNewUser),
   };
 }
 
@@ -187,7 +192,6 @@ export async function updateCustomerProfile(
   userId: string,
   updates: {
     name?: string;
-    email?: string;
     surname?: string;
     address?: string;
     city?: string;
@@ -197,12 +201,11 @@ export async function updateCustomerProfile(
     delivery_instructions?: string;
   },
 ): Promise<void> {
-  if (updates.name || updates.email) {
-    const appUserUpdates: Record<string, string> = {};
-    if (updates.name) appUserUpdates.name = updates.name;
-    if (updates.email) appUserUpdates.email = updates.email;
-
-    await supabaseAdmin.from('app_users').update(appUserUpdates).eq('id', userId);
+  // Email is intentionally excluded here — it now goes through the verified-email
+  // flow (changeEmail / verifyEmailCode below), which requires backend-owned
+  // code generation and sending, not a direct client write.
+  if (updates.name) {
+    await supabaseAdmin.from('app_users').update({ name: updates.name }).eq('id', userId);
   }
 
   const customerUpdates: Record<string, string | undefined> = {};
@@ -219,4 +222,25 @@ export async function updateCustomerProfile(
   if (Object.keys(customerUpdates).length > 0) {
     await supabaseAdmin.from('customers').update(customerUpdates).eq('user_id', userId);
   }
+}
+
+/** Sets (first time) or stages a change of (subsequent times) the customer's email. Sends a 4-digit code. */
+export async function changeCustomerEmail(email: string): Promise<void> {
+  await apiFetch('/api/customers/email/change', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
+
+/** Confirms the 4-digit code emailed by changeCustomerEmail/resendEmailVerificationCode. */
+export async function verifyCustomerEmailCode(code: string): Promise<{ email: string }> {
+  return apiFetch<{ email: string }>('/api/customers/email/verify', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
+}
+
+/** Regenerates and resends the verification code for whichever email is currently unverified. */
+export async function resendEmailVerificationCode(): Promise<void> {
+  await apiFetch('/api/customers/email/resend', { method: 'POST' });
 }

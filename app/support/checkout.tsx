@@ -321,7 +321,14 @@ export default function CheckoutScreen() {
       } catch (err: unknown) {
         const message =
           err instanceof Error ? err.message : "Something went wrong placing your order.";
-        Alert.alert("Order failed", `${message}\n\nYour cart is safe — please try again.`);
+        if (message.toLowerCase().includes("verify your email")) {
+          Alert.alert("Email verification required", message, [
+            { text: "Verify Now", onPress: () => router.push("/settings/profile") },
+            { text: "Cancel", style: "cancel" },
+          ]);
+        } else {
+          Alert.alert("Order failed", `${message}\n\nYour cart is safe — please try again.`);
+        }
         throw err;
       }
     }
@@ -456,7 +463,15 @@ export default function CheckoutScreen() {
       return;
     } catch (err: any) {
       console.error("PLACE_ORDER_ERROR", err);
-      Alert.alert("Order failed", err?.message || "Something went wrong. Please try again.");
+      const message = err?.message || "Something went wrong. Please try again.";
+      if (String(message).toLowerCase().includes("verify your email")) {
+        Alert.alert("Email verification required", message, [
+          { text: "Verify Now", onPress: () => router.push("/settings/profile") },
+          { text: "Cancel", style: "cancel" },
+        ]);
+      } else {
+        Alert.alert("Order failed", message);
+      }
     } finally {
       setPlacing(false);
     }

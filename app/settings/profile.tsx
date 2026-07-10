@@ -151,12 +151,19 @@ function Field({
 // ─── Screen ──────────────────────────────────────────────────────────────────
 
 export default function ProfileScreen() {
-  const { user, updateUserProfile } = useAuth();
+  const { user, updateUserProfile, changeEmail, verifyEmailCode, resendEmailCode } = useAuth();
 
   const [name, setName] = useState(user?.name ?? "");
-  const [email, setEmail] = useState(user?.email ?? "");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(false);
+
+  // Email is verified separately — changing it stages a code, it doesn't
+  // take effect until confirmed.
+  const [email, setEmail] = useState(user?.email ?? "");
+  const [isEmailVerified, setIsEmailVerified] = useState(!!user?.email_verified_at);
+  const [showEmailCodeStep, setShowEmailCodeStep] = useState(false);
+  const [emailCode, setEmailCode] = useState("");
+  const [isEmailSubmitting, setIsEmailSubmitting] = useState(false);
 
   const emailRef = useRef<TextInput>(null);
   const shakeAnim = useRef(new Animated.Value(0)).current;
@@ -174,11 +181,13 @@ export default function ProfileScreen() {
   useEffect(() => {
     setName(user?.name ?? "");
     setEmail(user?.email ?? "");
-  }, [user?.id, user?.name, user?.email]);
+    setIsEmailVerified(!!user?.email_verified_at);
+    setShowEmailCodeStep(false);
+  }, [user?.id, user?.name, user?.email, user?.email_verified_at]);
 
   const hasChanges = useMemo(
-    () => name.trim() !== (user?.name ?? "") || email.trim() !== (user?.email ?? ""),
-    [name, email, user]
+    () => name.trim() !== (user?.name ?? ""),
+    [name, user]
   );
 
   const triggerShake = useCallback(() => {
@@ -197,17 +206,55 @@ export default function ProfileScreen() {
     setSaving(true);
     setSaveError(false);
     try {
-      await updateUserProfile({
-        name: name.trim() || undefined,
-        email: email.trim() || undefined,
-      });
+      await updateUserProfile({ name: name.trim() || undefined });
       router.back();
     } catch {
       setSaving(false);
       setSaveError(true);
       triggerShake();
     }
-  }, [user?.id, hasChanges, saving, name, email, updateUserProfile, triggerShake]);
+  }, [user?.id, hasChanges, saving, name, updateUserProfile, triggerShake]);
+
+  const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  const handleSendEmailCode = useCallback(async () => {
+    if (!EMAIL_REGEX.test(email.trim())) return;
+    try {
+      setIsEmailSubmitting(true);
+      await changeEmail(email.trim());
+      setShowEmailCodeStep(true);
+    } catch {
+      triggerShake();
+    } finally {
+      setIsEmailSubmitting(false);
+    }
+  }, [email, changeEmail, triggerShake]);
+
+  const handleVerifyEmail = useCallback(async () => {
+    if (emailCode.length !== 4) return;
+    try {
+      setIsEmailSubmitting(true);
+      await verifyEmailCode(emailCode.trim());
+      setIsEmailVerified(true);
+      setShowEmailCodeStep(false);
+      setEmailCode("");
+    } catch {
+      triggerShake();
+    } finally {
+      setIsEmailSubmitting(false);
+    }
+  }, [emailCode, verifyEmailCode, triggerShake]);
+
+  const handleResendEmailCode = useCallback(async () => {
+    try {
+      setIsEmailSubmitting(true);
+      await resendEmailCode();
+    } catch {
+      triggerShake();
+    } finally {
+      setIsEmailSubmitting(false);
+    }
+  }, [resendEmailCode, triggerShake]);
 
   const initial = (user?.name ?? "?").charAt(0).toUpperCase();
 
@@ -251,19 +298,9 @@ export default function ProfileScreen() {
               onChangeText={setName}
               placeholder="Your name"
               autoCapitalize="words"
-              returnKeyType="next"
-              onSubmitEditing={() => emailRef.current?.focus()}
-              maxLength={60}
-            />
-            <Field
-              label="Email"
-              value={email}
-              onChangeText={setEmail}
-              placeholder="you@email.com"
-              keyboardType="email-address"
               returnKeyType="done"
               onSubmitEditing={handleSave}
-              inputRef={emailRef}
+              maxLength={60}
             />
             <Field
               label="Phone"
@@ -273,6 +310,64 @@ export default function ProfileScreen() {
               isLast
             />
           </Animated.View>
+
+          {/* Email — verified separately; changing it requires confirming a code */}
+          <View style={[styles.card, { marginTop: 16, padding: 16 }]}>
+            <Text style={styles.label}>
+              Email {isEmailVerified && !showEmailCodeStep ? "· Verified" : !showEmailCodeStep ? "· Unverified" : ""}
+            </Text>
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
+              <TextInput
+                ref={emailRef}
+                style={[styles.input, { backgroundColor: C.bgSoft, borderRadius: 10, flex: 1 }]}
+                value={email}
+                onChangeText={setEmail}
+                placeholder="you@email.com"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                editable={!showEmailCodeStep}
+              />
+              <TouchableOpacity
+                style={[styles.saveBtn, { marginTop: 0, paddingHorizontal: 16 }, (isEmailSubmitting || showEmailCodeStep) && styles.saveBtnDisabled]}
+                disabled={isEmailSubmitting || showEmailCodeStep || email.trim() === (user?.email ?? "")}
+                onPress={handleSendEmailCode}
+              >
+                <Text style={styles.saveText}>Send Code</Text>
+              </TouchableOpacity>
+            </View>
+
+            {showEmailCodeStep && (
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+                <TextInput
+                  style={[styles.input, { backgroundColor: C.bgSoft, borderRadius: 10, flex: 1 }]}
+                  value={emailCode}
+                  onChangeText={(v) => setEmailCode(v.replace(/\D/g, ""))}
+                  placeholder="4-digit code"
+                  keyboardType="number-pad"
+                  maxLength={4}
+                />
+                <TouchableOpacity
+                  style={[styles.saveBtn, { marginTop: 0, paddingHorizontal: 16 }, isEmailSubmitting && styles.saveBtnDisabled]}
+                  disabled={isEmailSubmitting}
+                  onPress={handleVerifyEmail}
+                >
+                  <Text style={styles.saveText}>Verify</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.saveBtn, { marginTop: 0, paddingHorizontal: 16, backgroundColor: C.bgSoft }, isEmailSubmitting && styles.saveBtnDisabled]}
+                  disabled={isEmailSubmitting}
+                  onPress={handleResendEmailCode}
+                >
+                  <Text style={[styles.saveText, { color: C.text }]}>Resend</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            {!isEmailVerified && !showEmailCodeStep && (
+              <Text style={[styles.helper, { marginTop: 6 }]}>
+                Verify your email before you can place an order.
+              </Text>
+            )}
+          </View>
 
           {/* Save Button */}
           <TouchableOpacity

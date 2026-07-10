@@ -206,7 +206,6 @@ export default function ProfileSetupScreen() {
       if (user?.id) {
         await updateCustomerProfile(user.id, {
           name,
-          email: emailTrimmed || undefined,
           address: addressString || undefined,
           city: city.trim() || undefined,
           state: stateName.trim() || undefined,

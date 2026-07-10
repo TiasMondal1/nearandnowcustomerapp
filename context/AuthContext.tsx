@@ -1,9 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import {
+  changeCustomerEmail,
   getCurrentUserFromSession,
+  resendEmailVerificationCode,
   sendOTP,
   updateCustomerProfile,
+  verifyCustomerEmailCode,
   verifyOTP,
   type AppUser,
   type Customer,
@@ -19,9 +22,12 @@ interface AuthContextType {
   isLoading: boolean;
   isAuthenticated: boolean;
   sendOTPCode: (phone: string) => Promise<void>;
-  verifyOTPCode: (phone: string, otp: string, name?: string) => Promise<{ isNewUser: boolean }>;
+  verifyOTPCode: (phone: string, otp: string, name?: string, email?: string) => Promise<{ isNewUser: boolean }>;
   logoutUser: () => Promise<void>;
   updateUserProfile: (data: Parameters<typeof updateCustomerProfile>[1]) => Promise<void>;
+  changeEmail: (email: string) => Promise<void>;
+  verifyEmailCode: (code: string) => Promise<void>;
+  resendEmailCode: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -148,9 +154,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await sendOTP(phone);
   };
 
-  const verifyOTPCode = async (phone: string, otp: string, name = 'Customer') => {
-    const response = await verifyOTP(phone, otp, name);
-    const isNewUser = !response.customer;
+  const verifyOTPCode = async (phone: string, otp: string, name = 'Customer', email?: string) => {
+    const response = await verifyOTP(phone, otp, name, email);
+    const isNewUser = response.isNewUser;
 
     setUser(response.user);
     setCustomer(response.customer || null);
@@ -195,11 +201,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const updatedUser = {
         ...user,
         ...(data.name && { name: data.name }),
-        ...(data.email !== undefined && { email: data.email }),
       };
       setUser(updatedUser);
       await AsyncStorage.setItem('userData', JSON.stringify(updatedUser));
     }
+  };
+
+  const changeEmail = async (email: string) => {
+    await changeCustomerEmail(email);
+  };
+
+  const verifyEmailCode = async (code: string) => {
+    const { email } = await verifyCustomerEmailCode(code);
+    if (user) {
+      const updatedUser = { ...user, email, email_verified_at: new Date().toISOString() };
+      setUser(updatedUser);
+      await AsyncStorage.setItem('userData', JSON.stringify(updatedUser));
+    }
+  };
+
+  const resendEmailCode = async () => {
+    await resendEmailVerificationCode();
   };
 
   return (
@@ -215,6 +237,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         verifyOTPCode,
         logoutUser,
         updateUserProfile,
+        changeEmail,
+        verifyEmailCode,
+        resendEmailCode,
       }}
     >
       {children}

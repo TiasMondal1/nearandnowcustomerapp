@@ -16,8 +16,11 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { C } from "../constants/colors";
 import { sendOTP } from "../lib/authService";
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export default function PhoneScreen() {
   const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
   const [loadingOtp, setLoadingOtp] = useState(false);
 
   const onlyDigits = (value: string) => value.replace(/[^0-9]/g, "");
@@ -27,7 +30,8 @@ export default function PhoneScreen() {
     setPhone(digits);
   };
 
-  const isValid = phone.length === 10;
+  const emailValid = EMAIL_REGEX.test(email.trim());
+  const isValid = phone.length === 10 && emailValid;
 
   const handleContinueWithOtp = async () => {
     if (!isValid || loadingOtp) return;
@@ -37,7 +41,7 @@ export default function PhoneScreen() {
       await sendOTP(fullPhone);
       router.push({
         pathname: "/otp",
-        params: { phone: fullPhone },
+        params: { phone: fullPhone, email: email.trim() },
       });
     } catch (err: any) {
       Alert.alert("Error", err?.message || "Failed to send OTP. Try again.");
@@ -84,6 +88,20 @@ export default function PhoneScreen() {
             </View>
             <Text style={styles.helperText}>
               We&apos;ll send you a one-time code to verify your number.
+            </Text>
+
+            <TextInput
+              style={styles.emailInput}
+              value={email}
+              onChangeText={setEmail}
+              placeholder="Email address"
+              placeholderTextColor="#9ca3af"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <Text style={styles.helperText}>
+              Used for order receipts. You can verify it after logging in.
             </Text>
           </View>
 
@@ -173,6 +191,17 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
   helperText: { fontSize: 12, color: "#6b7280" },
+  emailInput: {
+    borderRadius: 14,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 2,
+    borderColor: "#e5e7eb",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: "#1f2937",
+    marginTop: 12,
+  },
 
   bottomSection: { gap: 14 },
   primaryButton: {
