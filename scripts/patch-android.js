@@ -68,7 +68,8 @@ function ensureProp(key, value, commentBefore) {
 ensureProp("android.enableShrinkResourcesInReleaseBuilds", "true", "Shrink unused resources in release (smaller APK)");
 ensureProp("android.enableMinifyInReleaseBuilds", "true", "Enable R8 full-mode minification in release");
 ensureProp("android.enableBundleCompression", "true", "Compress the JS bundle inside the APK");
-ensureProp("reactNativeArchitectures", "armeabi-v7a,arm64-v8a", "Only ship arm ABIs — x86/x86_64 is emulator-only and doubles APK size");
+ensureProp("reactNativeArchitectures", "armeabi-v7a,arm64-v8a,x86_64", "Build every ABI we split on (must match splits.abi.include in app/build.gradle)");
+ensureProp("buildUniversalApk", "true", "Emit a universal (all-ABI) APK alongside the per-ABI split APKs");
 
 fs.writeFileSync(gpPath, gp, "utf8");
 
@@ -95,8 +96,11 @@ def releaseKeyAlias = System.getenv("ANDROID_UPLOAD_KEY_ALIAS") ?: keystorePrope
 def releaseKeyPassword = System.getenv("ANDROID_UPLOAD_KEY_PASSWORD") ?: keystoreProperties.getProperty("keyPassword")
 def hasReleaseSigning = releaseStoreFile?.trim() && releaseStorePassword?.trim() && releaseKeyAlias?.trim() && releaseKeyPassword?.trim()
 
-// Controlled from gradle.properties or the CLI: -PbuildUniversalApk=true also emits one fat APK.
-def buildUniversalApk = (findProperty('buildUniversalApk') ?: 'false').toBoolean()
+// Controlled from gradle.properties or the CLI: -PbuildUniversalApk=false disables the fat APK.
+def buildUniversalApk = (findProperty('buildUniversalApk') ?: 'true').toBoolean()
+
+// Unique multiplier per ABI so every split APK gets a distinct versionCode (see applicationVariants below).
+def abiVersionCodes = ["armeabi-v7a": 1, "x86": 2, "arm64-v8a": 3, "x86_64": 4]
 `;
 
 // 3a. Insert the keystore block once, immediately before the `android {` block.
@@ -108,13 +112,13 @@ if (!bg.includes(MARKER_TOP)) {
 // 3b. Inject ABI splits config inside the android block (after `namespace ...`).
 if (!bg.includes("// @NN_PATCH splits")) {
   const splitsBlock = `
-    // @NN_PATCH splits — one APK per CPU arch (premium/arm64 + medium/armv7).
+    // @NN_PATCH splits — one APK per CPU arch (arm64-v8a, armeabi-v7a, x86_64) + a universal fat APK.
     splits {
         abi {
             reset()
             enable true
             universalApk buildUniversalApk
-            include "armeabi-v7a", "arm64-v8a"
+            include "armeabi-v7a", "arm64-v8a", "x86_64"
         }
     }
 `;
@@ -167,6 +171,27 @@ tasks.matching { it.name == "bundleRelease" }.configureEach {
 }
 `;
   note("build.gradle: added bundleRelease signing guard");
+}
+
+// 3e. Give each per-ABI split APK a distinct versionCode so they can coexist on the Play Store.
+if (!bg.includes("// @NN_PATCH abi-version-codes")) {
+  const abiVersionCodeBlock = `// @NN_PATCH abi-version-codes — give each per-ABI split APK a distinct versionCode so they can
+// coexist on the Play Store. Formula: base versionCode * 1000 + ABI offset. The universal APK
+// (ABI filter == null) keeps the plain base versionCode.
+android.applicationVariants.all { variant ->
+    variant.outputs.each { output ->
+        def abiName = output.getFilter(com.android.build.OutputFile.ABI)
+        def abiOffset = abiVersionCodes.get(abiName)
+        if (abiOffset != null) {
+            output.versionCodeOverride = variant.versionCode * 1000 + abiOffset
+        }
+    }
+}
+
+`;
+  // Insert immediately before the top-level `dependencies {` block.
+  bg = bg.replace(/\ndependencies\s*\{/, `\n${abiVersionCodeBlock}dependencies {`);
+  note("build.gradle: added per-ABI versionCode overrides");
 }
 
 fs.writeFileSync(bgPath, bg, "utf8");
