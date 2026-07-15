@@ -82,7 +82,11 @@ export function usePushNotifications(userId: string | null) {
 async function registerForPushNotifications(userId: string): Promise<string | null> {
   try {
     if (Platform.OS === 'android') {
-      await Notifications.setNotificationChannelAsync('orders', {
+      // Channel id bumped to _v2: Android locks a channel's sound at creation
+      // time, so the previous 'orders' channel (already created on installed
+      // devices without a custom sound) can never pick up order_chime.wav —
+      // only a new channel id does.
+      await Notifications.setNotificationChannelAsync('orders_v2', {
         name: 'Order Updates',
         importance: Notifications.AndroidImportance.MAX,
         vibrationPattern: [0, 250, 250, 250],
