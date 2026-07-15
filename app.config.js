@@ -89,6 +89,7 @@ module.exports = {
           icon: "./assets/images/notification-icon.png",
           color: "#0EA5E9",
           defaultChannel: "orders",
+          sounds: ["./assets/sounds/order_chime.wav"],
         },
       ],
       [
