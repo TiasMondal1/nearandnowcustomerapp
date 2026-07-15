@@ -87,6 +87,7 @@ async function registerForPushNotifications(userId: string): Promise<string | nu
         importance: Notifications.AndroidImportance.MAX,
         vibrationPattern: [0, 250, 250, 250],
         lightColor: '#0EA5E9',
+        sound: 'order_chime.wav',
       });
     }
 

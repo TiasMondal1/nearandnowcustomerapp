@@ -102,10 +102,7 @@ export default function ProfileMenu({ visible, onClose }: ProfileMenuProps) {
                 icon="bell-outline"
                 title="Notifications"
                 subtitle="Order & promo alerts"
-                onPress={() => {
-                  onClose();
-                  Alert.alert("Coming Soon", "Push notifications will be available soon.");
-                }}
+                onPress={() => handleNavigation("/notifications")}
               />
               <MenuItem
                 icon="help-circle-outline"
