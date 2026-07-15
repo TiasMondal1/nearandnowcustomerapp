@@ -97,7 +97,9 @@ def releaseKeyPassword = System.getenv("ANDROID_UPLOAD_KEY_PASSWORD") ?: keystor
 def hasReleaseSigning = releaseStoreFile?.trim() && releaseStorePassword?.trim() && releaseKeyAlias?.trim() && releaseKeyPassword?.trim()
 
 // Controlled from gradle.properties or the CLI: -PbuildUniversalApk=false disables the fat APK.
-def buildUniversalApk = (findProperty('buildUniversalApk') ?: 'true').toBoolean()
+// AAB builds must disable ABI splits (-PaabBuild=true from npm run build:aab).
+def aabBuild = (findProperty('aabBuild') ?: 'false').toBoolean()
+def buildUniversalApk = !aabBuild && (findProperty('buildUniversalApk') ?: 'true').toBoolean()
 
 // Unique multiplier per ABI so every split APK gets a distinct versionCode (see applicationVariants below).
 def abiVersionCodes = ["armeabi-v7a": 1, "x86": 2, "arm64-v8a": 3, "x86_64": 4]
@@ -113,10 +115,11 @@ if (!bg.includes(MARKER_TOP)) {
 if (!bg.includes("// @NN_PATCH splits")) {
   const splitsBlock = `
     // @NN_PATCH splits — one APK per CPU arch (arm64-v8a, armeabi-v7a, x86_64) + a universal fat APK.
+    // Disabled for AAB (Play Store handles ABI splitting itself).
     splits {
         abi {
             reset()
-            enable true
+            enable !aabBuild
             universalApk buildUniversalApk
             include "armeabi-v7a", "arm64-v8a", "x86_64"
         }
