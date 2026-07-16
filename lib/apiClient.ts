@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 import Constants from 'expo-constants';
 
 const _extra = (Constants.expoConfig?.extra ?? {}) as Record<string, string>;
@@ -31,11 +32,39 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
   }
 }
 
+// Registered by AuthContext on mount so a 401 from ANY apiFetch call — not
+// just ones AuthContext itself makes — can clear the stored session and flip
+// isAuthenticated immediately, regardless of which screen the user is on.
+// Without this, a truly expired session (25 days of inactivity) just threw an
+// error on every subsequent call while the app kept believing it was logged in.
+let onSessionExpired: (() => void) | null = null;
+export function setSessionExpiredHandler(fn: (() => void) | null) {
+  onSessionExpired = fn;
+}
+
+// One-time migration: installs from before the SecureStore switch have the
+// token sitting in plain AsyncStorage under the same key. Checked here too
+// (not just AuthContext.restoreSession) so a request firing before that
+// migration runs still finds the token instead of silently 401ing.
+async function getStoredToken(): Promise<string | null> {
+  const secureToken = await SecureStore.getItemAsync('userToken');
+  if (secureToken) return secureToken;
+
+  const legacyToken = await AsyncStorage.getItem('userToken');
+  if (legacyToken) {
+    await SecureStore.setItemAsync('userToken', legacyToken);
+    await AsyncStorage.removeItem('userToken');
+    return legacyToken;
+  }
+
+  return null;
+}
+
 export async function apiFetch<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const token = await AsyncStorage.getItem('userToken');
+  const token = await getStoredToken();
   const apiBase = getApiBase();
 
   if (!apiBase) {
@@ -66,6 +95,10 @@ export async function apiFetch<T>(
       const message = data?.message || data?.error || `Request failed (${response.status})`;
 
       if (response.status === 401) {
+        // Only treat this as a real session expiry if we actually sent a token —
+        // a 401 on a call made with no token at all just means "this needs auth",
+        // not "your session died," and shouldn't force-clear/redirect a guest.
+        if (token) onSessionExpired?.();
         throw new Error('Session expired. Please log in again.');
       } else if (response.status === 403) {
         throw new Error('Access denied. Please contact support.');

@@ -1,6 +1,6 @@
-import { Stack } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
@@ -33,7 +33,8 @@ readHomeCatalogCache().catch(() => {});
 loadOrderHistoryFlag().catch(() => {});
 
 function AppShell() {
-  const { isLoading, userId } = useAuth();
+  const { isLoading, isAuthenticated, userId } = useAuth();
+  const router = useRouter();
   usePushNotifications(userId);
 
   useEffect(() => {
@@ -41,6 +42,19 @@ function AppShell() {
       SplashScreen.hideAsync().catch(() => {});
     }
   }, [isLoading]);
+
+  // Session can expire (25 days of inactivity) while the user is deep in the
+  // app, not just at cold start — app/index.tsx only handles the cold-start
+  // redirect. Catch the true→false transition here, from wherever they are.
+  const wasAuthenticated = useRef(false);
+  useEffect(() => {
+    if (isAuthenticated) {
+      wasAuthenticated.current = true;
+    } else if (wasAuthenticated.current && !isLoading) {
+      wasAuthenticated.current = false;
+      router.replace("/phone");
+    }
+  }, [isAuthenticated, isLoading, router]);
 
   return (
     <CartProvider>

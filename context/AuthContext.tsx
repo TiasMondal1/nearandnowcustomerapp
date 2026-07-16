@@ -1,5 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import * as SecureStore from 'expo-secure-store';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { AppState, type AppStateStatus } from 'react-native';
 import {
   changeCustomerEmail,
   getCurrentUserFromSession,
@@ -11,8 +13,19 @@ import {
   type AppUser,
   type Customer,
 } from '../lib/authService';
+import { apiFetch, setSessionExpiredHandler } from '../lib/apiClient';
 import { clearOrderHistoryFlag } from '../lib/orderHistoryFlag';
 import { clearSavedPaymentMethodsCache } from '../lib/razorpayService';
+
+// Renews the sliding 25-day session window as a side effect of requireCustomer
+// (see backend customerAuth.middleware.ts). Fired on cold start and on every
+// foreground resume so simply opening/using the app counts as activity —
+// not just ordering-related actions, which are the only other calls that
+// happen to hit a requireCustomer route. Fire-and-forget; a missed ping just
+// means the next one (or the next real API call) renews it instead.
+function pingSession() {
+  apiFetch('/api/customers/session/ping').catch(() => {});
+}
 
 interface AuthContextType {
   user: AppUser | null;
@@ -50,6 +63,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     restoreSession();
+    // Lets apiClient.ts clear the session (and flip isAuthenticated) the moment
+    // any API call comes back 401 — not just calls AuthContext itself makes —
+    // so a genuinely expired session (25 days of inactivity) is handled from
+    // wherever the user happens to be in the app, not just on next cold start.
+    setSessionExpiredHandler(() => {
+      clearStoredSession();
+    });
+    return () => setSessionExpiredHandler(null);
+  }, []);
+
+  // Cold start alone isn't enough — someone can keep the app backgrounded for
+  // weeks and just resume it from the app switcher without a fresh launch.
+  // Ping on every foreground resume too, so any real use of the app renews
+  // the session, matching "count from the last time they were active."
+  const isAuthenticatedRef = useRef(isAuthenticated);
+  useEffect(() => {
+    isAuthenticatedRef.current = isAuthenticated;
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (nextState === 'active' && isAuthenticatedRef.current) {
+        pingSession();
+      }
+    });
+    return () => subscription.remove();
   }, []);
 
   /**
@@ -59,12 +98,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
    */
   const restoreSession = async () => {
     try {
-      const [storedUserId, storedToken, rawUser, rawCustomer] = await Promise.all([
+      const [storedUserId, secureToken, rawUser, rawCustomer] = await Promise.all([
         AsyncStorage.getItem('userId'),
-        AsyncStorage.getItem('userToken'),
+        SecureStore.getItemAsync('userToken'),
         AsyncStorage.getItem('userData'),
         AsyncStorage.getItem('customerData'),
       ]);
+
+      // One-time migration: installs from before the SecureStore switch have the
+      // token sitting in plain AsyncStorage under the same key. Without this,
+      // every existing logged-in user gets silently signed out on update.
+      let storedToken = secureToken;
+      if (!storedToken) {
+        const legacyToken = await AsyncStorage.getItem('userToken');
+        if (legacyToken) {
+          storedToken = legacyToken;
+          await SecureStore.setItemAsync('userToken', legacyToken);
+          await AsyncStorage.removeItem('userToken');
+        }
+      }
 
       if (!storedUserId || !storedToken) {
         setIsAuthenticated(false);
@@ -83,6 +135,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setIsAuthenticated(true);
         setIsLoading(false);
         revalidateSession(storedUserId);
+        pingSession();
         return;
       }
 
@@ -93,6 +146,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUserId(storedUserId);
         setUserToken(storedToken);
         setIsAuthenticated(true);
+        pingSession();
         await Promise.all([
           AsyncStorage.setItem('userData', JSON.stringify(fresh.user)),
           AsyncStorage.setItem(
@@ -135,7 +189,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const clearStoredSession = async () => {
     await Promise.all([
       AsyncStorage.removeItem('userId'),
-      AsyncStorage.removeItem('userToken'),
+      SecureStore.deleteItemAsync('userToken'),
       AsyncStorage.removeItem('userData'),
       AsyncStorage.removeItem('customerData'),
     ]);
@@ -166,7 +220,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     await Promise.all([
       AsyncStorage.setItem('userId', response.user.id),
-      AsyncStorage.setItem('userToken', response.token),
+      SecureStore.setItemAsync('userToken', response.token),
       AsyncStorage.setItem('userData', JSON.stringify(response.user)),
       AsyncStorage.setItem(
         'customerData',
