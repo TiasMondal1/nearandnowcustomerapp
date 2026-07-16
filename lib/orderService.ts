@@ -252,34 +252,32 @@ async function getUserOrdersFromSupabase(userId: string): Promise<Order[]> {
   return rows.map(mapBackendOrder);
 }
 
-// Direct-to-Supabase order creation.
+type PlaceOrderResponse = {
+  id: string;
+  order_code?: string;
+  status?: string;
+  payment_status?: string;
+  payment_method?: string;
+  total_amount?: number;
+  subtotal_amount?: number;
+  delivery_fee?: number;
+  delivery_address?: string;
+  placed_at?: string;
+  created_at?: string;
+};
+
+// Places an order via the backend's `/api/orders/place` endpoint — the
+// authenticated (requireCustomer), server-trusted checkout pipeline shared
+// with the website. The backend re-derives item prices from `master_products`,
+// recomputes the order total, and only ever assigns `customer_id` from the
+// caller's own session token, never from anything in the request body.
 //
-// NOTE (temporary): we bypass the backend's `/api/orders/place` nearest-store
-// pipeline for now because the production DB doesn't yet have the per-store
-// inventory populated (the `products` / `stores` tables are sparse), and that
-// pipeline throws "No store available" / "Product(s) not available from any
-// store near you" if ANY cart item can't be mapped to a nearby store. Until
-// inventory is in place, orders simply get pinned to the first active store
-// and any cart items without a matching `products` row are recorded in the
-// `notes` column instead of `order_items`. The order itself always goes in,
-// so the checkout/payment flow works end-to-end.
-//
-// When inventory is ready, flip back to `/api/orders/place` — nothing else
-// in the app depends on the direct-write path.
+// (Previously this wrote directly to Supabase using the service-role key,
+// with no ownership check tying the order to the authenticated customer, and
+// with client-computed prices/totals trusted as-is.)
 export async function createOrder(input: CreateOrderInput): Promise<Order> {
-  assertSupabaseAdminConfigured();
-
-  // ─── 0. Email must be verified before ordering ───────────────────────────
-  const { data: buyer } = await supabaseAdmin
-    .from('app_users')
-    .select('email_verified_at')
-    .eq('id', input.user_id)
-    .maybeSingle();
-  if (!buyer?.email_verified_at) {
-    throw new Error('Please verify your email before placing an order');
-  }
-
-  // ─── 1. Fold extras into notes ────────────────────────────────────────────
+  // Delivery-note extras the backend doesn't have dedicated columns for yet
+  // get folded into the free-text `notes` field, same as before.
   const noteParts: string[] = [];
   if (input.notes) noteParts.push(input.notes);
   if (input.gstin) noteParts.push(`GSTIN: ${input.gstin}`);
@@ -287,225 +285,53 @@ export async function createOrder(input: CreateOrderInput): Promise<Order> {
     noteParts.push(`Tip: ₹${input.tip_amount.toFixed(2)}`);
   }
 
-  // ─── 2. Pick the nearest active store to the delivery address ────────────
-  let fallbackStoreId: string | null = null;
-  try {
-    const { getNearbyActiveStores } = await import('./storeService');
-    const nearby = await getNearbyActiveStores(
-      input.delivery_latitude,
-      input.delivery_longitude,
-      // Use a generous radius so orders still go through even if the customer
-      // is slightly outside the 4 km browse radius (e.g. they moved after
-      // adding items). We still pick the single nearest store.
-      50,
-    );
-    fallbackStoreId = nearby[0]?.id ?? null;
+  const [addressLine, ...addressRest] = input.delivery_address.split(',');
 
-    // Hard fallback: if PostGIS-style distance lookup returns nothing (e.g. no
-    // lat/lng on stores yet), grab any active store so the order still records.
-    if (!fallbackStoreId) {
-      const { data: anyStore } = await supabaseAdmin
-        .from('stores')
-        .select('id')
-        .eq('is_active', true)
-        .limit(1);
-      fallbackStoreId = anyStore?.[0]?.id ?? null;
-    }
-  } catch {
-    fallbackStoreId = null;
-  }
-
-  // ─── 3. Resolve master_product_id → products.id (best-effort) ────────────
-  // `order_items.product_id` references `products.id` (store-specific catalog
-  // row), not `master_products.id`. The mobile cart stores master ids, so we
-  // have to map. We prefer products from the fallback store, then fall back
-  // to ANY active products row with the same master id.
-  const masterIds = Array.from(
-    new Set(
-      (input.items || [])
-        .map((i) => i.product_id)
-        .filter((id): id is string => !!id && id.length > 0),
-    ),
-  );
-
-  type ProductRow = { id: string; store_id: string; master_product_id: string };
-  let productRows: ProductRow[] = [];
-  if (masterIds.length > 0) {
-    try {
-      const { data } = await supabaseAdmin
-        .from('products')
-        .select('id, store_id, master_product_id')
-        .in('master_product_id', masterIds)
-        .eq('is_active', true);
-      productRows = (data as ProductRow[] | null) || [];
-    } catch {
-      productRows = [];
-    }
-  }
-
-  const resolveProductId = (masterId: string | undefined): string | null => {
-    if (!masterId) return null;
-    const matches = productRows.filter((r) => r.master_product_id === masterId);
-    if (matches.length === 0) return null;
-    const preferred = matches.find((r) => r.store_id === fallbackStoreId);
-    return (preferred || matches[0]).id;
-  };
-
-  // ─── 4. Order code — simple, unique, human-readable ──────────────────────
-  const orderCode = `NAN-${Date.now().toString(36).toUpperCase()}`;
-
-  // ─── 5. Payment method → DB enum ─────────────────────────────────────────
-  // `customer_orders.payment_method` is a Postgres enum (`payment_method`).
-  // The schema's enum values are `cod` and `razorpay` — map the mobile's
-  // 'upi' rail to 'razorpay' so the insert doesn't trip the enum check.
-  const paymentMethodEnum =
-    input.payment_method === 'cod' ? 'cod' : 'razorpay';
-
-  // ─── 6. Insert customer_orders ───────────────────────────────────────────
-  const { data: customerOrder, error: coError } = await supabaseAdmin
-    .from('customer_orders')
-    .insert({
-      customer_id: input.user_id,
-      order_code: orderCode,
-      status: 'pending_at_store',
-      payment_status: input.payment_status,
-      payment_method: paymentMethodEnum,
-      subtotal_amount: input.subtotal,
+  const order = await apiFetch<PlaceOrderResponse>('/api/orders/place', {
+    method: 'POST',
+    body: JSON.stringify({
+      user_id: input.user_id,
+      customer_name: input.customer_name,
+      customer_email: input.customer_email,
+      customer_phone: input.customer_phone,
+      order_total: input.order_total,
+      subtotal: input.subtotal,
       delivery_fee: input.delivery_fee,
-      discount_amount: 0,
-      total_amount: Math.round(input.order_total),
-      delivery_address: input.delivery_address,
-      delivery_latitude: input.delivery_latitude,
-      delivery_longitude: input.delivery_longitude,
-      notes: noteParts.length ? noteParts.join(' | ') : null,
-    })
-    .select()
-    .single();
+      payment_status: input.payment_status,
+      payment_method: input.payment_method,
+      notes: noteParts.length ? noteParts.join(' | ') : undefined,
+      items: input.items.map((it) => ({
+        product_id: it.product_id,
+        name: it.name,
+        price: it.price,
+        quantity: it.quantity,
+        image: it.image,
+        unit: it.unit,
+      })),
+      shipping_address: {
+        address: addressLine?.trim() || input.delivery_address,
+        city: addressRest.join(',').trim() || undefined,
+        latitude: input.delivery_latitude,
+        longitude: input.delivery_longitude,
+      },
+    }),
+  });
 
-  if (coError || !customerOrder) {
-    throw new Error(coError?.message || 'Failed to create order');
-  }
-
-  const customerOrderId = String((customerOrder as { id: string }).id);
-
-  // ─── 7. Best-effort: store_orders + order_items ──────────────────────────
-  // If we have a fallback store, create one store_orders row and slot all
-  // the resolvable items under it. Items whose master id doesn't map to any
-  // products row are appended to notes so the record isn't lost.
-  const unresolvedItemNames: string[] = [];
-  if (fallbackStoreId) {
-    const { data: storeOrder, error: soError } = await supabaseAdmin
-      .from('store_orders')
-      .insert({
-        customer_order_id: customerOrderId,
-        store_id: fallbackStoreId,
-        status: 'pending_at_store',
-        subtotal_amount: input.subtotal,
-        delivery_fee: input.delivery_fee,
-      })
-      .select()
-      .single();
-
-    if (!soError && storeOrder) {
-      const storeOrderId = String((storeOrder as { id: string }).id);
-      const orderItemsPayload: Array<{
-        store_order_id: string;
-        product_id: string;
-        product_name: string;
-        unit: string | null;
-        image_url: string | null;
-        unit_price: number;
-        quantity: number;
-      }> = [];
-
-      for (const it of input.items) {
-        const productId = resolveProductId(it.product_id);
-        if (!productId) {
-          unresolvedItemNames.push(`${it.name} × ${it.quantity}`);
-          continue;
-        }
-        orderItemsPayload.push({
-          store_order_id: storeOrderId,
-          product_id: productId,
-          product_name: it.name,
-          unit: it.unit || null,
-          image_url: it.image || null,
-          unit_price: it.price,
-          quantity: it.quantity,
-        });
-      }
-
-      if (orderItemsPayload.length > 0) {
-        const { error: itemsError } = await supabaseAdmin
-          .from('order_items')
-          .insert(orderItemsPayload);
-        if (itemsError) {
-          // Non-fatal: the order still exists, we just couldn't attach the
-          // items list. Log to notes so support can reconstruct the cart.
-          unresolvedItemNames.push(
-            ...input.items
-              .filter((_, idx) => idx < orderItemsPayload.length)
-              .map((it) => `${it.name} × ${it.quantity}`),
-          );
-        }
-      }
-    }
-  } else {
-    // No store available at all — every item is unresolved.
-    for (const it of input.items) {
-      unresolvedItemNames.push(`${it.name} × ${it.quantity}`);
-    }
-  }
-
-  // If any items couldn't be FK'd, patch them into the notes column so the
-  // full cart is always recoverable from the customer_orders row.
-  if (unresolvedItemNames.length > 0) {
-    const unresolvedNote = `Unlinked items: ${unresolvedItemNames.join(', ')}`;
-    const mergedNotes = [
-      noteParts.length ? noteParts.join(' | ') : null,
-      unresolvedNote,
-    ]
-      .filter(Boolean)
-      .join(' | ');
-    try {
-      await supabaseAdmin
-        .from('customer_orders')
-        .update({ notes: mergedNotes })
-        .eq('id', customerOrderId);
-    } catch {
-      // ignore — notes update is purely informational
-    }
-  }
-
-  // ─── 8. Seed order_status_history ────────────────────────────────────────
-  try {
-    await supabaseAdmin.from('order_status_history').insert({
-      customer_order_id: customerOrderId,
-      status: 'pending_at_store',
-      notes: 'Order placed',
-    });
-  } catch {
-    // History row is nice-to-have, never fatal.
-  }
-
-  // ─── 9. Return the Order shape the app expects ───────────────────────────
   const placedOrder: Order = {
-    id: customerOrderId,
-    order_number: orderCode,
-    order_status: 'pending_at_store',
-    payment_status: input.payment_status,
-    payment_method: paymentMethodEnum,
-    order_total: input.order_total,
-    subtotal: input.subtotal,
-    delivery_fee: input.delivery_fee,
+    id: String(order.id),
+    order_number: order.order_code || undefined,
+    order_status: order.status || 'pending_at_store',
+    payment_status: order.payment_status || input.payment_status,
+    payment_method: order.payment_method || input.payment_method,
+    order_total: order.total_amount ?? input.order_total,
+    subtotal: order.subtotal_amount ?? input.subtotal,
+    delivery_fee: order.delivery_fee ?? input.delivery_fee,
     items: input.items,
     items_count: input.items.length,
-    delivery_address: input.delivery_address,
-    created_at:
-      (customerOrder as { placed_at?: string; created_at?: string }).placed_at ||
-      (customerOrder as { created_at?: string }).created_at ||
-      new Date().toISOString(),
+    delivery_address: order.delivery_address || input.delivery_address,
+    created_at: order.placed_at || order.created_at || new Date().toISOString(),
   };
+
   // Fire-and-forget: the next visit to the Orders tab will refresh from the
   // server anyway, but clearing the stale cache now means the new order shows
   // up at the top even on a cold start within the TTL window.
