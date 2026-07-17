@@ -204,7 +204,7 @@ export default function ProfileSetupScreen() {
       const name = `${firstName.trim()} ${lastName.trim()}`.trim();
 
       if (user?.id) {
-        await updateCustomerProfile(user.id, {
+        await updateCustomerProfile({
           name,
           address: addressString || undefined,
           city: city.trim() || undefined,

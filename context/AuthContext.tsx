@@ -37,7 +37,7 @@ interface AuthContextType {
   sendOTPCode: (phone: string) => Promise<void>;
   verifyOTPCode: (phone: string, otp: string, name?: string, email?: string) => Promise<{ isNewUser: boolean }>;
   logoutUser: () => Promise<void>;
-  updateUserProfile: (data: Parameters<typeof updateCustomerProfile>[1]) => Promise<void>;
+  updateUserProfile: (data: Parameters<typeof updateCustomerProfile>[0]) => Promise<void>;
   changeEmail: (email: string) => Promise<void>;
   verifyEmailCode: (code: string) => Promise<void>;
   resendEmailCode: () => Promise<void>;
@@ -149,12 +149,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUserToken(storedToken);
         setIsAuthenticated(true);
         setIsLoading(false);
-        revalidateSession(storedUserId);
+        revalidateSession();
         pingSession();
         return;
       }
 
-      const fresh = await getCurrentUserFromSession(storedUserId);
+      const fresh = await getCurrentUserFromSession();
       if (fresh) {
         setUser(fresh.user);
         setCustomer(fresh.customer || null);
@@ -179,9 +179,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const revalidateSession = async (id: string) => {
+  const revalidateSession = async () => {
     try {
-      const fresh = await getCurrentUserFromSession(id);
+      const fresh = await getCurrentUserFromSession();
       if (fresh) {
         setUser(fresh.user);
         setCustomer(fresh.customer || null);
@@ -250,12 +250,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await clearStoredSession();
   };
 
-  const updateUserProfile = async (data: Parameters<typeof updateCustomerProfile>[1]) => {
+  const updateUserProfile = async (data: Parameters<typeof updateCustomerProfile>[0]) => {
     if (!user) throw new Error('No user logged in');
 
-    await updateCustomerProfile(user.id, data);
+    await updateCustomerProfile(data);
 
-    const refreshed = await getCurrentUserFromSession(user.id);
+    const refreshed = await getCurrentUserFromSession();
     if (refreshed) {
       setUser(refreshed.user);
       setCustomer(refreshed.customer || null);

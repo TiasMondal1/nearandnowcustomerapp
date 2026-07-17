@@ -13,7 +13,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { C } from "../../constants/colors";
 import { useCart } from "../../context/CartContext";
-import { supabaseAdmin } from "../../lib/supabase";
+import { apiFetch } from "../../lib/apiClient";
 
 type Coupon = {
   id: string;
@@ -38,12 +38,8 @@ export default function CouponsScreen() {
   const fetchCoupons = async () => {
     try {
       setLoading(true);
-      const { data } = await supabaseAdmin
-        .from('coupons')
-        .select('id, code, description, discount_type, value, min_order_value, expires_at')
-        .eq('is_active', true)
-        .order('created_at', { ascending: false });
-      setCoupons((data as Coupon[]) || []);
+      const data = await apiFetch<Coupon[]>('/api/coupons/active');
+      setCoupons(data || []);
     } catch {
       setCoupons([]);
     } finally {

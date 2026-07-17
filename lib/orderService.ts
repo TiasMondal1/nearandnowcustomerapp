@@ -1,7 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { apiFetch } from './apiClient';
-import { assertSupabaseAdminConfigured, supabaseAdmin } from './supabase';
 
 // ─── User-orders SWR cache ──────────────────────────────────────────────────
 // Keyed per user so switching accounts on the same device doesn't cross
@@ -208,50 +207,6 @@ function mapBackendOrder(order: BackendCustomerOrder): Order {
   };
 }
 
-async function getUserOrdersFromSupabase(userId: string): Promise<Order[]> {
-  assertSupabaseAdminConfigured();
-
-  const { data, error } = await supabaseAdmin
-    .from('customer_orders')
-    .select(
-      `
-      id,
-      order_code,
-      customer_id,
-      status,
-      payment_status,
-      payment_method,
-      subtotal_amount,
-      delivery_fee,
-      total_amount,
-      delivery_address,
-      placed_at,
-      created_at,
-      store_orders (
-        id,
-        order_items (
-          product_id,
-          product_name,
-          unit_price,
-          quantity,
-          unit,
-          image_url,
-          products:product_id (
-            master_product_id
-          )
-        )
-      )
-    `,
-    )
-    .eq('customer_id', userId)
-    .order('placed_at', { ascending: false })
-    .limit(50);
-
-  if (error) throw new Error(error.message);
-  const rows = (data || []) as unknown as BackendCustomerOrder[];
-  return rows.map(mapBackendOrder);
-}
-
 type PlaceOrderResponse = {
   id: string;
   order_code?: string;
@@ -352,17 +307,18 @@ export async function getOrderPaymentStatus(
 ): Promise<{ payment_status: string; status: string } | null> {
   if (!orderId) return null;
   try {
-    assertSupabaseAdminConfigured();
-    const { data, error } = await supabaseAdmin
-      .from('customer_orders')
-      .select('payment_status, status')
-      .eq('id', orderId)
-      .maybeSingle();
-    if (error) throw new Error(error.message);
+    // requireCustomer-gated, and ownership is enforced inside the query
+    // itself (customer_id filter in getOrderTracking) — not just an app-level
+    // check. Previously this read customer_orders directly with the
+    // privileged client and NO ownership check at all: any known/guessed
+    // order id's payment status was readable by anyone.
+    const data = await apiFetch<{ payment_status?: string; status?: string }>(
+      `/api/tracking/orders/${encodeURIComponent(orderId)}`,
+    );
     if (!data) return null;
     return {
-      payment_status: String((data as any).payment_status || 'pending'),
-      status: String((data as any).status || ''),
+      payment_status: String(data.payment_status || 'pending'),
+      status: String(data.status || ''),
     };
   } catch (err) {
     console.warn('[ORDER] getOrderPaymentStatus failed', err);
@@ -482,32 +438,19 @@ export function buildOrderAgainProductIds(orders: Order[]): {
   return { productIds, qtyByProductId };
 }
 
-// GET /api/orders/customer/:customerId — handled by Railway backend (reads with service role server-side)
+// GET /api/orders/customer/:customerId — requireCustomer-gated; the controller
+// verifies the :customerId param matches the caller's own session
+// (req.customerId) before querying, so this is safe to call directly with no
+// privileged client involved (previously this was only a fallback behind a
+// direct-Supabase read that took a bare userId with no ownership check).
 export async function getUserOrders(userId: string): Promise<Order[]> {
   if (!userId) return [];
-  // Prefer direct DB read (matches your schema exactly). Fallback to backend if admin key isn't configured.
-  try {
-    const orders = await getUserOrdersFromSupabase(userId);
-    writeUserOrdersCache(userId, orders).catch(() => {});
-    return orders;
-  } catch (err) {
-    // If admin key is missing, or any other issue occurs, try the backend route.
-    try {
-      const rows = await apiFetch<BackendCustomerOrder[]>(
-        `/api/orders/customer/${encodeURIComponent(userId)}`,
-      );
-      if (!Array.isArray(rows)) return [];
-      const orders = rows.map(mapBackendOrder);
-      writeUserOrdersCache(userId, orders).catch(() => {});
-      return orders;
-    } catch (err2) {
-      const message =
-        (err2 instanceof Error && err2.message) ||
-        (err instanceof Error && err.message) ||
-        'Failed to fetch orders';
-      throw new Error(message);
-    }
-  }
+  const rows = await apiFetch<BackendCustomerOrder[]>(
+    `/api/orders/customer/${encodeURIComponent(userId)}`,
+  );
+  const orders = Array.isArray(rows) ? rows.map(mapBackendOrder) : [];
+  writeUserOrdersCache(userId, orders).catch(() => {});
+  return orders;
 }
 
 // ─── Delivery OTP ────────────────────────────────────────────────────────────

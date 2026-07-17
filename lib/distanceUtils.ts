@@ -23,10 +23,14 @@ export async function getStoreDistance(
   customerLat: number,
   customerLng: number,
 ): Promise<number> {
-  const { supabaseAdmin } = await import('./supabase');
+  // Plain anon client — this only reads public store/product coordinates
+  // (no user-owned data, no IDOR risk), the same data lib/storeService.ts
+  // and lib/productService.ts already read via the anon client. Using the
+  // privileged admin client here was unnecessary.
+  const { supabase } = await import('./supabase');
   
   try {
-    const { data: store, error } = await supabaseAdmin
+    const { data: store, error } = await supabase
       .from('stores')
       .select('latitude, longitude')
       .eq('id', storeId)
@@ -50,10 +54,14 @@ export async function getProductStoreDistance(
   customerLat: number,
   customerLng: number,
 ): Promise<number> {
-  const { supabaseAdmin } = await import('./supabase');
+  // Plain anon client — this only reads public store/product coordinates
+  // (no user-owned data, no IDOR risk), the same data lib/storeService.ts
+  // and lib/productService.ts already read via the anon client. Using the
+  // privileged admin client here was unnecessary.
+  const { supabase } = await import('./supabase');
 
   try {
-    const { data: product, error } = await supabaseAdmin
+    const { data: product, error } = await supabase
       .from('products')
       .select('store_id, stores(latitude, longitude)')
       .eq('master_product_id', productId)
@@ -89,10 +97,14 @@ export async function getBatchProductStoreDistances(
   customerLng: number,
 ): Promise<number[]> {
   if (!productIds.length) return [];
-  const { supabaseAdmin } = await import('./supabase');
+  // Plain anon client — this only reads public store/product coordinates
+  // (no user-owned data, no IDOR risk), the same data lib/storeService.ts
+  // and lib/productService.ts already read via the anon client. Using the
+  // privileged admin client here was unnecessary.
+  const { supabase } = await import('./supabase');
 
   try {
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await supabase
       .from('products')
       .select('master_product_id, stores(latitude, longitude)')
       .in('master_product_id', productIds)

@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { assertSupabaseAdminConfigured, supabaseAdmin } from './supabase';
+import { apiFetch } from './apiClient';
 
 // ─── Saved-address cache ────────────────────────────────────────────────────
 // Mirrors the home-catalog SWR pattern: paint from the last-known list
@@ -94,17 +94,7 @@ export interface SavedAddress {
 }
 
 export async function getUserAddresses(userId: string): Promise<SavedAddress[]> {
-  assertSupabaseAdminConfigured();
-  const { data, error } = await supabaseAdmin
-    .from('customer_saved_addresses')
-    .select('*')
-    .eq('customer_id', userId)
-    .eq('is_active', true)
-    .order('is_default', { ascending: false })
-    .order('created_at', { ascending: false });
-
-  if (error) throw new Error(error.message);
-  const rows = (data ?? []) as SavedAddress[];
+  const rows = await apiFetch<SavedAddress[]>(`/api/customers/${userId}/addresses`);
   // Refresh the local cache on every successful fetch so subsequent cold
   // starts can paint instantly from disk.
   writeAddressesCache(userId, rows).catch(() => {});
@@ -136,18 +126,9 @@ export async function createAddress(
     receiver_phone?: string;
   },
 ): Promise<SavedAddress> {
-  assertSupabaseAdminConfigured();
-  if (payload.is_default) {
-    await supabaseAdmin
-      .from('customer_saved_addresses')
-      .update({ is_default: false })
-      .eq('customer_id', userId);
-  }
-
-  const { data, error } = await supabaseAdmin
-    .from('customer_saved_addresses')
-    .insert({
-      customer_id: userId,
+  const data = await apiFetch<SavedAddress>(`/api/customers/${userId}/addresses`, {
+    method: 'POST',
+    body: JSON.stringify({
       label: payload.label,
       address: payload.address,
       city: payload.city || null,
@@ -169,13 +150,11 @@ export async function createAddress(
       receiver_name: payload.receiver_name || null,
       receiver_address: payload.receiver_address || null,
       receiver_phone: payload.receiver_phone || null,
-    })
-    .select()
-    .single();
+    }),
+  });
 
-  if (error || !data) throw new Error(error?.message || 'Failed to create address');
   invalidateAddressesCache(userId).catch(() => {});
-  return data as SavedAddress;
+  return data;
 }
 
 export async function updateAddress(
@@ -205,84 +184,33 @@ export async function updateAddress(
     is_active?: boolean;
   },
 ): Promise<SavedAddress> {
-  assertSupabaseAdminConfigured();
+  // JSON.stringify drops keys whose value is `undefined`, so this only ever
+  // sends the fields the caller actually set — the backend's PATCH endpoint
+  // (customers.controller.ts's updateAddress) only touches whitelisted
+  // fields present in the body, same "only update what's provided" behavior
+  // the old per-field spread had.
+  const data = await apiFetch<SavedAddress>(`/api/customers/addresses/${addressId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
 
-  if (payload.is_default) {
-    await supabaseAdmin
-      .from('customer_saved_addresses')
-      .update({ is_default: false })
-      .eq('customer_id', userId);
-  }
-
-  const { data, error } = await supabaseAdmin
-    .from('customer_saved_addresses')
-    .update({
-      ...(payload.label !== undefined ? { label: payload.label } : {}),
-      ...(payload.address !== undefined ? { address: payload.address } : {}),
-      ...(payload.city !== undefined ? { city: payload.city } : {}),
-      ...(payload.state !== undefined ? { state: payload.state } : {}),
-      ...(payload.pincode !== undefined ? { pincode: payload.pincode } : {}),
-      ...(payload.country !== undefined ? { country: payload.country } : {}),
-      ...(payload.latitude !== undefined ? { latitude: payload.latitude } : {}),
-      ...(payload.longitude !== undefined ? { longitude: payload.longitude } : {}),
-      ...(payload.google_place_id !== undefined
-        ? { google_place_id: payload.google_place_id }
-        : {}),
-      ...(payload.google_formatted_address !== undefined
-        ? { google_formatted_address: payload.google_formatted_address }
-        : {}),
-      ...(payload.google_place_data !== undefined
-        ? { google_place_data: payload.google_place_data }
-        : {}),
-      ...(payload.contact_name !== undefined ? { contact_name: payload.contact_name } : {}),
-      ...(payload.contact_phone !== undefined ? { contact_phone: payload.contact_phone } : {}),
-      ...(payload.landmark !== undefined ? { landmark: payload.landmark } : {}),
-      ...(payload.delivery_instructions !== undefined
-        ? { delivery_instructions: payload.delivery_instructions }
-        : {}),
-      ...(payload.delivery_for !== undefined ? { delivery_for: payload.delivery_for } : {}),
-      ...(payload.receiver_name !== undefined ? { receiver_name: payload.receiver_name } : {}),
-      ...(payload.receiver_address !== undefined
-        ? { receiver_address: payload.receiver_address }
-        : {}),
-      ...(payload.receiver_phone !== undefined ? { receiver_phone: payload.receiver_phone } : {}),
-      ...(payload.is_default !== undefined ? { is_default: payload.is_default } : {}),
-      ...(payload.is_active !== undefined ? { is_active: payload.is_active } : {}),
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', addressId)
-    .eq('customer_id', userId)
-    .select()
-    .single();
-
-  if (error || !data) throw new Error(error?.message || 'Failed to update address');
   invalidateAddressesCache(userId).catch(() => {});
-  return data as SavedAddress;
+  return data;
 }
 
 export async function deleteAddress(addressId: string, userId: string): Promise<void> {
-  assertSupabaseAdminConfigured();
-  const { error } = await supabaseAdmin
-    .from('customer_saved_addresses')
-    .update({ is_active: false, updated_at: new Date().toISOString() })
-    .eq('id', addressId)
-    .eq('customer_id', userId);
-
-  if (error) throw new Error(error.message);
+  await apiFetch(`/api/customers/addresses/${addressId}`, { method: 'DELETE' });
   invalidateAddressesCache(userId).catch(() => {});
 }
 
 export async function setDefaultAddress(addressId: string, userId: string): Promise<void> {
-  assertSupabaseAdminConfigured();
-  await supabaseAdmin
-    .from('customer_saved_addresses')
-    .update({ is_default: false })
-    .eq('customer_id', userId);
-
-  await supabaseAdmin
-    .from('customer_saved_addresses')
-    .update({ is_default: true, updated_at: new Date().toISOString() })
-    .eq('id', addressId)
-    .eq('customer_id', userId);
+  // The backend's update endpoint already unsets every other address's
+  // is_default before setting this one (customers.controller.ts's
+  // updateAddress → database.service.ts's updateCustomerSavedAddress),
+  // same two-step behavior this used to do directly against Supabase.
+  await apiFetch(`/api/customers/addresses/${addressId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ is_default: true }),
+  });
   invalidateAddressesCache(userId).catch(() => {});
 }

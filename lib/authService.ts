@@ -1,6 +1,5 @@
 import Constants from 'expo-constants';
 import { apiFetch } from './apiClient';
-import { supabaseAdmin } from './supabase';
 
 export interface AppUser {
   id: string;
@@ -130,66 +129,24 @@ export async function verifyOTP(
   };
 }
 
-export async function getCurrentUserFromSession(
-  userId: string,
-): Promise<{ user: AppUser; customer?: Customer } | null> {
+/**
+ * Fetches the caller's own profile from the backend, identified solely by
+ * the session token apiFetch attaches automatically — no userId parameter
+ * needed (or trusted) any more. Replaces the old direct-Supabase-admin-client
+ * read, which took a bare userId with zero verification against the actual
+ * authenticated session (an IDOR — anyone who knew/guessed another user's id
+ * could read their full profile).
+ */
+export async function getCurrentUserFromSession(): Promise<{ user: AppUser; customer?: Customer } | null> {
   try {
-    // Single query: join app_users → customers in one round-trip via Supabase
-    // FK embed. Previously this was two sequential queries (user then customer)
-    // which doubled the cold-start latency on every session restore.
-    const { data: appUser, error } = await supabaseAdmin
-      .from('app_users')
-      .select('id, name, email, phone, role, is_activated, created_at, updated_at, customers(*)')
-      .eq('id', userId)
-      .single();
-
-    if (error || !appUser) return null;
-
-    const user = {
-      id: (appUser as any).id,
-      name: (appUser as any).name,
-      email: (appUser as any).email,
-      phone: (appUser as any).phone,
-      role: (appUser as any).role,
-      is_activated: (appUser as any).is_activated,
-      created_at: (appUser as any).created_at,
-      updated_at: (appUser as any).updated_at,
-    } as AppUser;
-
-    const rawCustomer = (appUser as any).customers;
-    const customer: Customer | undefined = Array.isArray(rawCustomer)
-      ? (rawCustomer[0] as Customer | undefined)
-      : rawCustomer || undefined;
-
-    return { user, customer };
+    const data = await apiFetch<{ user: AppUser; customer?: Customer }>('/api/customers/me');
+    return data;
   } catch {
-    // Fallback to two-query approach if the FK embed isn't available.
-    try {
-      const { data: appUser, error } = await supabaseAdmin
-        .from('app_users')
-        .select('id, name, email, phone, role, is_activated, created_at, updated_at')
-        .eq('id', userId)
-        .single();
-
-      if (error || !appUser) return null;
-
-      if ((appUser as any).role === 'customer') {
-        const { data: customer } = await supabaseAdmin
-          .from('customers')
-          .select('*')
-          .eq('user_id', (appUser as any).id)
-          .single();
-        return { user: appUser as AppUser, customer: customer || undefined };
-      }
-      return { user: appUser as AppUser };
-    } catch {
-      return null;
-    }
+    return null;
   }
 }
 
 export async function updateCustomerProfile(
-  userId: string,
   updates: {
     name?: string;
     surname?: string;
@@ -204,24 +161,10 @@ export async function updateCustomerProfile(
   // Email is intentionally excluded here — it now goes through the verified-email
   // flow (changeEmail / verifyEmailCode below), which requires backend-owned
   // code generation and sending, not a direct client write.
-  if (updates.name) {
-    await supabaseAdmin.from('app_users').update({ name: updates.name }).eq('id', userId);
-  }
-
-  const customerUpdates: Record<string, string | undefined> = {};
-  if (updates.name) customerUpdates.name = updates.name;
-  if (updates.surname !== undefined) customerUpdates.surname = updates.surname;
-  if (updates.address !== undefined) customerUpdates.address = updates.address;
-  if (updates.city !== undefined) customerUpdates.city = updates.city;
-  if (updates.state !== undefined) customerUpdates.state = updates.state;
-  if (updates.pincode !== undefined) customerUpdates.pincode = updates.pincode;
-  if (updates.landmark !== undefined) customerUpdates.landmark = updates.landmark;
-  if (updates.delivery_instructions !== undefined)
-    customerUpdates.delivery_instructions = updates.delivery_instructions;
-
-  if (Object.keys(customerUpdates).length > 0) {
-    await supabaseAdmin.from('customers').update(customerUpdates).eq('user_id', userId);
-  }
+  await apiFetch('/api/customers/me', {
+    method: 'PATCH',
+    body: JSON.stringify(updates),
+  });
 }
 
 /** Sets (first time) or stages a change of (subsequent times) the customer's email. Sends a 4-digit code. */
