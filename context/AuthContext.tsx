@@ -98,23 +98,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
    */
   const restoreSession = async () => {
     try {
-      const [storedUserId, secureToken, rawUser, rawCustomer] = await Promise.all([
+      const [storedUserId, rawUser, rawCustomer] = await Promise.all([
         AsyncStorage.getItem('userId'),
-        SecureStore.getItemAsync('userToken'),
         AsyncStorage.getItem('userData'),
         AsyncStorage.getItem('customerData'),
       ]);
 
+      // SecureStore.getItemAsync can itself throw (Android Keystore invalidated
+      // by an OS security patch, biometric re-enrollment, some OEM bugs) — read
+      // it separately so that failure falls through to the legacy-token check
+      // below instead of rejecting the whole Promise.all above and skipping
+      // straight to a silent logout in the outer catch.
+      let storedToken: string | null = null;
+      try {
+        storedToken = await SecureStore.getItemAsync('userToken');
+      } catch {
+        // fall through to the legacy check below
+      }
+
       // One-time migration: installs from before the SecureStore switch have the
       // token sitting in plain AsyncStorage under the same key. Without this,
       // every existing logged-in user gets silently signed out on update.
-      let storedToken = secureToken;
       if (!storedToken) {
         const legacyToken = await AsyncStorage.getItem('userToken');
         if (legacyToken) {
           storedToken = legacyToken;
-          await SecureStore.setItemAsync('userToken', legacyToken);
-          await AsyncStorage.removeItem('userToken');
+          try {
+            await SecureStore.setItemAsync('userToken', legacyToken);
+            await AsyncStorage.removeItem('userToken');
+          } catch {
+            // Migration write failed too — still use the legacy token this
+            // session; a later successful write will migrate it.
+          }
         }
       }
 

@@ -46,17 +46,38 @@ export function setSessionExpiredHandler(fn: (() => void) | null) {
 // token sitting in plain AsyncStorage under the same key. Checked here too
 // (not just AuthContext.restoreSession) so a request firing before that
 // migration runs still finds the token instead of silently 401ing.
+//
+// SecureStore.getItemAsync can itself throw on a real device (Android Keystore
+// invalidated by an OS security patch, biometric re-enrollment, some OEM bugs)
+// — this used to propagate as a raw native exception straight out of apiFetch,
+// bypassing every friendly-message path below. Falls back to the legacy
+// AsyncStorage token first (covers the migration-window case). Only if
+// SecureStore actually threw AND no legacy token exists either do we treat
+// this as an unrecoverable session and force a clean logout+redirect via
+// onSessionExpired — a plain guest who was never logged in also has nothing
+// in either store, but must NOT be treated as "expired."
 async function getStoredToken(): Promise<string | null> {
-  const secureToken = await SecureStore.getItemAsync('userToken');
-  if (secureToken) return secureToken;
+  let secureStoreFailed = false;
+  try {
+    const secureToken = await SecureStore.getItemAsync('userToken');
+    if (secureToken) return secureToken;
+  } catch {
+    secureStoreFailed = true;
+  }
 
   const legacyToken = await AsyncStorage.getItem('userToken');
   if (legacyToken) {
-    await SecureStore.setItemAsync('userToken', legacyToken);
-    await AsyncStorage.removeItem('userToken');
+    try {
+      await SecureStore.setItemAsync('userToken', legacyToken);
+      await AsyncStorage.removeItem('userToken');
+    } catch {
+      // Migration write failed too — still use the legacy token this
+      // session; a later successful write will migrate it.
+    }
     return legacyToken;
   }
 
+  if (secureStoreFailed) onSessionExpired?.();
   return null;
 }
 
@@ -64,7 +85,6 @@ export async function apiFetch<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const token = await getStoredToken();
   const apiBase = getApiBase();
 
   if (!apiBase) {
@@ -74,6 +94,7 @@ export async function apiFetch<T>(
   const url = `${apiBase}${path}`;
 
   try {
+    const token = await getStoredToken();
     const response = await fetchWithTimeout(url, {
       ...options,
       headers: {
