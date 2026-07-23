@@ -304,6 +304,7 @@ export default function CheckoutScreen() {
       notes: notesParts.length ? notesParts.join(" | ") : undefined,
       gstin: gstinClaim && gstin.trim() ? gstin.trim() : undefined,
       tip_amount: tipAmount > 0 ? tipAmount : undefined,
+      coupon_id: appliedCoupon?.id,
     };
 
     if (options.optimistic) {

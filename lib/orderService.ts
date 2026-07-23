@@ -115,6 +115,7 @@ export interface CreateOrderInput {
   notes?: string;
   gstin?: string;
   tip_amount?: number;
+  coupon_id?: string;
 }
 
 type BackendOrderItem = {
@@ -254,6 +255,7 @@ export async function createOrder(input: CreateOrderInput): Promise<Order> {
       delivery_fee: input.delivery_fee,
       payment_status: input.payment_status,
       payment_method: input.payment_method,
+      coupon_id: input.coupon_id,
       notes: noteParts.length ? noteParts.join(' | ') : undefined,
       items: input.items.map((it) => ({
         product_id: it.product_id,
