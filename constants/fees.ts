@@ -1,6 +1,8 @@
 export const PLATFORM_FEE = 9.5;
 export const HANDLING_FEE = 5.5;
-export const DELIVERY_FEE = 25;
+// ₹0 for now — a launch-goodwill promo for the first customers, matching the
+// website. Was a flat ₹25; see git history to restore when the promo ends.
+export const DELIVERY_FEE = 0;
 // 5% GST is applied only on Platform Fee + Handling Charges.
 export const GST_RATE = 0.05;
 
