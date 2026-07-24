@@ -44,6 +44,11 @@ export default function CheckoutScreen() {
   const { user, customer } = useAuth();
   const [showSuccess, setShowSuccess] = useState(false);
   const [placing, setPlacing] = useState(false);
+  // Synchronous lock, checked/set before any React re-render — `placing` state
+  // alone isn't enough to stop a fast double-tap, since the button doesn't
+  // actually re-render as disabled until after the first tap's state update
+  // commits, leaving a window where a second tap can still fire placeOrder().
+  const placingRef = useRef(false);
   const { location } = useLocation();
   const [maxDistance, setMaxDistance] = useState<number>(2);
   const [loadingDistance, setLoadingDistance] = useState(false);
@@ -339,6 +344,7 @@ export default function CheckoutScreen() {
   };
 
   const placeOrder = async () => {
+    if (placingRef.current) return;
     if (!location) {
       Alert.alert("No location", "Please select a delivery location.");
       return;
@@ -364,6 +370,7 @@ export default function CheckoutScreen() {
         return;
       }
     }
+    placingRef.current = true;
     setPlacing(true);
     try {
       const currentSelection = getPaymentSelection();
@@ -474,6 +481,7 @@ export default function CheckoutScreen() {
         Alert.alert("Order failed", message);
       }
     } finally {
+      placingRef.current = false;
       setPlacing(false);
     }
   };
