@@ -21,9 +21,7 @@ import { C } from "../../constants/colors";
 import { useAuth } from "../../context/AuthContext";
 import { useLocation } from "../../context/LocationContext";
 import { createAddress } from "../../lib/addressService";
-import { getGoogleMapsApiKey } from "../../lib/mapsEnv";
-
-const GOOGLE_MAPS_API_KEY = getGoogleMapsApiKey();
+import { reverseGeocode as reverseGeocodeApi, geocodeAddress } from "../../lib/placesService";
 
 const LABELS = ["Home", "Work", "Other"] as const;
 
@@ -145,10 +143,7 @@ export default function AddLocationScreen() {
     setReverseLoading(true);
 
     try {
-      const res = await fetch(
-        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_MAPS_API_KEY}`,
-      );
-      const json = await res.json();
+      const json = await reverseGeocodeApi(lat, lng);
 
       if (json.status === "OK" && json.results?.[0]) {
         setFormattedAddress(json.results[0].formatted_address);
@@ -165,12 +160,7 @@ export default function AddLocationScreen() {
     isForwardGeocodingRef.current = true;
 
     try {
-      const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
-        address,
-      )}&key=${GOOGLE_MAPS_API_KEY}`;
-
-      const res = await fetch(url);
-      const json = await res.json();
+      const json = await geocodeAddress(address);
 
       if (json.status !== "OK" || !json.results?.[0]) return;
 

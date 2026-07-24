@@ -16,7 +16,11 @@ import {
 import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { getGoogleMapsApiKey } from "../../lib/mapsEnv";
+import {
+  reverseGeocode as reverseGeocodeApi,
+  autocomplete as autocompleteApi,
+  placeDetails as placeDetailsApi,
+} from "../../lib/placesService";
 
 const T = {
   green: "#2D7A4F",
@@ -32,8 +36,6 @@ const T = {
   cardBorder: "rgba(60,47,30,0.08)",
   shadow: "rgba(45,122,79,0.12)",
 };
-
-const GOOGLE_MAPS_API_KEY = getGoogleMapsApiKey();
 
 // Single Places Autocomplete session token keeps pricing correct across
 // predictions+details within one user search.
@@ -130,10 +132,7 @@ export default function SelectMapLocationScreen() {
     setReverseLoading(true);
 
     try {
-      const res = await fetch(
-        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_MAPS_API_KEY}`,
-      );
-      const json = await res.json();
+      const json = await reverseGeocodeApi(lat, lng);
 
       if (json.status === "OK" && json.results?.[0]) {
         const result = json.results[0];
@@ -212,16 +211,7 @@ export default function SelectMapLocationScreen() {
 
     setPredicting(true);
     try {
-      const url =
-        `https://maps.googleapis.com/maps/api/place/autocomplete/json` +
-        `?input=${encodeURIComponent(input)}` +
-        `&key=${GOOGLE_MAPS_API_KEY}` +
-        `&sessiontoken=${sessionTokenRef.current}` +
-        `&components=country:in` +
-        `&language=en`;
-
-      const res = await fetch(url);
-      const json = await res.json();
+      const json = await autocompleteApi(input, sessionTokenRef.current);
 
       if (json.status === "OK" && Array.isArray(json.predictions)) {
         const mapped: Prediction[] = json.predictions.map((p: any) => ({
@@ -276,22 +266,7 @@ export default function SelectMapLocationScreen() {
     setReverseLoading(true);
 
     try {
-      const fields = [
-        "place_id",
-        "geometry/location",
-        "formatted_address",
-        "name",
-        "address_component",
-      ].join(",");
-      const url =
-        `https://maps.googleapis.com/maps/api/place/details/json` +
-        `?place_id=${encodeURIComponent(pred.place_id)}` +
-        `&fields=${encodeURIComponent(fields)}` +
-        `&key=${GOOGLE_MAPS_API_KEY}` +
-        `&sessiontoken=${sessionTokenRef.current}`;
-
-      const res = await fetch(url);
-      const json = await res.json();
+      const json = await placeDetailsApi(pred.place_id, sessionTokenRef.current);
 
       // Per Google's guidance, rotate the session token after Details is used.
       sessionTokenRef.current = newSessionToken();

@@ -18,7 +18,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { C } from "../constants/colors";
 import { useAuth } from "../context/AuthContext";
 import { updateCustomerProfile } from "../lib/authService";
-import { getGoogleMapsApiKey } from "../lib/mapsEnv";
+import { reverseGeocode as reverseGeocodeApi } from "../lib/placesService";
 
 export default function ProfileSetupScreen() {
   const params = useLocalSearchParams();
@@ -54,8 +54,6 @@ export default function ProfileSetupScreen() {
 
   const [loading, setLoading] = useState(false);
   const [reverseLoading, setReverseLoading] = useState(false);
-
-  const GOOGLE_MAPS_API_KEY = getGoogleMapsApiKey();
 
   const hasAddressFields =
     house.trim().length > 0 ||
@@ -120,16 +118,13 @@ export default function ProfileSetupScreen() {
 
   const reverseGeocode = useCallback(
     async (latitude: number, longitude: number) => {
-      if (!GOOGLE_MAPS_API_KEY) return;
       if (isGeocodingRef.current) return;
 
       isGeocodingRef.current = true;
       setReverseLoading(true);
 
       try {
-        const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${GOOGLE_MAPS_API_KEY}`;
-        const res = await fetch(url);
-        const json = await res.json();
+        const json = await reverseGeocodeApi(latitude, longitude);
 
         if (json.status !== "OK" || !json.results?.[0]) return;
 
@@ -142,7 +137,7 @@ export default function ProfileSetupScreen() {
         isGeocodingRef.current = false;
       }
     },
-    [GOOGLE_MAPS_API_KEY],
+    [],
   );
 
   useEffect(() => {
