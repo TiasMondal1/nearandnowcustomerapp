@@ -114,6 +114,11 @@ export interface CreateOrderInput {
   items: OrderItem[];
   notes?: string;
   gstin?: string;
+  gstin_business_name?: string;
+  /** "Order for someone else" — who actually receives the order, if not the customer themself. */
+  receiver_name?: string;
+  receiver_phone?: string;
+  receiver_address?: string;
   tip_amount?: number;
   coupon_id?: string;
 }
@@ -232,11 +237,12 @@ type PlaceOrderResponse = {
 // with no ownership check tying the order to the authenticated customer, and
 // with client-computed prices/totals trusted as-is.)
 export async function createOrder(input: CreateOrderInput): Promise<Order> {
-  // Delivery-note extras the backend doesn't have dedicated columns for yet
-  // get folded into the free-text `notes` field, same as before.
+  // Delivery instructions and tip still don't have dedicated columns, so they
+  // stay folded into the free-text `notes` field. GSTIN and receiver info
+  // (previously folded in here too) now have real columns on customer_orders
+  // — sent as structured fields below instead.
   const noteParts: string[] = [];
   if (input.notes) noteParts.push(input.notes);
-  if (input.gstin) noteParts.push(`GSTIN: ${input.gstin}`);
   if (typeof input.tip_amount === 'number' && input.tip_amount > 0) {
     noteParts.push(`Tip: ₹${input.tip_amount.toFixed(2)}`);
   }
@@ -257,6 +263,11 @@ export async function createOrder(input: CreateOrderInput): Promise<Order> {
       payment_method: input.payment_method,
       coupon_id: input.coupon_id,
       notes: noteParts.length ? noteParts.join(' | ') : undefined,
+      gstin: input.gstin,
+      gstin_business_name: input.gstin_business_name,
+      receiver_name: input.receiver_name,
+      receiver_phone: input.receiver_phone,
+      receiver_address: input.receiver_address,
       items: input.items.map((it) => ({
         product_id: it.product_id,
         name: it.name,

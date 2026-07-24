@@ -265,22 +265,8 @@ export default function CheckoutScreen() {
   ): Promise<Order | undefined> => {
     if (!user?.id || !location) return undefined;
     const notesParts: string[] = [];
-    if (gstinClaim && gstin.trim()) {
-      notesParts.push(
-        `GSTIN: ${gstin.trim()}${invoiceName ? ` (Name: ${invoiceName.trim()})` : ""}`,
-      );
-    }
     if (deliveryInstructions.trim()) {
       notesParts.push(`Delivery Instructions: ${deliveryInstructions.trim()}`);
-    }
-    if (orderFor === "others") {
-      const rxParts: string[] = [];
-      if (receiverName.trim()) rxParts.push(receiverName.trim());
-      if (receiverPhone.trim()) rxParts.push(`+91${receiverPhone.trim()}`);
-      if (receiverAddress.trim()) rxParts.push(receiverAddress.trim());
-      if (rxParts.length) {
-        notesParts.push(`Deliver to: ${rxParts.join(" | ")}`);
-      }
     }
     if (tipAmount > 0) notesParts.push(`Tip for delivery partner: ₹${tipAmount.toFixed(2)}`);
 
@@ -308,6 +294,10 @@ export default function CheckoutScreen() {
       })),
       notes: notesParts.length ? notesParts.join(" | ") : undefined,
       gstin: gstinClaim && gstin.trim() ? gstin.trim() : undefined,
+      gstin_business_name: gstinClaim && invoiceName.trim() ? invoiceName.trim() : undefined,
+      receiver_name: orderFor === "others" && receiverName.trim() ? receiverName.trim() : undefined,
+      receiver_phone: orderFor === "others" && receiverPhone.trim() ? `+91${receiverPhone.trim()}` : undefined,
+      receiver_address: orderFor === "others" && receiverAddress.trim() ? receiverAddress.trim() : undefined,
       tip_amount: tipAmount > 0 ? tipAmount : undefined,
       coupon_id: appliedCoupon?.id,
     };
