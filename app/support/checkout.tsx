@@ -5,7 +5,6 @@ import { router } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
     Alert,
-    Animated,
     LayoutAnimation,
     ScrollView,
     StyleSheet,
@@ -42,7 +41,6 @@ import { clearSavedPaymentMethodsCache } from "../../lib/razorpayService";
 export default function CheckoutScreen() {
   const { items, appliedCoupon, removeCoupon, discount, clearCart, addItem, updateQty } = useCart();
   const { user, customer } = useAuth();
-  const [showSuccess, setShowSuccess] = useState(false);
   const [placing, setPlacing] = useState(false);
   // Synchronous lock, checked/set before any React re-render — `placing` state
   // alone isn't enough to stop a fast double-tap, since the button doesn't
@@ -87,21 +85,6 @@ export default function CheckoutScreen() {
   // placeOrder handler reads the latest selection synchronously via
   // `getPaymentSelection()`.
   const { phase: paymentPhase, payForOrder, RazorpayUI } = usePaymentFlow();
-
-  const successAnim = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    if (showSuccess) {
-      Animated.spring(successAnim, {
-        toValue: 1,
-        useNativeDriver: true,
-        tension: 60,
-        friction: 8,
-      }).start();
-    } else {
-      successAnim.setValue(0);
-    }
-  }, [showSuccess]);
 
   useEffect(() => {
     if (!location || items.length === 0) {
@@ -962,40 +945,6 @@ export default function CheckoutScreen() {
       {RazorpayUI}
 
       <PaymentProcessingOverlay phase={paymentPhase} />
-
-      {/* ─── Success Overlay ─── */}
-      {showSuccess && (
-        <Animated.View
-          style={[
-            styles.successOverlay,
-            {
-              opacity: successAnim,
-              transform: [{ scale: successAnim.interpolate({ inputRange: [0, 1], outputRange: [0.95, 1] }) }],
-            },
-          ]}
-        >
-          <View style={styles.successCard}>
-            <View style={styles.successIconWrap}>
-              <MaterialCommunityIcons name="check-circle" size={52} color={C.success} />
-            </View>
-            <Text style={styles.successTitle}>Order Placed!</Text>
-            <Text style={styles.successSub}>
-              Your order is on its way to the store. We'll notify you once it's accepted.
-            </Text>
-            <TouchableOpacity
-              style={styles.successBtn}
-              activeOpacity={0.85}
-              onPress={() => {
-                setShowSuccess(false);
-                setTimeout(() => router.replace("/orders"), 200);
-              }}
-            >
-              <MaterialCommunityIcons name="map-clock-outline" size={18} color="#fff" />
-              <Text style={styles.successBtnText}>Track Order</Text>
-            </TouchableOpacity>
-          </View>
-        </Animated.View>
-      )}
     </SafeAreaView>
   );
 }
@@ -1539,44 +1488,4 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   payButtonText: { color: "#fff", fontSize: 16, fontWeight: "900", letterSpacing: 0.2 },
-
-  // Success overlay
-  successOverlay: {
-    position: "absolute",
-    top: 0, left: 0, right: 0, bottom: 0,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 24,
-  },
-  successCard: {
-    width: "100%",
-    backgroundColor: C.card,
-    borderRadius: 24,
-    padding: 28,
-    alignItems: "center",
-    gap: 10,
-  },
-  successIconWrap: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: C.successLight,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 4,
-  },
-  successTitle: { color: C.text, fontSize: 22, fontWeight: "900" },
-  successSub: { color: C.textSub, fontSize: 13, textAlign: "center", lineHeight: 20 },
-  successBtn: {
-    marginTop: 10,
-    backgroundColor: C.primary,
-    paddingVertical: 13,
-    paddingHorizontal: 28,
-    borderRadius: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  successBtnText: { color: "#fff", fontWeight: "800", fontSize: 14 },
 });

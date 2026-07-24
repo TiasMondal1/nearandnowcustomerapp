@@ -247,6 +247,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logoutUser = async () => {
+    // Best-effort, before the local session is wiped (needs the still-valid
+    // token to authenticate) — clears this device's push token server-side
+    // so a shared/reused device doesn't keep receiving the previous
+    // customer's order notifications after they've logged out.
+    await apiFetch('/api/push-token', {
+      method: 'POST',
+      body: JSON.stringify({ token: null }),
+    }).catch(() => {});
     await clearStoredSession();
   };
 

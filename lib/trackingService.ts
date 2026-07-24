@@ -85,19 +85,25 @@ export interface TrackingFullResponse {
   deliveryAgents?: Record<string, TrackingDeliveryAgent>;
 }
 
-/** Snapshot of an order + its history + store/agent context. */
+/**
+ * Snapshot of an order + its history + store/agent context.
+ *
+ * Deliberately does NOT catch-and-return-null here: `apiFetch` already
+ * throws well-differentiated messages per status (404 -> "Resource not
+ * found.", 5xx -> "Server error...", network failure -> its own message).
+ * Swallowing all of that into a uniform `null` meant the caller's "Order
+ * not found" fallback fired for every failure mode alike — a transient
+ * network blip or a real backend 500 looked identical to the order
+ * genuinely not existing. Let real errors propagate so the caller's own
+ * catch block can surface the actual reason.
+ */
 export async function fetchOrderTrackingFull(
   orderId: string,
 ): Promise<TrackingFullResponse | null> {
   if (!orderId) return null;
-  try {
-    return await apiFetch<TrackingFullResponse>(
-      `/api/tracking/orders/${encodeURIComponent(orderId)}/full`,
-    );
-  } catch (err) {
-    console.warn('[TRACKING] fetchOrderTrackingFull failed', err);
-    return null;
-  }
+  return apiFetch<TrackingFullResponse>(
+    `/api/tracking/orders/${encodeURIComponent(orderId)}/full`,
+  );
 }
 
 /**

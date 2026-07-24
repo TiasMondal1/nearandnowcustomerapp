@@ -1,6 +1,6 @@
 import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
-import { router } from 'expo-router';
+import { router, useRootNavigationState } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 
@@ -41,18 +41,31 @@ export function usePushNotifications(userId: string | null) {
   const [expoPushToken, setExpoPushToken] = useState<string | null>(null);
   const notificationListener = useRef<Notifications.Subscription | null>(null);
   const responseListener = useRef<Notifications.Subscription | null>(null);
+  const navigationState = useRootNavigationState();
+  const handledColdStartRef = useRef(false);
+
+  // Cold-start deep link: if the app was launched by tapping a notification,
+  // getLastNotificationResponseAsync() has the data immediately — but
+  // router.push() before the root Stack has actually mounted its routes
+  // silently no-ops, dropping the deep link. Wait for the navigator to be
+  // ready (navigationState.key only exists once it is), and guard with a
+  // ref so this can only ever fire once per app session even if the effect
+  // re-runs for an unrelated reason.
+  useEffect(() => {
+    if (!userId || !navigationState?.key || handledColdStartRef.current) return;
+    handledColdStartRef.current = true;
+    void Notifications.getLastNotificationResponseAsync().then((response) => {
+      const data = response?.notification.request.content
+        .data as Record<string, unknown> | undefined;
+      navigateFromPushData(data);
+    });
+  }, [userId, navigationState?.key]);
 
   useEffect(() => {
     if (!userId) return;
 
     registerForPushNotifications(userId).then((token) => {
       if (token) setExpoPushToken(token);
-    });
-
-    void Notifications.getLastNotificationResponseAsync().then((response) => {
-      const data = response?.notification.request.content
-        .data as Record<string, unknown> | undefined;
-      navigateFromPushData(data);
     });
 
     notificationListener.current = Notifications.addNotificationReceivedListener(

@@ -5,8 +5,10 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
+import { useAuth } from "./AuthContext";
 
 const CART_STORAGE_KEY = "nn_cart_items";
 const COUPON_STORAGE_KEY = "nn_cart_coupon";
@@ -127,6 +129,22 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     setItems([]);
     setAppliedCoupon(null);
   }, []);
+
+  // Clears the cart on a genuine logout (true -> false transition only, not
+  // on initial mount while auth is still restoring) — otherwise a shared/
+  // reused device keeps showing the previous customer's cart to whoever
+  // logs in next. CartProvider is rendered inside AuthProvider (see
+  // app/_layout.tsx), so this is safe with no circular-dependency issue.
+  const { isAuthenticated } = useAuth();
+  const wasAuthenticatedRef = useRef(isAuthenticated);
+  useEffect(() => {
+    if (isAuthenticated) {
+      wasAuthenticatedRef.current = true;
+    } else if (wasAuthenticatedRef.current) {
+      wasAuthenticatedRef.current = false;
+      clearCart();
+    }
+  }, [isAuthenticated, clearCart]);
 
   const applyCoupon = useCallback((coupon: Coupon) => setAppliedCoupon(coupon), []);
   const removeCoupon = useCallback(() => setAppliedCoupon(null), []);
