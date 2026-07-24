@@ -11,6 +11,12 @@ import React, {
 const CART_STORAGE_KEY = "nn_cart_items";
 const COUPON_STORAGE_KEY = "nn_cart_coupon";
 
+// Client-side ceiling only — the backend independently enforces each
+// product's own master_products.min_quantity/max_quantity at order-creation
+// time, which is the real security boundary. This is just so the cart itself
+// can never be pushed to an absurd quantity in the UI.
+const MAX_QUANTITY_PER_ITEM = 99;
+
 export type CartItem = {
   product_id: string;
   name: string;
@@ -89,6 +95,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     setItems((prev) => {
       const existing = prev.find((p) => p.product_id === product.product_id);
       if (existing) {
+        if (existing.quantity >= MAX_QUANTITY_PER_ITEM) return prev;
         return prev.map((p) =>
           p.product_id === product.product_id
             ? { ...p, quantity: p.quantity + 1 }
@@ -108,9 +115,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       setItems((prev) => prev.filter((p) => p.product_id !== productId));
       return;
     }
+    const clampedQty = Math.min(qty, MAX_QUANTITY_PER_ITEM);
     setItems((prev) =>
       prev.map((p) =>
-        p.product_id === productId ? { ...p, quantity: qty } : p,
+        p.product_id === productId ? { ...p, quantity: clampedQty } : p,
       ),
     );
   }, []);
