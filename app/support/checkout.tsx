@@ -320,8 +320,14 @@ export default function CheckoutScreen() {
         // on the payment-options screen unlocks on the NEXT checkout flow.
         // Fire-and-forget; failing to persist this is non-fatal.
         markOrderPlaced().catch(() => {});
+        // Cart must be cleared now that the order is placed — it previously
+        // stayed populated so the confirmation screen's "add more items"
+        // window had something to show, but that window doesn't actually
+        // attach added items to this order (separately tracked bug), so
+        // leaving the just-ordered items sitting in the cart just looked
+        // like checkout silently failed to empty it.
+        clearCart();
         // Navigate to order confirmation page with 40-second add-more window
-        // Cart is NOT cleared here - user can add more items during the window
         router.replace(`/order/confirmation/${created.id}` as any);
         return created;
       } catch (err: unknown) {
@@ -422,6 +428,7 @@ export default function CheckoutScreen() {
         // for this payment shows up on the very next visit to the
         // payment-options screen (instead of the stale empty cache).
         clearSavedPaymentMethodsCache();
+        clearCart();
         // Navigate to order confirmation page with 40-second add-more window
         router.replace(`/order/confirmation/${internalOrder.id}` as any);
         return;
