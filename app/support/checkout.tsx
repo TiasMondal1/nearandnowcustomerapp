@@ -268,7 +268,6 @@ export default function CheckoutScreen() {
     if (deliveryInstructions.trim()) {
       notesParts.push(`Delivery Instructions: ${deliveryInstructions.trim()}`);
     }
-    if (tipAmount > 0) notesParts.push(`Tip for delivery partner: ₹${tipAmount.toFixed(2)}`);
 
     const sel = getPaymentSelection();
     const orderPayload = {

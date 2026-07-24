@@ -237,15 +237,12 @@ type PlaceOrderResponse = {
 // with no ownership check tying the order to the authenticated customer, and
 // with client-computed prices/totals trusted as-is.)
 export async function createOrder(input: CreateOrderInput): Promise<Order> {
-  // Delivery instructions and tip still don't have dedicated columns, so they
-  // stay folded into the free-text `notes` field. GSTIN and receiver info
-  // (previously folded in here too) now have real columns on customer_orders
+  // Delivery instructions still don't have a dedicated column, so they stay
+  // folded into the free-text `notes` field. GSTIN, receiver info, and now tip
+  // (previously folded in here too) all have real columns on customer_orders
   // — sent as structured fields below instead.
   const noteParts: string[] = [];
   if (input.notes) noteParts.push(input.notes);
-  if (typeof input.tip_amount === 'number' && input.tip_amount > 0) {
-    noteParts.push(`Tip: ₹${input.tip_amount.toFixed(2)}`);
-  }
 
   const [addressLine, ...addressRest] = input.delivery_address.split(',');
 
@@ -268,6 +265,7 @@ export async function createOrder(input: CreateOrderInput): Promise<Order> {
       receiver_name: input.receiver_name,
       receiver_phone: input.receiver_phone,
       receiver_address: input.receiver_address,
+      tip_amount: input.tip_amount,
       items: input.items.map((it) => ({
         product_id: it.product_id,
         name: it.name,
