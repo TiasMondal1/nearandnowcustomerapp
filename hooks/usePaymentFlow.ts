@@ -77,6 +77,16 @@ export function usePaymentFlow() {
       if (snapshot?.payment_status === 'paid') {
         return { status: 'paid' };
       }
+      // Razorpay's payment.failed webhook can flip this to 'failed' mid-poll
+      // (backend/src/services/payment.service.ts's processWebhookEvent) —
+      // that's a terminal answer, no reason to keep polling out the full window.
+      if (snapshot?.payment_status === 'failed') {
+        return {
+          status: 'pending',
+          reason: 'failed',
+          message: 'Your payment could not be completed. If any amount was debited, it will be auto-refunded within 5–7 days.',
+        };
+      }
       await sleep(RECONCILE_INTERVAL_MS);
     }
     return {
