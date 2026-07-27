@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { apiFetch } from './apiClient';
+import { logSilentFailure } from './logSilentFailure';
 
 // ─── User-orders SWR cache ──────────────────────────────────────────────────
 // Keyed per user so switching accounts on the same device doesn't cross
@@ -301,7 +302,9 @@ export async function createOrder(input: CreateOrderInput): Promise<Order> {
   // Fire-and-forget: the next visit to the Orders tab will refresh from the
   // server anyway, but clearing the stale cache now means the new order shows
   // up at the top even on a cold start within the TTL window.
-  invalidateUserOrdersCache(input.user_id).catch(() => {});
+  invalidateUserOrdersCache(input.user_id).catch((err) =>
+    logSilentFailure("Invalidate user-orders cache after placing order", err),
+  );
   return placedOrder;
 }
 
@@ -454,13 +457,33 @@ export function buildOrderAgainProductIds(orders: Order[]): {
 // (req.customerId) before querying, so this is safe to call directly with no
 // privileged client involved (previously this was only a fallback behind a
 // direct-Supabase read that took a bare userId with no ownership check).
+/**
+ * Fetches a single order directly by id (`GET /api/orders/:orderId`,
+ * ownership-checked server-side), instead of fetching the customer's whole
+ * order list and scanning it for a matching id. Used right after placing an
+ * order (confirmation screen) — the full-list endpoint can be a beat behind
+ * (cache, replication lag) immediately after creation, which previously
+ * meant `orders.find(...)` silently came back empty with no error at all,
+ * rendering a broken-looking confirmation page with no order details and no
+ * indication anything was wrong. Lets a real error propagate instead of
+ * swallowing it into an empty result, same as `fetchOrderTrackingFull`.
+ */
+export async function getOrderById(orderId: string): Promise<Order> {
+  const raw = await apiFetch<BackendCustomerOrder>(
+    `/api/orders/${encodeURIComponent(orderId)}`,
+  );
+  return mapBackendOrder(raw);
+}
+
 export async function getUserOrders(userId: string): Promise<Order[]> {
   if (!userId) return [];
   const rows = await apiFetch<BackendCustomerOrder[]>(
     `/api/orders/customer/${encodeURIComponent(userId)}`,
   );
   const orders = Array.isArray(rows) ? rows.map(mapBackendOrder) : [];
-  writeUserOrdersCache(userId, orders).catch(() => {});
+  writeUserOrdersCache(userId, orders).catch((err) =>
+    logSilentFailure("Write user-orders cache", err),
+  );
   return orders;
 }
 

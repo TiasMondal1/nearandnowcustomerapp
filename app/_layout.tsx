@@ -8,6 +8,7 @@ import { AuthProvider, useAuth } from "../context/AuthContext";
 import { CartProvider } from "../context/CartContext";
 import { LocationProvider } from "../context/LocationContext";
 import { usePushNotifications } from "../hooks/usePushNotifications";
+import { logSilentFailure } from "../lib/logSilentFailure";
 import { loadOrderHistoryFlag } from "../lib/orderHistoryFlag";
 import { readHomeCatalogCache } from "../lib/productService";
 
@@ -23,14 +24,14 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 // app's first read takes ~5 ms instead of ~150 ms. Result: the home grid
 // paints on the very first frame after splash hides, instead of one frame
 // later.
-readHomeCatalogCache().catch(() => {});
+readHomeCatalogCache().catch((err) => logSilentFailure("Pre-warm home catalog cache", err));
 
 // Hydrate the "has placed an order?" flag during splash so the payment-options
 // screen can decide synchronously whether to show the Preferred Payment empty
 // state (first-time user) or a skeleton + fetch (returning user). Without this
 // the first visit to payment-options would always flash a skeleton for one
 // frame while AsyncStorage resolves.
-loadOrderHistoryFlag().catch(() => {});
+loadOrderHistoryFlag().catch((err) => logSilentFailure("Hydrate order-history flag", err));
 
 function AppShell() {
   const { isLoading, isAuthenticated, userId } = useAuth();

@@ -14,6 +14,7 @@ import {
   type Customer,
 } from '../lib/authService';
 import { apiFetch, setSessionExpiredHandler } from '../lib/apiClient';
+import { logSilentFailure } from '../lib/logSilentFailure';
 import { clearOrderHistoryFlag } from '../lib/orderHistoryFlag';
 import { clearSavedPaymentMethodsCache } from '../lib/razorpayService';
 
@@ -24,7 +25,7 @@ import { clearSavedPaymentMethodsCache } from '../lib/razorpayService';
 // happen to hit a requireCustomer route. Fire-and-forget; a missed ping just
 // means the next one (or the next real API call) renews it instead.
 function pingSession() {
-  apiFetch('/api/customers/session/ping').catch(() => {});
+  apiFetch('/api/customers/session/ping').catch((err) => logSilentFailure('Session ping', err));
 }
 
 interface AuthContextType {
@@ -254,7 +255,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await apiFetch('/api/push-token', {
       method: 'POST',
       body: JSON.stringify({ token: null }),
-    }).catch(() => {});
+    }).catch((err) => logSilentFailure('Clear push token on logout', err));
     await clearStoredSession();
   };
 

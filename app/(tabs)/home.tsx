@@ -46,6 +46,7 @@ import { useLocation } from "../../context/LocationContext";
 import { getAllCategories, type Category } from "../../lib/categoryService";
 import { cdnImage } from "../../lib/imageUrl";
 import { getUserOrders } from "../../lib/orderService";
+import { logSilentFailure } from "../../lib/logSilentFailure";
 import {
     getCountForCategoryName,
     getMemoryHomeCache,
@@ -635,7 +636,7 @@ export default function HomeScreen() {
               });
             }
           })
-          .catch(() => {});
+          .catch((err) => logSilentFailure("Background-fill full catalog", err));
       });
     } catch (error) {
       console.error("Failed to load home (fast):", error);

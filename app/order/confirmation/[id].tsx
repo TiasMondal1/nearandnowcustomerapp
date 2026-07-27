@@ -16,7 +16,8 @@ import { useRazorpay } from "@codearcade/expo-razorpay";
 import { C } from "../../../constants/colors";
 import { useAuth } from "../../../context/AuthContext";
 import { useCart } from "../../../context/CartContext";
-import { getUserOrders, type Order } from "../../../lib/orderService";
+import { getOrderById, type Order } from "../../../lib/orderService";
+import { logSilentFailure } from "../../../lib/logSilentFailure";
 import { getAllProducts, type Product } from "../../../lib/productService";
 import { createAdditionPayment, verifyAdditionPayment } from "../../../lib/orderAdditionService";
 
@@ -36,6 +37,8 @@ export default function OrderConfirmationScreen() {
 
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [retryTick, setRetryTick] = useState(0);
   const [timeLeft, setTimeLeft] = useState(ADD_MORE_WINDOW_SECONDS);
   const [timerExpired, setTimerExpired] = useState(false);
   const [suggestedProducts, setSuggestedProducts] = useState<Product[]>([]);
@@ -54,16 +57,20 @@ export default function OrderConfirmationScreen() {
   useEffect(() => {
     if (!id || !userId) return;
     let cancelled = false;
+    setLoading(true);
+    setLoadError(null);
 
     (async () => {
       try {
-        const orders = await getUserOrders(userId);
-        const found = orders.find((o) => o.id === id);
-        if (!cancelled && found) {
-          setOrder(found);
-        }
+        const found = await getOrderById(id);
+        if (!cancelled) setOrder(found);
       } catch (err) {
         console.error("Failed to load order:", err);
+        if (!cancelled) {
+          setLoadError(
+            err instanceof Error ? err.message : "Couldn't load your order details.",
+          );
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -72,7 +79,7 @@ export default function OrderConfirmationScreen() {
     return () => {
       cancelled = true;
     };
-  }, [id, userId]);
+  }, [id, userId, retryTick]);
 
   // Load suggested products
   useEffect(() => {
@@ -211,13 +218,10 @@ export default function OrderConfirmationScreen() {
         clearCart();
         setAddItemsPhase("done");
         // Refresh the order so the summary below reflects the newly-added items.
-        if (userId) {
-          getUserOrders(userId)
-            .then((orders) => {
-              const found = orders.find((o) => o.id === id);
-              if (found) setOrder(found);
-            })
-            .catch(() => {});
+        if (id) {
+          getOrderById(id)
+            .then(setOrder)
+            .catch((err) => logSilentFailure("Refresh order after add-items", err));
         }
       } catch (err: any) {
         console.error("Failed to add items to order:", err);
@@ -299,6 +303,29 @@ export default function OrderConfirmationScreen() {
         <View style={styles.center}>
           <ActivityIndicator size="large" color={C.primary} />
           <Text style={styles.loadingText}>Loading order details...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!order || loadError) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.center}>
+          <MaterialCommunityIcons name="alert-circle-outline" size={48} color={C.textLight} />
+          <Text style={styles.loadingText}>
+            {loadError || "Couldn't load your order details."}
+          </Text>
+          <TouchableOpacity
+            style={styles.retryBtn}
+            onPress={() => setRetryTick((n) => n + 1)}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.retryBtnText}>Try Again</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => router.replace("/orders")} activeOpacity={0.7}>
+            <Text style={styles.retryLinkText}>Go to My Orders</Text>
+          </TouchableOpacity>
         </View>
       </SafeAreaView>
     );
@@ -556,7 +583,16 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 12,
   },
-  loadingText: { color: C.textSub, fontSize: 14 },
+  loadingText: { color: C.textSub, fontSize: 14, textAlign: "center", paddingHorizontal: 32 },
+  retryBtn: {
+    backgroundColor: C.primary,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 12,
+    marginTop: 4,
+  },
+  retryBtnText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+  retryLinkText: { color: C.primary, fontSize: 13, fontWeight: "600", marginTop: 4 },
   scrollContent: { paddingBottom: 40 },
 
   // Success Header

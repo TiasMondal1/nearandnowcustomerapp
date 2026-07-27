@@ -15,6 +15,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { C } from "../constants/colors";
 import { useAuth } from "../context/AuthContext";
 import { apiFetch } from "../lib/apiClient";
+import { logSilentFailure } from "../lib/logSilentFailure";
 
 interface AppNotification {
   id: string;
@@ -123,7 +124,9 @@ export default function NotificationsScreen() {
       setNotifications((prev) =>
         prev.map((n) => (n.id === item.id ? { ...n, is_read: true } : n)),
       );
-      apiFetch(`/api/notifications/${item.id}/read`, { method: "PUT" }).catch(() => {});
+      apiFetch(`/api/notifications/${item.id}/read`, { method: "PUT" }).catch((err) =>
+        logSilentFailure("Mark notification read", err),
+      );
     }
     const orderId = item.data?.orderId as string | undefined;
     if (orderId) {

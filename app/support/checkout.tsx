@@ -32,12 +32,19 @@ import {
     type PaymentSelection,
 } from "../../lib/paymentSelection";
 import { getWalletBalance, payOrderWithWallet } from "../../lib/walletService";
+import { logSilentFailure } from "../../lib/logSilentFailure";
 import {
     getAllProducts,
     getMemoryHomeCache,
     type Product,
 } from "../../lib/productService";
 import { clearSavedPaymentMethodsCache } from "../../lib/razorpayService";
+
+// Standard 15-char Indian GSTIN format: 2-digit state code, 10-char PAN,
+// 1-digit entity code, literal 'Z', 1 checksum char. Was previously
+// persisted and printed on the customer's own tax invoice with no format
+// check at all — a typo'd GSTIN would silently ship on a real invoice.
+const GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
 
 export default function CheckoutScreen() {
   const { items, appliedCoupon, removeCoupon, discount, clearCart, addItem, updateQty } = useCart();
@@ -292,7 +299,7 @@ export default function CheckoutScreen() {
         // Flip the "has placed an order" flag so the Preferred Payment card
         // on the payment-options screen unlocks on the NEXT checkout flow.
         // Fire-and-forget; failing to persist this is non-fatal.
-        markOrderPlaced().catch(() => {});
+        markOrderPlaced().catch((err) => logSilentFailure("Mark order-placed flag", err));
         // Cart must be cleared now that the order is placed — it previously
         // stayed populated so the confirmation screen's "add more items"
         // window had something to show, but that window doesn't actually
@@ -349,6 +356,13 @@ export default function CheckoutScreen() {
         return;
       }
     }
+    if (gstinClaim && gstin.trim() && !GSTIN_REGEX.test(gstin.trim().toUpperCase())) {
+      Alert.alert(
+        "Invalid GSTIN",
+        "Please enter a valid 15-character GSTIN (e.g. 22AAAAA0000A1Z5), or remove it to continue without one.",
+      );
+      return;
+    }
     placingRef.current = true;
     setPlacing(true);
     try {
@@ -391,7 +405,7 @@ export default function CheckoutScreen() {
         }
         try {
           await payOrderWithWallet(internalOrder.id);
-          markOrderPlaced().catch(() => {});
+          markOrderPlaced().catch((err) => logSilentFailure("Mark order-placed flag", err));
           clearCart();
           router.replace(`/order/confirmation/${internalOrder.id}` as any);
         } catch (err: unknown) {
@@ -443,7 +457,7 @@ export default function CheckoutScreen() {
       if (result.status === "paid") {
         // Flip the "has placed an order" flag so the Preferred Payment card
         // on the payment-options screen unlocks on the NEXT checkout flow.
-        markOrderPlaced().catch(() => {});
+        markOrderPlaced().catch((err) => logSilentFailure("Mark order-placed flag", err));
         // Bust the saved-methods cache so the token Razorpay just minted
         // for this payment shows up on the very next visit to the
         // payment-options screen (instead of the stale empty cache).
@@ -681,11 +695,21 @@ export default function CheckoutScreen() {
                 placeholder="Enter 15-digit GSTIN"
                 placeholderTextColor={C.textLight}
                 value={gstin}
-                onChangeText={setGstin}
-                style={styles.textInput}
+                onChangeText={(t) => setGstin(t.toUpperCase())}
+                style={[
+                  styles.textInput,
+                  gstin.trim().length > 0 && !GSTIN_REGEX.test(gstin.trim()) && styles.textInputError,
+                ]}
                 autoCapitalize="characters"
                 maxLength={15}
               />
+              {gstin.trim().length > 0 && !GSTIN_REGEX.test(gstin.trim()) && (
+                <Text style={styles.gstinErrorText}>
+                  {gstin.trim().length < 15
+                    ? `${15 - gstin.trim().length} more character${15 - gstin.trim().length === 1 ? "" : "s"} needed`
+                    : "Doesn't match the GSTIN format (e.g. 22AAAAA0000A1Z5)"}
+                </Text>
+              )}
               <TextInput
                 placeholder="Registered Business Name"
                 placeholderTextColor={C.textLight}
@@ -1280,6 +1304,7 @@ const styles = StyleSheet.create({
   gstinSub: { color: C.textSub, fontSize: 11, marginTop: 1 },
   gstinAddBtn: { color: C.primary, fontSize: 14, fontWeight: "800" },
   gstinExpanded: { marginTop: 12 },
+  gstinErrorText: { color: C.danger, fontSize: 11, marginTop: 4, marginLeft: 2 },
 
   // Reco tabs
   recoTabsScroll: { marginBottom: 12, marginHorizontal: -16, paddingHorizontal: 16 },
@@ -1436,6 +1461,7 @@ const styles = StyleSheet.create({
     height: 44,
   },
   multilineInput: { minHeight: 74, height: undefined, textAlignVertical: "top" },
+  textInputError: { borderColor: C.danger },
 
   // "Who is this order for?" section
   orderForRow: {

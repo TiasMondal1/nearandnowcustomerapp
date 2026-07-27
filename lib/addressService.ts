@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { apiFetch } from './apiClient';
+import { logSilentFailure } from './logSilentFailure';
 
 // ─── Saved-address cache ────────────────────────────────────────────────────
 // Mirrors the home-catalog SWR pattern: paint from the last-known list
@@ -97,7 +98,7 @@ export async function getUserAddresses(userId: string): Promise<SavedAddress[]> 
   const rows = await apiFetch<SavedAddress[]>(`/api/customers/${userId}/addresses`);
   // Refresh the local cache on every successful fetch so subsequent cold
   // starts can paint instantly from disk.
-  writeAddressesCache(userId, rows).catch(() => {});
+  writeAddressesCache(userId, rows).catch((err) => logSilentFailure("Write addresses cache", err));
   return rows;
 }
 
@@ -153,7 +154,9 @@ export async function createAddress(
     }),
   });
 
-  invalidateAddressesCache(userId).catch(() => {});
+  invalidateAddressesCache(userId).catch((err) =>
+    logSilentFailure("Invalidate addresses cache after create", err),
+  );
   return data;
 }
 
@@ -194,13 +197,17 @@ export async function updateAddress(
     body: JSON.stringify(payload),
   });
 
-  invalidateAddressesCache(userId).catch(() => {});
+  invalidateAddressesCache(userId).catch((err) =>
+    logSilentFailure("Invalidate addresses cache after update", err),
+  );
   return data;
 }
 
 export async function deleteAddress(addressId: string, userId: string): Promise<void> {
   await apiFetch(`/api/customers/addresses/${addressId}`, { method: 'DELETE' });
-  invalidateAddressesCache(userId).catch(() => {});
+  invalidateAddressesCache(userId).catch((err) =>
+    logSilentFailure("Invalidate addresses cache after delete", err),
+  );
 }
 
 export async function setDefaultAddress(addressId: string, userId: string): Promise<void> {
@@ -212,5 +219,7 @@ export async function setDefaultAddress(addressId: string, userId: string): Prom
     method: 'PATCH',
     body: JSON.stringify({ is_default: true }),
   });
-  invalidateAddressesCache(userId).catch(() => {});
+  invalidateAddressesCache(userId).catch((err) =>
+    logSilentFailure("Invalidate addresses cache after set-default", err),
+  );
 }

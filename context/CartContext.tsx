@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { logSilentFailure } from "../lib/logSilentFailure";
 import React, {
   createContext,
   useCallback,
@@ -76,7 +77,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!isHydrated) return;
-    AsyncStorage.setItem(CART_STORAGE_KEY, JSON.stringify(items)).catch(() => {});
+    AsyncStorage.setItem(CART_STORAGE_KEY, JSON.stringify(items)).catch((err) =>
+      logSilentFailure("Persist cart", err),
+    );
   }, [items, isHydrated]);
 
   useEffect(() => {
@@ -85,9 +88,11 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       AsyncStorage.setItem(
         COUPON_STORAGE_KEY,
         JSON.stringify(appliedCoupon),
-      ).catch(() => {});
+      ).catch((err) => logSilentFailure("Persist applied coupon", err));
     } else {
-      AsyncStorage.removeItem(COUPON_STORAGE_KEY).catch(() => {});
+      AsyncStorage.removeItem(COUPON_STORAGE_KEY).catch((err) =>
+        logSilentFailure("Clear persisted coupon", err),
+      );
     }
   }, [appliedCoupon, isHydrated]);
 

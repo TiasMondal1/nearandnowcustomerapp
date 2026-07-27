@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { logSilentFailure } from "../lib/logSilentFailure";
 import React, {
     createContext,
     ReactNode,
@@ -45,12 +46,16 @@ export function LocationProvider({ children }: { children: ReactNode }) {
 
   const setLocation = useCallback((loc: ActiveLocation) => {
     setLocationState(loc);
-    AsyncStorage.setItem(LOCATION_STORAGE_KEY, JSON.stringify(loc)).catch(() => {});
+    AsyncStorage.setItem(LOCATION_STORAGE_KEY, JSON.stringify(loc)).catch((err) =>
+      logSilentFailure("Persist active location", err),
+    );
   }, []);
 
   const clearLocation = useCallback(() => {
     setLocationState(null);
-    AsyncStorage.removeItem(LOCATION_STORAGE_KEY).catch(() => {});
+    AsyncStorage.removeItem(LOCATION_STORAGE_KEY).catch((err) =>
+      logSilentFailure("Clear persisted location", err),
+    );
   }, []);
 
   return (

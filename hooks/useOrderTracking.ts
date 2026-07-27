@@ -10,6 +10,11 @@ import {
 
 const FALLBACK_POLL_MS = 5_000; // realtime fallback if Supabase channel hiccups
 const DRIVER_POLL_MS = 2_000; // matches the web app — drivers move ~ every 2s
+// Once realtime is confirmed connected, the 5s tick below skips work on all
+// but every 6th firing — a true ~30s backstop instead of doubling the load
+// realtime is already covering. If the channel ever drops (status flips
+// away from SUBSCRIBED), every tick does real work again until it reconnects.
+const FALLBACK_POLL_SKIP_TICKS = 6;
 
 export interface UseOrderTrackingResult {
   data: TrackingFullResponse | null;
@@ -41,6 +46,10 @@ export function useOrderTracking(orderId: string | undefined): UseOrderTrackingR
   // Latest in-flight ref so polling/realtime never write a stale snapshot
   // over a fresher one (race when realtime fires while initial fetch is mid-air).
   const seqRef = useRef(0);
+  // Tracks the realtime channel's own subscribe() status — read (not state)
+  // since it only needs to gate the fallback poll's tick logic, not trigger
+  // a re-render.
+  const realtimeConnectedRef = useRef(false);
 
   const refresh = useCallback(async () => {
     if (!orderId) return;
@@ -119,15 +128,27 @@ export function useOrderTracking(orderId: string | undefined): UseOrderTrackingR
           refresh().finally(() => setTimeout(() => setAutoRefreshing(false), 600));
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        realtimeConnectedRef.current = status === 'SUBSCRIBED';
+      });
 
     // Polling fallback — covers cases where realtime is not enabled on the
-    // table, or where the WebSocket gets dropped on a flaky network.
-    const fallbackInterval = setInterval(refresh, FALLBACK_POLL_MS);
+    // table, or where the WebSocket gets dropped on a flaky network. Ticks
+    // every 5s regardless, but once realtime is confirmed connected, most
+    // ticks are a no-op (see FALLBACK_POLL_SKIP_TICKS) — a true backstop
+    // instead of unconditionally doubling the request rate realtime is
+    // already covering.
+    let tickCount = 0;
+    const fallbackInterval = setInterval(() => {
+      tickCount += 1;
+      if (realtimeConnectedRef.current && tickCount % FALLBACK_POLL_SKIP_TICKS !== 0) return;
+      refresh();
+    }, FALLBACK_POLL_MS);
 
     return () => {
       clearInterval(fallbackInterval);
       supabase.removeChannel(channel);
+      realtimeConnectedRef.current = false;
     };
   }, [orderId, refresh]);
 
