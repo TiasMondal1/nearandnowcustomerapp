@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
@@ -24,8 +24,19 @@ import {
 } from "../../constants/orderStatus";
 import { useAuth } from "../../context/AuthContext";
 import { usePaymentFlow } from "../../hooks/usePaymentFlow";
-import { getUserOrders, type Order } from "../../lib/orderService";
+import { getOrderPaymentStatus, getUserOrders, type Order } from "../../lib/orderService";
 import { supabase } from "../../lib/supabase";
+
+// Fallback for when Realtime never delivers a single event on this screen —
+// `customer_orders`' `customer_own_orders` RLS policy gates on `auth.uid()`,
+// which is always NULL here since this app authenticates via its own
+// phone-OTP JWT, never `supabase.auth` (documented dead-policy finding).
+// Unlike the premium tracking screen's poll fallback (which genuinely is
+// just a fallback, since that screen fetches its own data through a
+// backend endpoint rather than Realtime's client-side RLS path), realtime
+// is never expected to fire here at all — so this is the only source of
+// live updates on this screen, not a redundant one.
+const STATUS_POLL_MS = 8_000;
 
 function formatDate(iso: string) {
   const d = new Date(iso);
@@ -88,6 +99,56 @@ export default function OrderDetailScreen() {
 
     return () => {
       supabase.removeChannel(channel);
+    };
+  }, [id]);
+
+  // Mirrors the realtime handler's merge shape exactly, so the status
+  // badge/timeline update identically regardless of which source caught the
+  // change. Kept in a ref (not read from `order` state directly) so the
+  // comparison/early-terminal-exit stays outside the setState updater —
+  // updaters here must stay pure, no side effects.
+  const latestOrderSnapshotRef = useRef<{ status?: string; payment_status?: string } | null>(null);
+  useEffect(() => {
+    latestOrderSnapshotRef.current = order
+      ? { status: order.order_status, payment_status: order.payment_status }
+      : null;
+  }, [order?.order_status, order?.payment_status]);
+
+  useEffect(() => {
+    if (!id) return;
+
+    // `cancelled` guard matches the established pattern in
+    // useOrderTracking.ts's driver-location poll — without it, a tick's
+    // `await` can resolve after `id` has already changed or this screen has
+    // unmounted, writing a stale/wrong order's status into state.
+    let cancelled = false;
+
+    const poll = async () => {
+      const prevSnap = latestOrderSnapshotRef.current;
+      if (prevSnap?.status && TERMINAL_STATUSES.includes(prevSnap.status as any)) return;
+      const result = await getOrderPaymentStatus(id);
+      if (cancelled || !result) return;
+      const changed =
+        (!!result.status && result.status !== prevSnap?.status) ||
+        (!!result.payment_status && result.payment_status !== prevSnap?.payment_status);
+      if (!changed) return;
+      setAutoRefreshing(true);
+      setOrder((prev) =>
+        prev
+          ? {
+              ...prev,
+              ...(result.status ? { order_status: result.status } : {}),
+              ...(result.payment_status ? { payment_status: result.payment_status } : {}),
+            }
+          : prev,
+      );
+      setTimeout(() => setAutoRefreshing(false), 800);
+    };
+
+    const intervalId = setInterval(poll, STATUS_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
     };
   }, [id]);
 

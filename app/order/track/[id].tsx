@@ -48,6 +48,23 @@ function formatStatusLabel(status: string) {
   return status.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+// Driver location is written server-side by the rider app's foreground/background
+// tracking task, roughly every few seconds while active. `driverLocations` here
+// is itself only refreshed by a 2s poll (useOrderTracking), so a genuinely
+// silent rider (signal lost, app killed, worker crashed) shows the same
+// coordinate on every poll while `updated_at` stops advancing — this is what
+// distinguishes "still live but hasn't moved" from "actually stuck."
+const STALE_DRIVER_LOCATION_MS = 60_000;
+
+function formatAgeShort(ms: number) {
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ago`;
+}
+
 /**
  * Live order tracking screen.
  *
@@ -91,6 +108,23 @@ export default function TrackOrderScreen() {
     if (!primaryStoreOrder?.delivery_partner_id) return undefined;
     return driverLocations[primaryStoreOrder.delivery_partner_id];
   }, [primaryStoreOrder, driverLocations]);
+
+  // `driverLocations` only changes when a poll actually returns a fresh
+  // coordinate — if the rider's updates stop entirely, nothing re-renders
+  // this screen and the "Live tracking" pulse would stay green forever with
+  // no way to notice. This ticks independently so staleness is re-evaluated
+  // even when no new location ever arrives.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const tickId = setInterval(() => setNow(Date.now()), 5_000);
+    return () => clearInterval(tickId);
+  }, []);
+
+  const driverLocationAgeMs = primaryDriverLocation?.updated_at
+    ? now - new Date(primaryDriverLocation.updated_at).getTime()
+    : null;
+  const isDriverSignalStale =
+    driverLocationAgeMs !== null && driverLocationAgeMs > STALE_DRIVER_LOCATION_MS;
 
   const storeLocation = data?.storeLocations?.[0];
   const dest =
@@ -198,10 +232,14 @@ export default function TrackOrderScreen() {
             {!isCancelled && status !== "order_delivered" && (
               <>
                 <View style={styles.livePulseWrap}>
-                  <View style={styles.livePulse} />
-                  <View style={styles.liveDot} />
+                  {!isDriverSignalStale && <View style={styles.livePulse} />}
+                  <View style={[styles.liveDot, isDriverSignalStale && styles.liveDotStale]} />
                 </View>
-                <Text style={styles.liveText}>Live tracking</Text>
+                <Text style={[styles.liveText, isDriverSignalStale && styles.liveTextStale]}>
+                  {isDriverSignalStale && driverLocationAgeMs !== null
+                    ? `Signal lost · last seen ${formatAgeShort(driverLocationAgeMs)}`
+                    : "Live tracking"}
+                </Text>
               </>
             )}
             {isMultiStore && (
@@ -644,7 +682,9 @@ const styles = StyleSheet.create({
     opacity: 0.35,
   },
   liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: C.success },
+  liveDotStale: { backgroundColor: C.warning },
   liveText: { color: C.success, fontSize: 12, fontWeight: "800", letterSpacing: 0.3 },
+  liveTextStale: { color: C.warning },
   multiStoreBadge: {
     marginLeft: "auto",
     color: C.textSub,
