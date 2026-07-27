@@ -11,19 +11,28 @@ import {
     View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useRazorpay } from "@codearcade/expo-razorpay";
 
 import { C } from "../../../constants/colors";
 import { useAuth } from "../../../context/AuthContext";
 import { useCart } from "../../../context/CartContext";
 import { getUserOrders, type Order } from "../../../lib/orderService";
 import { getAllProducts, type Product } from "../../../lib/productService";
+import { createAdditionPayment, verifyAdditionPayment } from "../../../lib/orderAdditionService";
 
-const ADD_MORE_WINDOW_SECONDS = 40;
+// Matches ADD_ITEMS_WINDOW_MS's 35s server-side backstop in
+// backend/src/controllers/orderAdditions.controller.ts (a few seconds'
+// grace beyond this client countdown, for request latency) — this is the
+// number the customer actually sees and the one that should feel authoritative.
+const ADD_MORE_WINDOW_SECONDS = 30;
+
+type AddItemsPhase = "idle" | "processing" | "done" | "failed";
 
 export default function OrderConfirmationScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { userId } = useAuth();
-  const { items: cartItems, addItem } = useCart();
+  const { userId, user } = useAuth();
+  const { items: cartItems, addItem, clearCart } = useCart();
+  const { openCheckout, closeCheckout, RazorpayUI } = useRazorpay();
 
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
@@ -31,6 +40,12 @@ export default function OrderConfirmationScreen() {
   const [timerExpired, setTimerExpired] = useState(false);
   const [suggestedProducts, setSuggestedProducts] = useState<Product[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(true);
+  const [addItemsPhase, setAddItemsPhase] = useState<AddItemsPhase>("idle");
+  const [addItemsError, setAddItemsError] = useState<string | null>(null);
+  // Sync guard: the timerExpired effect can re-run (e.g. StrictMode double-
+  // invoke, or order/cartItems changing) — this ensures the addition flow
+  // only ever fires once per screen visit.
+  const addItemsStartedRef = useRef(false);
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const progressAnim = useRef(new Animated.Value(1)).current;
@@ -102,6 +117,97 @@ export default function OrderConfirmationScreen() {
 
     return () => clearInterval(interval);
   }, [timerExpired]);
+
+  // When the window closes, whatever's in the cart was added during it (the
+  // checkout screen already clears the cart on successful placement, so
+  // there's nothing pre-existing to conflate it with) — merge those items
+  // into this same order via a separate Razorpay charge for just the delta.
+  useEffect(() => {
+    if (!timerExpired || addItemsStartedRef.current) return;
+    if (cartItems.length === 0 || !id) return;
+    addItemsStartedRef.current = true;
+
+    (async () => {
+      setAddItemsPhase("processing");
+      setAddItemsError(null);
+      try {
+        const paymentOrder = await createAdditionPayment(
+          id,
+          cartItems.map((it) => ({ product_id: it.product_id, quantity: it.quantity }))
+        );
+
+        const gatewayResult = await new Promise<
+          | { kind: "success"; razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string }
+          | { kind: "cancelled" }
+          | { kind: "failed"; description?: string }
+        >((resolve) => {
+          openCheckout(
+            {
+              key: paymentOrder.key_id,
+              amount: paymentOrder.amount,
+              currency: paymentOrder.currency,
+              order_id: paymentOrder.razorpay_order_id,
+              name: "Near & Now",
+              description:
+                paymentOrder.razorpay_mode === "test"
+                  ? "Test payment (Razorpay sandbox)"
+                  : "Additional items for your order",
+              prefill: {
+                name: user?.name || "Customer",
+                email: user?.email || "",
+                contact: user?.phone || "",
+              },
+              theme: { color: C.primary },
+            },
+            {
+              onSuccess: (response: { razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string }) => {
+                resolve({
+                  kind: "success",
+                  razorpay_payment_id: response.razorpay_payment_id,
+                  razorpay_order_id: response.razorpay_order_id,
+                  razorpay_signature: response.razorpay_signature,
+                });
+              },
+              onFailure: (error: { description?: string }) => resolve({ kind: "failed", description: error?.description }),
+              onClose: () => resolve({ kind: "cancelled" }),
+            }
+          );
+        });
+        closeCheckout?.();
+
+        if (gatewayResult.kind !== "success") {
+          // Cancelled or failed — items stay in the ordinary cart, exactly
+          // as they would have before this feature existed. Not an error;
+          // the customer just didn't complete the add-on purchase.
+          setAddItemsPhase("idle");
+          return;
+        }
+
+        await verifyAdditionPayment(id, {
+          request_id: paymentOrder.request_id,
+          razorpay_payment_id: gatewayResult.razorpay_payment_id,
+          razorpay_order_id: gatewayResult.razorpay_order_id,
+          razorpay_signature: gatewayResult.razorpay_signature,
+        });
+
+        clearCart();
+        setAddItemsPhase("done");
+        // Refresh the order so the summary below reflects the newly-added items.
+        if (userId) {
+          getUserOrders(userId)
+            .then((orders) => {
+              const found = orders.find((o) => o.id === id);
+              if (found) setOrder(found);
+            })
+            .catch(() => {});
+        }
+      } catch (err: any) {
+        console.error("Failed to add items to order:", err);
+        setAddItemsError(err?.message || "Couldn't add your items to this order. They're still in your cart.");
+        setAddItemsPhase("failed");
+      }
+    })();
+  }, [timerExpired, cartItems, id, userId, openCheckout, closeCheckout, clearCart, user]);
 
   // Progress bar animation
   useEffect(() => {
@@ -249,15 +355,50 @@ export default function OrderConfirmationScreen() {
           </View>
         ) : (
           <View style={styles.timerExpiredCard}>
-            <MaterialCommunityIcons name="clock-check" size={28} color={C.textSub} />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.timerExpiredTitle}>Add-more window closed</Text>
-              <Text style={styles.timerExpiredSub}>
-                Your order is now being prepared for delivery.
-              </Text>
-            </View>
+            {addItemsPhase === "processing" ? (
+              <>
+                <ActivityIndicator size="small" color={C.primary} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.timerExpiredTitle}>Adding your items…</Text>
+                  <Text style={styles.timerExpiredSub}>
+                    Complete payment for the extra items to add them to this order.
+                  </Text>
+                </View>
+              </>
+            ) : addItemsPhase === "done" ? (
+              <>
+                <MaterialCommunityIcons name="check-circle" size={28} color={C.success} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.timerExpiredTitle}>Items added to your order!</Text>
+                  <Text style={styles.timerExpiredSub}>
+                    They'll arrive with this delivery — no separate trip needed.
+                  </Text>
+                </View>
+              </>
+            ) : addItemsPhase === "failed" ? (
+              <>
+                <MaterialCommunityIcons name="alert-circle" size={28} color={C.danger} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.timerExpiredTitle}>Couldn't add those items</Text>
+                  <Text style={styles.timerExpiredSub}>
+                    {addItemsError || "They're still in your cart — check out separately whenever you like."}
+                  </Text>
+                </View>
+              </>
+            ) : (
+              <>
+                <MaterialCommunityIcons name="clock-check" size={28} color={C.textSub} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.timerExpiredTitle}>Add-more window closed</Text>
+                  <Text style={styles.timerExpiredSub}>
+                    Your order is now being prepared for delivery.
+                  </Text>
+                </View>
+              </>
+            )}
           </View>
         )}
+        {RazorpayUI}
 
         {/* Suggested Products */}
         {!timerExpired && (
