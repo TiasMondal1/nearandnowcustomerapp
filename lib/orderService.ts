@@ -103,7 +103,7 @@ export interface CreateOrderInput {
   customer_name: string;
   customer_phone: string;
   customer_email?: string;
-  payment_method: "upi" | "cod";
+  payment_method: "upi" | "cod" | "wallet";
   payment_status: "pending" | "paid";
   subtotal: number;
   delivery_fee: number;

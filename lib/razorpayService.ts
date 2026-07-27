@@ -199,8 +199,12 @@ export async function getSavedPaymentMethods(
   __savedMethodsInFlight = (async () => {
     try {
       const methods = await Promise.race<SavedPaymentMethod[]>([
+        // The backend derives the user from the auth token (requireCustomer),
+        // not from a query param — a `?user_id=` here would be decorative
+        // at best and misleading at worst (this endpoint used to actually
+        // trust it, which was a real IDOR; fixed backend-side).
         apiFetch<{ methods?: SavedPaymentMethod[] }>(
-          `/api/payment/methods?user_id=${encodeURIComponent(userId)}`,
+          '/api/payment/methods',
           { method: 'GET' },
         ).then((res) => res?.methods ?? []),
         new Promise<SavedPaymentMethod[]>((resolve) =>

@@ -1,8 +1,10 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { useRazorpay } from "@codearcade/expo-razorpay";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
+    ActivityIndicator,
     Alert,
     ScrollView,
     StyleSheet,
@@ -12,6 +14,13 @@ import {
     View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+
+import { useAuth } from "../context/AuthContext";
+import {
+    createWalletTopupOrder,
+    getWalletBalance,
+    verifyWalletTopup,
+} from "../lib/walletService";
 
 const T = {
   green: "#2D7A4F",
@@ -27,21 +36,118 @@ const T = {
 
 const QUICK_AMOUNTS = [100, 250, 500, 1000];
 
+type TopupPhase = "idle" | "preparing" | "awaiting_gateway" | "verifying";
+
+const PHASE_LABEL: Record<Exclude<TopupPhase, "idle">, string> = {
+  preparing: "Setting up…",
+  awaiting_gateway: "Waiting for payment…",
+  verifying: "Verifying…",
+};
+
 export default function WalletScreen() {
+  const { user, customer } = useAuth();
+  const { openCheckout, closeCheckout, RazorpayUI } = useRazorpay();
   const [selected, setSelected] = useState<number | null>(null);
   const [custom, setCustom] = useState("");
+  const [balance, setBalance] = useState<number | null>(null);
+  const [loadingBalance, setLoadingBalance] = useState(true);
+  const [phase, setPhase] = useState<TopupPhase>("idle");
+  // Synchronous double-tap guard — phase state alone doesn't take effect
+  // until the next render commits.
+  const inFlight = useRef(false);
 
   const finalAmount = custom.trim() !== "" ? Number(custom) : selected;
   const isValid = finalAmount != null && finalAmount > 0 && Number.isFinite(finalAmount);
 
-  const handleAddMoney = () => {
-    if (!isValid) return;
-    // Razorpay / payment gateway integration goes here.
-    Alert.alert(
-      "Add Money",
-      `Adding ₹${finalAmount} to your wallet. Payment gateway integration coming soon.`,
-      [{ text: "OK" }],
-    );
+  useEffect(() => {
+    (async () => {
+      try {
+        const b = await getWalletBalance();
+        setBalance(b);
+      } catch {
+        // Leave balance null -> renders "—" rather than a misleading ₹0.00
+        // that could be mistaken for a real (empty) balance.
+      } finally {
+        setLoadingBalance(false);
+      }
+    })();
+  }, []);
+
+  const handleAddMoney = async () => {
+    if (!isValid || inFlight.current) return;
+    inFlight.current = true;
+    setPhase("preparing");
+    try {
+      const order = await createWalletTopupOrder(finalAmount!);
+
+      setPhase("awaiting_gateway");
+      const gatewayResult = await new Promise<
+        | { kind: "success"; paymentId: string; razorpayOrderId: string; signature: string }
+        | { kind: "cancelled" }
+        | { kind: "failed"; description?: string }
+      >((resolve) => {
+        openCheckout(
+          {
+            key: order.key_id,
+            amount: order.amount,
+            currency: order.currency,
+            order_id: order.razorpay_order_id,
+            name: "Near & Now Wallet",
+            description:
+              order.razorpay_mode === "test" ? "Test top-up (Razorpay sandbox)" : "Wallet top-up",
+            prefill: {
+              name: user?.name || "Customer",
+              email: user?.email || "",
+              contact: user?.phone || customer?.phone || "",
+            },
+            theme: { color: T.green },
+          },
+          {
+            onSuccess: (response: {
+              razorpay_payment_id: string;
+              razorpay_order_id: string;
+              razorpay_signature: string;
+            }) => {
+              resolve({
+                kind: "success",
+                paymentId: response.razorpay_payment_id,
+                razorpayOrderId: response.razorpay_order_id,
+                signature: response.razorpay_signature,
+              });
+            },
+            onFailure: (error: { description?: string }) => {
+              resolve({ kind: "failed", description: error?.description });
+            },
+            onClose: () => resolve({ kind: "cancelled" }),
+          },
+        );
+      });
+      closeCheckout?.();
+
+      if (gatewayResult.kind === "cancelled") return;
+      if (gatewayResult.kind === "failed") {
+        Alert.alert("Payment failed", gatewayResult.description || "Payment could not be completed.");
+        return;
+      }
+
+      setPhase("verifying");
+      const newBalance = await verifyWalletTopup({
+        paymentId: gatewayResult.paymentId,
+        razorpayOrderId: gatewayResult.razorpayOrderId,
+        signature: gatewayResult.signature,
+        amount: finalAmount!,
+      });
+      setBalance(newBalance);
+      setSelected(null);
+      setCustom("");
+      Alert.alert("Money added", `₹${finalAmount} was added to your wallet.`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Something went wrong. Please try again.";
+      Alert.alert("Add money failed", message);
+    } finally {
+      inFlight.current = false;
+      setPhase("idle");
+    }
   };
 
   return (
@@ -76,7 +182,13 @@ export default function WalletScreen() {
             <MaterialCommunityIcons name="wallet" size={28} color="rgba(255,255,255,0.9)" />
           </View>
           <Text style={styles.balanceLabel}>Available Balance</Text>
-          <Text style={styles.balanceAmount}>₹0.00</Text>
+          {loadingBalance ? (
+            <ActivityIndicator color="rgba(255,255,255,0.9)" style={{ marginVertical: 6 }} />
+          ) : balance == null ? (
+            <Text style={styles.balanceAmount}>—</Text>
+          ) : (
+            <Text style={styles.balanceAmount}>₹{balance.toFixed(2)}</Text>
+          )}
           <Text style={styles.balanceSub}>Near &amp; Now Wallet</Text>
         </LinearGradient>
 
@@ -130,17 +242,22 @@ export default function WalletScreen() {
           </View>
 
           <TouchableOpacity
-            style={[styles.addBtn, !isValid && styles.addBtnDisabled]}
+            style={[styles.addBtn, (!isValid || phase !== "idle") && styles.addBtnDisabled]}
             onPress={handleAddMoney}
-            activeOpacity={isValid ? 0.85 : 1}
+            activeOpacity={isValid && phase === "idle" ? 0.85 : 1}
+            disabled={!isValid || phase !== "idle"}
           >
-            <MaterialCommunityIcons
-              name="plus-circle-outline"
-              size={18}
-              color={isValid ? T.white : T.barkLight}
-            />
-            <Text style={[styles.addBtnText, !isValid && styles.addBtnTextDisabled]}>
-              {isValid ? `Add ₹${finalAmount}` : "Add Money"}
+            {phase !== "idle" ? (
+              <ActivityIndicator size="small" color={T.barkLight} />
+            ) : (
+              <MaterialCommunityIcons
+                name="plus-circle-outline"
+                size={18}
+                color={isValid ? T.white : T.barkLight}
+              />
+            )}
+            <Text style={[styles.addBtnText, (!isValid || phase !== "idle") && styles.addBtnTextDisabled]}>
+              {phase !== "idle" ? PHASE_LABEL[phase] : isValid ? `Add ₹${finalAmount}` : "Add Money"}
             </Text>
           </TouchableOpacity>
         </View>
@@ -162,6 +279,7 @@ export default function WalletScreen() {
           ))}
         </View>
       </ScrollView>
+      {RazorpayUI}
     </SafeAreaView>
   );
 }

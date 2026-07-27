@@ -24,6 +24,7 @@ import {
     readUserOrdersCache,
     type Order,
 } from "../lib/orderService";
+import { payOrderWithWallet } from "../lib/walletService";
 
 function formatDate(iso: string) {
   const d = new Date(iso);
@@ -198,6 +199,20 @@ export default function OrdersScreen() {
 
   const handleRetryPayment = useCallback(
     async (order: Order) => {
+      const paymentMethod = (order.payment_method ?? "").toLowerCase();
+      if (paymentMethod === "wallet") {
+        try {
+          await payOrderWithWallet(order.id);
+          Alert.alert("Payment successful", "Your order has been paid from your wallet.");
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : "Please try again.";
+          Alert.alert("Payment failed", message);
+        } finally {
+          fetchOrders(true);
+        }
+        return;
+      }
+
       const result = await payForOrder({
         internalOrderId: order.id,
         amount: order.order_total,

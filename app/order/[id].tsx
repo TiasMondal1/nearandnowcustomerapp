@@ -26,6 +26,7 @@ import { useAuth } from "../../context/AuthContext";
 import { usePaymentFlow } from "../../hooks/usePaymentFlow";
 import { getOrderPaymentStatus, getUserOrders, type Order } from "../../lib/orderService";
 import { supabase } from "../../lib/supabase";
+import { payOrderWithWallet } from "../../lib/walletService";
 
 // Fallback for when Realtime never delivers a single event on this screen —
 // `customer_orders`' `customer_own_orders` RLS policy gates on `auth.uid()`,
@@ -223,6 +224,19 @@ export default function OrderDetailScreen() {
 
   const handleRetryPayment = async () => {
     if (!order) return;
+
+    if (paymentMethod === "wallet") {
+      try {
+        await payOrderWithWallet(order.id);
+        setOrder((prev) => (prev ? { ...prev, payment_status: "paid" } : prev));
+        Alert.alert("Payment successful", "Your order has been paid from your wallet.");
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "Please try again.";
+        Alert.alert("Payment failed", message);
+      }
+      return;
+    }
+
     const result = await payForOrder({
       internalOrderId: order.id,
       amount: order.order_total,

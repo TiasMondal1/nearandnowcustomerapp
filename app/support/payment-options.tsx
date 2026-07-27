@@ -30,6 +30,7 @@ import {
     isSavedPaymentMethodsEnabled,
     type SavedPaymentMethod,
 } from "../../lib/razorpayService";
+import { getWalletBalance } from "../../lib/walletService";
 
 type RailOption = {
   key: string;
@@ -135,10 +136,25 @@ export default function PaymentOptionsScreen() {
     cachedSaved ?? [],
   );
   const [loadingSaved, setLoadingSaved] = useState(initialLoading);
+  const [walletBalance, setWalletBalance] = useState<number | null>(null);
+  const [loadingWalletBalance, setLoadingWalletBalance] = useState(!!userId);
 
   const subtotal = items.reduce((s, i) => s + i.price * i.quantity, 0);
   const totalItems = items.reduce((s, i) => s + i.quantity, 0);
   const { finalPayable } = calcOrderTotal(subtotal, totalItems, 2, discount);
+
+  useEffect(() => {
+    if (!userId) { setLoadingWalletBalance(false); return; }
+    let cancelled = false;
+    getWalletBalance()
+      .then((b) => { if (!cancelled) setWalletBalance(b); })
+      .catch(() => { /* leave null -> row shows "Unable to load balance" once loading finishes */ })
+      .finally(() => { if (!cancelled) setLoadingWalletBalance(false); });
+    return () => { cancelled = true; };
+  }, [userId]);
+
+  const walletInsufficient = walletBalance != null && walletBalance < finalPayable;
+  const isWalletSelected = current.mode === "wallet";
 
   useEffect(() => {
     // Feature off, not logged in, or we already know the answer → nothing to
@@ -179,6 +195,16 @@ export default function PaymentOptionsScreen() {
     router.back();
     requestAnimationFrame(() => setPaymentSelection(sel));
   }, []);
+
+  const handlePickWallet = useCallback(() => {
+    if (walletBalance == null || walletInsufficient) return;
+    applyAndClose({
+      mode: "wallet",
+      label: "Near & Now Wallet",
+      subLabel: `Balance: ₹${walletBalance.toFixed(2)}`,
+      icon: "wallet-outline",
+    });
+  }, [walletBalance, walletInsufficient, applyAndClose]);
 
   const handlePickRail = useCallback(
     (opt: RailOption) => {
@@ -277,6 +303,43 @@ export default function PaymentOptionsScreen() {
               />
             ))
           )}
+        </View>
+
+        {/* Near & Now Wallet — real stored-value balance, separate from the
+            "Wallets" rail below (which is Razorpay's third-party wallet
+            aggregator — PhonePe/Amazon Pay/Paytm — not our own balance). */}
+        <Text style={styles.sectionTitle}>Near & Now Wallet</Text>
+        <View style={styles.card}>
+          <TouchableOpacity
+            style={styles.row}
+            activeOpacity={0.7}
+            onPress={handlePickWallet}
+            disabled={loadingWalletBalance || walletBalance == null || walletInsufficient}
+          >
+            <View style={[styles.rowIcon, { backgroundColor: "#EAF6EE" }]}>
+              <MaterialCommunityIcons name="wallet-outline" size={20} color="#2D7A4F" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowTitle}>Near & Now Wallet</Text>
+              <Text style={styles.rowSub}>
+                {loadingWalletBalance
+                  ? "Loading balance…"
+                  : walletBalance == null
+                    ? "Unable to load balance"
+                    : walletInsufficient
+                      ? `Insufficient balance (₹${walletBalance.toFixed(2)}) — top up to use`
+                      : `Balance: ₹${walletBalance.toFixed(2)}`}
+              </Text>
+            </View>
+            <View
+              style={[styles.radio, isWalletSelected && styles.radioActive]}
+              pointerEvents="none"
+            >
+              {isWalletSelected ? (
+                <MaterialCommunityIcons name="check" size={14} color="#fff" />
+              ) : null}
+            </View>
+          </TouchableOpacity>
         </View>
 
         {/* UPI — single rail entry, hands off to Razorpay UPI tab */}

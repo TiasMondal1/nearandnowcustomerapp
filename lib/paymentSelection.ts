@@ -13,7 +13,7 @@
  */
 
 /** Internal rail that the order will actually run on. */
-export type PaymentMode = "upi" | "cod";
+export type PaymentMode = "upi" | "cod" | "wallet";
 
 /** Razorpay's `prefill.method` — lets us preselect the tab inside the sheet. */
 export type RazorpayMethod = "upi" | "card" | "netbanking" | "wallet" | "emi";

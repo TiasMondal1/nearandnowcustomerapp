@@ -31,6 +31,7 @@ import {
     subscribePaymentSelection,
     type PaymentSelection,
 } from "../../lib/paymentSelection";
+import { getWalletBalance, payOrderWithWallet } from "../../lib/walletService";
 import {
     getAllProducts,
     getMemoryHomeCache,
@@ -355,6 +356,53 @@ export default function CheckoutScreen() {
       if (currentSelection.mode === "cod") {
         // Optimistic flow: success modal renders before the API call returns.
         await doCreateOrder("pending", { optimistic: true });
+        return;
+      }
+
+      // ─── Wallet payment ────────────────────────────────────────────────────
+      // Same two-step shape as the online path below (create order pending,
+      // then pay it off) but no Razorpay sheet — payOrderWithWallet debits
+      // the balance synchronously. On success it's identical to a completed
+      // online payment from here on (confirmation screen, cache-busting);
+      // on failure (most likely insufficient balance) the order is still
+      // saved, same as an abandoned/failed Razorpay attempt — the customer
+      // retries with a different method from Orders.
+      if (currentSelection.mode === "wallet") {
+        // Re-check the balance right before creating the order, not just at
+        // selection time on the payment-options screen — a customer who
+        // picked Wallet there and then changed their cart (pushing the total
+        // past their balance) could otherwise still submit with a doomed
+        // selection; the backend would reject it safely either way, but this
+        // avoids creating an order that's already known to fail.
+        try {
+          const currentBalance = await getWalletBalance();
+          if (currentBalance < finalPayable) {
+            Alert.alert("Insufficient wallet balance", "Please choose another payment method or top up your wallet.");
+            return;
+          }
+        } catch {
+          // Balance check itself failed (network blip) — fall through and
+          // let the actual payOrderWithWallet call be the source of truth.
+        }
+
+        const internalOrder = await doCreateOrder("pending");
+        if (!internalOrder?.id) {
+          throw new Error("Could not create order");
+        }
+        try {
+          await payOrderWithWallet(internalOrder.id);
+          markOrderPlaced().catch(() => {});
+          clearCart();
+          router.replace(`/order/confirmation/${internalOrder.id}` as any);
+        } catch (err: unknown) {
+          clearCart();
+          const message = err instanceof Error ? err.message : "Payment could not be completed.";
+          Alert.alert(
+            "Wallet payment failed",
+            `${message}\n\nYour order has been saved. You can retry payment from your Orders.`,
+          );
+          router.replace("/orders");
+        }
         return;
       }
 
