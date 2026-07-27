@@ -24,6 +24,7 @@ import {
 } from "../../constants/orderStatus";
 import { useAuth } from "../../context/AuthContext";
 import { usePaymentFlow } from "../../hooks/usePaymentFlow";
+import { logError } from "../../lib/logError";
 import { getOrderPaymentStatus, getUserOrders, type Order } from "../../lib/orderService";
 import { supabase } from "../../lib/supabase";
 import { payOrderWithWallet } from "../../lib/walletService";
@@ -161,7 +162,7 @@ export default function OrderDetailScreen() {
       const found = orders.find((o) => o.id === id);
       setOrder(found ?? null);
     } catch (err) {
-      console.error('Failed to load order:', err);
+      logError('Load order', err);
       setOrder(null);
     } finally {
       setLoading(false);

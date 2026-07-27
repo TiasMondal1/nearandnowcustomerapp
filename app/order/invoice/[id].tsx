@@ -15,6 +15,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { C } from "../../../constants/colors";
 import { apiFetch } from "../../../lib/apiClient";
+import { logError } from "../../../lib/logError";
+import { logSilentFailure } from "../../../lib/logSilentFailure";
 import { getUserOrders, type Order } from "../../../lib/orderService";
 import { useAuth } from "../../../context/AuthContext";
 
@@ -61,7 +63,7 @@ export default function InvoiceScreen() {
       setInvoice(invoiceData);
       setOrder(orders.find((o) => o.id === id) ?? null);
     } catch (err: any) {
-      console.error("Failed to load invoice:", err);
+      logError("Load invoice", err);
       setError(err?.message || "Failed to load invoice");
     } finally {
       setLoading(false);
@@ -96,7 +98,9 @@ export default function InvoiceScreen() {
         title: invoice.invoice_number || "Invoice",
       });
     } catch (err) {
-      console.error("Failed to share invoice:", err);
+      // Also fires on a plain user-cancelled share sheet, not just a real
+      // failure — no UI change either way, matches the fire-and-forget case.
+      logSilentFailure("Share invoice", err);
     }
   };
 

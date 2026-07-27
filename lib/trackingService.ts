@@ -1,4 +1,5 @@
 import { apiFetch } from './apiClient';
+import { logSilentFailure } from './logSilentFailure';
 
 /**
  * Mobile equivalent of `near-and-now/frontend/src/services/trackingApi.ts`.
@@ -120,7 +121,7 @@ export async function fetchDriverLocations(
       `/api/tracking/orders/${encodeURIComponent(orderId)}/driver-locations`,
     );
   } catch (err) {
-    console.warn('[TRACKING] fetchDriverLocations failed', err);
+    logSilentFailure('[TRACKING] fetchDriverLocations', err);
     return {};
   }
 }

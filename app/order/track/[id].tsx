@@ -96,6 +96,9 @@ export default function TrackOrderScreen() {
   const isMultiStore = storeOrders.length > 1;
   const meta = getStatusMeta(status);
   const isCancelled = CANCELLED_STATUSES.includes(status);
+  const isRunningLate = Boolean(
+    order?.estimated_delivery_time && new Date(order.estimated_delivery_time).getTime() < Date.now()
+  );
 
   // Pick the agent for the (single) store order. For multi-store we'd render a card per store.
   const primaryStoreOrder = storeOrders[0];
@@ -255,11 +258,22 @@ export default function TrackOrderScreen() {
 
           {order.estimated_delivery_time && status !== "order_delivered" && !isCancelled && (
             <View style={styles.etaRow}>
-              <MaterialCommunityIcons name="clock-time-four-outline" size={16} color={C.textSub} />
-              <Text style={styles.etaText}>
-                Estimated delivery by{" "}
-                <Text style={styles.etaTime}>{formatTime(order.estimated_delivery_time)}</Text>
-              </Text>
+              <MaterialCommunityIcons
+                name={isRunningLate ? "clock-alert-outline" : "clock-time-four-outline"}
+                size={16}
+                color={isRunningLate ? C.warning : C.textSub}
+              />
+              {isRunningLate ? (
+                <Text style={[styles.etaText, { color: C.warning }]}>
+                  Running a little behind — was expected by{" "}
+                  <Text style={[styles.etaTime, { color: C.warning }]}>{formatTime(order.estimated_delivery_time)}</Text>
+                </Text>
+              ) : (
+                <Text style={styles.etaText}>
+                  Estimated delivery by{" "}
+                  <Text style={styles.etaTime}>{formatTime(order.estimated_delivery_time)}</Text>
+                </Text>
+              )}
             </View>
           )}
         </View>

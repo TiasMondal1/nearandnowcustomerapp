@@ -93,7 +93,7 @@ export default function NotificationsScreen() {
       const data = await apiFetch<AppNotification[]>(`/api/notifications/users/${userId}`);
       setNotifications(data);
     } catch (err) {
-      console.error("Failed to fetch notifications:", err);
+      logSilentFailure("Fetch notifications", err);
     } finally {
       setLoading(false);
     }
@@ -115,7 +115,7 @@ export default function NotificationsScreen() {
     try {
       await apiFetch(`/api/notifications/users/${userId}/read-all`, { method: "PUT" });
     } catch (err) {
-      console.error("Failed to mark all as read:", err);
+      logSilentFailure("Mark all notifications read", err);
     }
   }, [userId]);
 

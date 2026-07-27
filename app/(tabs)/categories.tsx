@@ -22,6 +22,7 @@ import {
 import { useLocation } from "../../context/LocationContext";
 import { getAllCategories, type Category } from "../../lib/categoryService";
 import { cdnImage } from "../../lib/imageUrl";
+import { logSilentFailure } from "../../lib/logSilentFailure";
 import {
     getCountForCategoryName,
     readHomeCatalogCache,
@@ -148,7 +149,7 @@ export default function CategoriesScreen() {
         }
       }
     } catch (error) {
-      console.error("Failed to fetch categories:", error);
+      logSilentFailure("Fetch categories", error);
     } finally {
       setLoading(false);
       setRefreshing(false);

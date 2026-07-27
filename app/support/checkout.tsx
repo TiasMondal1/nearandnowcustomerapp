@@ -33,6 +33,7 @@ import {
 } from "../../lib/paymentSelection";
 import { getWalletBalance, payOrderWithWallet } from "../../lib/walletService";
 import { logSilentFailure } from "../../lib/logSilentFailure";
+import { logError } from "../../lib/logError";
 import {
     getAllProducts,
     getMemoryHomeCache,
@@ -511,7 +512,7 @@ export default function CheckoutScreen() {
       ]);
       return;
     } catch (err: any) {
-      console.error("PLACE_ORDER_ERROR", err);
+      logError("Place order", err);
       const message = err?.message || "Something went wrong. Please try again.";
       if (String(message).toLowerCase().includes("verify your email")) {
         Alert.alert("Email verification required", message, [

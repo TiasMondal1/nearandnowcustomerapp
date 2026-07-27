@@ -1,6 +1,7 @@
 import { Stack, useRouter } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect, useRef } from "react";
+import { View, Text, StyleSheet } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
@@ -11,6 +12,7 @@ import { usePushNotifications } from "../hooks/usePushNotifications";
 import { logSilentFailure } from "../lib/logSilentFailure";
 import { loadOrderHistoryFlag } from "../lib/orderHistoryFlag";
 import { readHomeCatalogCache } from "../lib/productService";
+import { isSupabaseConfigured } from "../lib/supabase";
 
 // Hold the native splash until auth state is known so we don't flash the app's
 // own spinner screen during the AsyncStorage read.
@@ -67,6 +69,21 @@ function AppShell() {
 }
 
 export default function RootLayout() {
+  // Fail fast and visibly instead of silently limping into a broken app
+  // where every screen's Supabase call mysteriously fails one at a time —
+  // see lib/supabase.ts's isSupabaseConfigured for the reasoning.
+  if (!isSupabaseConfigured) {
+    SplashScreen.hideAsync().catch(() => {});
+    return (
+      <View style={styles.configErrorContainer}>
+        <Text style={styles.configErrorTitle}>Configuration Error</Text>
+        <Text style={styles.configErrorText}>
+          This app is missing required configuration and can&apos;t start. Please contact support.
+        </Text>
+      </View>
+    );
+  }
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
@@ -77,3 +94,25 @@ export default function RootLayout() {
     </GestureHandlerRootView>
   );
 }
+
+const styles = StyleSheet.create({
+  configErrorContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 32,
+    backgroundColor: "#fff",
+  },
+  configErrorTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    marginBottom: 12,
+    textAlign: "center",
+  },
+  configErrorText: {
+    fontSize: 15,
+    color: "#666",
+    textAlign: "center",
+    lineHeight: 22,
+  },
+});

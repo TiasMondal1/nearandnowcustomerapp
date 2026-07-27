@@ -21,6 +21,8 @@ import {
   autocomplete as autocompleteApi,
   placeDetails as placeDetailsApi,
 } from "../../lib/placesService";
+import { logError } from "../../lib/logError";
+import { logSilentFailure } from "../../lib/logSilentFailure";
 
 const T = {
   green: "#2D7A4F",
@@ -167,7 +169,7 @@ export default function SelectMapLocationScreen() {
         });
       }
     } catch (error) {
-      console.error("Reverse geocoding failed:", error);
+      logSilentFailure("Reverse geocoding", error);
     } finally {
       setReverseLoading(false);
       isGeocodingRef.current = false;
@@ -194,7 +196,7 @@ export default function SelectMapLocationScreen() {
 
       reverseGeocode(latitude, longitude);
     } catch (error) {
-      console.error("Failed to get current location:", error);
+      logSilentFailure("Get current location", error);
     }
   }, [reverseGeocode]);
 
@@ -227,13 +229,13 @@ export default function SelectMapLocationScreen() {
         setPredictionsOpen(true);
       } else {
         if (json.error_message) {
-          console.warn("Places Autocomplete:", json.status, json.error_message);
+          logSilentFailure(`Places Autocomplete (${json.status})`, json.error_message);
         }
         setPredictions([]);
         setPredictionsOpen(false);
       }
     } catch (err) {
-      console.error("Places Autocomplete failed:", err);
+      logSilentFailure("Places Autocomplete", err);
       setPredictions([]);
       setPredictionsOpen(false);
     } finally {
@@ -305,7 +307,7 @@ export default function SelectMapLocationScreen() {
         raw: r,
       });
     } catch (err) {
-      console.error("Place details failed:", err);
+      logError("Place details", err);
       Alert.alert("Error", "Could not load that place.");
     } finally {
       setReverseLoading(false);

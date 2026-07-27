@@ -605,7 +605,7 @@ export default function HomeScreen() {
         });
       }
     } catch (error) {
-      console.error("Failed to load home:", error);
+      logSilentFailure("Load home", error);
     }
   }, []);
 
@@ -639,7 +639,7 @@ export default function HomeScreen() {
           .catch((err) => logSilentFailure("Background-fill full catalog", err));
       });
     } catch (error) {
-      console.error("Failed to load home (fast):", error);
+      logSilentFailure("Load home (fast)", error);
       await fetchFresh(filter);
       setLoading(false);
     }

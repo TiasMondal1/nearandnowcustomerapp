@@ -24,6 +24,7 @@ import {
     readUserOrdersCache,
     type Order,
 } from "../lib/orderService";
+import { logError } from "../lib/logError";
 import { payOrderWithWallet } from "../lib/walletService";
 
 function formatDate(iso: string) {
@@ -156,7 +157,7 @@ export default function OrdersScreen() {
       setOrders(data);
       setError(null);
     } catch (err) {
-      console.error("Failed to fetch orders:", err);
+      logError("Fetch orders", err);
       const message =
         err instanceof Error
           ? err.message

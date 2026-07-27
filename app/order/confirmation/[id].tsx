@@ -17,6 +17,7 @@ import { C } from "../../../constants/colors";
 import { useAuth } from "../../../context/AuthContext";
 import { useCart } from "../../../context/CartContext";
 import { getOrderById, type Order } from "../../../lib/orderService";
+import { logError } from "../../../lib/logError";
 import { logSilentFailure } from "../../../lib/logSilentFailure";
 import { getAllProducts, type Product } from "../../../lib/productService";
 import { createAdditionPayment, verifyAdditionPayment } from "../../../lib/orderAdditionService";
@@ -65,7 +66,7 @@ export default function OrderConfirmationScreen() {
         const found = await getOrderById(id);
         if (!cancelled) setOrder(found);
       } catch (err) {
-        console.error("Failed to load order:", err);
+        logError("Load order", err);
         if (!cancelled) {
           setLoadError(
             err instanceof Error ? err.message : "Couldn't load your order details.",
@@ -92,11 +93,18 @@ export default function OrderConfirmationScreen() {
           // Get random products not in the current order
           const orderProductIds = new Set(order?.items?.map((i) => i.product_id) ?? []);
           const available = products.filter((p) => !orderProductIds.has(p.id));
-          const shuffled = available.sort(() => Math.random() - 0.5);
+          // Fisher-Yates — `sort(() => Math.random() - 0.5)` is a classic
+          // biased-shuffle bug (comparator-based sorts don't guarantee a
+          // uniform random permutation from an inconsistent comparator).
+          const shuffled = [...available];
+          for (let i = shuffled.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+          }
           setSuggestedProducts(shuffled.slice(0, 6));
         }
       } catch (err) {
-        console.error("Failed to load suggestions:", err);
+        logSilentFailure("Load suggested products", err);
       } finally {
         if (!cancelled) setLoadingSuggestions(false);
       }
@@ -148,7 +156,15 @@ export default function OrderConfirmationScreen() {
   // there's nothing pre-existing to conflate it with) — merge those items
   // into this same order via a separate Razorpay charge for just the delta.
   useEffect(() => {
-    if (!timerExpired || addItemsStartedRef.current) return;
+    // Previously this only checked `id` (the route param), not whether the
+    // order-load effect above had actually settled — a slow order fetch
+    // still in flight when the 30s timer fired could let this proceed with
+    // no local order data loaded yet. Not exploitable (the backend
+    // independently re-validates ownership/timing regardless), but a real
+    // UX gap: waiting on `loading` here ties the two effects together so
+    // add-items can't start until the order fetch has settled one way or
+    // the other.
+    if (!timerExpired || addItemsStartedRef.current || loading) return;
     if (cartItems.length === 0 || !id) return;
     addItemsStartedRef.current = true;
 
@@ -224,12 +240,12 @@ export default function OrderConfirmationScreen() {
             .catch((err) => logSilentFailure("Refresh order after add-items", err));
         }
       } catch (err: any) {
-        console.error("Failed to add items to order:", err);
+        logError("Add items to order", err);
         setAddItemsError(err?.message || "Couldn't add your items to this order. They're still in your cart.");
         setAddItemsPhase("failed");
       }
     })();
-  }, [timerExpired, cartItems, id, userId, openCheckout, closeCheckout, clearCart, user]);
+  }, [timerExpired, cartItems, id, userId, loading, openCheckout, closeCheckout, clearCart, user]);
 
   // Progress bar animation
   useEffect(() => {

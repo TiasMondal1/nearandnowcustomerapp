@@ -16,6 +16,7 @@ import { C } from "../../constants/colors";
 import { useAuth } from "../../context/AuthContext";
 import { useLocation } from "../../context/LocationContext";
 import { deleteAddress, getUserAddresses, type SavedAddress } from "../../lib/addressService";
+import { logError } from "../../lib/logError";
 import AddressCard from "./AddressCard";
 
 export default function LocationIndex() {
@@ -33,7 +34,7 @@ export default function LocationIndex() {
       setLocations(data);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to fetch addresses";
-      console.error("Failed to fetch locations", err);
+      logError("Fetch locations", err);
       Alert.alert("Saved addresses", message);
     } finally {
       setLoading(false);

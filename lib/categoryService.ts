@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { logSilentFailure } from './logSilentFailure';
 
 export interface Category {
   id: string;
@@ -20,7 +21,7 @@ export async function getAllCategories(): Promise<Category[]> {
     const { data, error } = await query.order('display_order', { ascending: true });
 
     if (error) {
-      console.error('Error fetching categories:', error);
+      logSilentFailure('Fetch categories', error);
       return [];
     }
 
@@ -28,7 +29,7 @@ export async function getAllCategories(): Promise<Category[]> {
     const categories = (data || []) as Category[];
     return categories.filter(cat => cat.is_active !== false);
   } catch (err) {
-    console.error('Failed to fetch categories:', err);
+    logSilentFailure('Fetch categories', err);
     return [];
   }
 }
@@ -42,7 +43,7 @@ export async function getCategoryBySlug(slug: string): Promise<Category | null> 
       .single();
 
     if (error) {
-      console.error('Error fetching category:', error);
+      logSilentFailure('Fetch category', error);
       return null;
     }
 
@@ -54,7 +55,7 @@ export async function getCategoryBySlug(slug: string): Promise<Category | null> 
 
     return category;
   } catch (err) {
-    console.error('Failed to fetch category:', err);
+    logSilentFailure('Fetch category', err);
     return null;
   }
 }

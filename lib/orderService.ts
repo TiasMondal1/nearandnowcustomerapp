@@ -335,7 +335,7 @@ export async function getOrderPaymentStatus(
       status: String(data.status || ''),
     };
   } catch (err) {
-    console.warn('[ORDER] getOrderPaymentStatus failed', err);
+    logSilentFailure('[ORDER] getOrderPaymentStatus', err);
     return null;
   }
 }

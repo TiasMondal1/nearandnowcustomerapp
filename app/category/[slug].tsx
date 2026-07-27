@@ -19,6 +19,7 @@ import { getCategoryBySlug, type Category } from "../../lib/categoryService";
 import { useCart, useCartItemMap } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
 import { cdnImage } from "../../lib/imageUrl";
+import { logError } from "../../lib/logError";
 import { getProductsByCategory, type Product as ServiceProduct } from "../../lib/productService";
 import { getNearbyProductFilter } from "../../lib/storeService";
 import StarRating from "../../components/StarRating";
@@ -164,7 +165,7 @@ export default function CategorySlugScreen() {
       setCategory(categoryData);
       setProducts(productsData);
     } catch (err) {
-      console.error("Failed to load category:", err);
+      logError("Load category", err);
       setError("Failed to load products");
     } finally {
       setLoading(false);

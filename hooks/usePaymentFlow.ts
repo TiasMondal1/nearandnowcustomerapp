@@ -2,6 +2,7 @@ import { useRazorpay } from '@codearcade/expo-razorpay';
 import { useCallback, useRef, useState } from 'react';
 
 import { C } from '../constants/colors';
+import { logSilentFailure } from '../lib/logSilentFailure';
 import { getOrderPaymentStatus } from '../lib/orderService';
 import { createPaymentOrder, verifyPayment } from '../lib/razorpayService';
 
@@ -200,7 +201,7 @@ export function usePaymentFlow() {
           return { status: 'paid' };
         } catch (err: unknown) {
           // Verify failed — but the webhook may settle this. Reconcile.
-          console.warn('[PAYMENT] verify failed; reconciling', err);
+          logSilentFailure('[PAYMENT] verify', err);
           return await reconcile(args.internalOrderId);
         }
       } finally {

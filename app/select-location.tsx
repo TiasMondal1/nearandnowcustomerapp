@@ -21,6 +21,7 @@ import {
     readAddressesCache,
     type SavedAddress,
 } from "../lib/addressService";
+import { logError } from "../lib/logError";
 
 const T = {
   green: "#2D7A4F",
@@ -104,7 +105,7 @@ export default function SelectLocationScreen() {
     } catch (error) {
       // Only surface a toast if the user has no cached list to fall back to;
       // otherwise we silently retry on the next focus.
-      console.error("Failed to revalidate addresses:", error);
+      logError("Revalidate addresses", error);
       if (mountedRef.current && addresses.length === 0) {
         Alert.alert("Error", "Failed to load saved addresses");
       }
@@ -177,7 +178,7 @@ export default function SelectLocationScreen() {
 
       router.push("/location/select-map");
     } catch (error) {
-      console.error("Failed to get current location:", error);
+      logError("Get current location", error);
       Alert.alert("Error", "Failed to get your current location");
     } finally {
       setFetchingCurrentLocation(false);
