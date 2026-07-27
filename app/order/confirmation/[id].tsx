@@ -100,6 +100,24 @@ export default function OrderConfirmationScreen() {
     };
   }, [order]);
 
+  // Re-anchor the countdown to the order's actual placed time once it loads,
+  // rather than trusting "time since this screen happened to mount". A pure
+  // mount-relative timer would show a fresh, misleading "30s left!" if this
+  // screen ever remounts long after the order was actually placed (app
+  // killed and reopened, a stale deep link, Fast Refresh in dev) — the
+  // backend's own window (ADD_ITEMS_WINDOW_MS in orderAdditions.controller.ts)
+  // is anchored to placed_at, so a customer could go through the trouble of
+  // adding items only to have the server reject them as late, with the
+  // screen never having shown anything was wrong.
+  useEffect(() => {
+    if (!order?.created_at) return;
+    const placedAtMs = new Date(order.created_at).getTime();
+    const elapsedSec = Math.floor((Date.now() - placedAtMs) / 1000);
+    const remaining = Math.max(0, ADD_MORE_WINDOW_SECONDS - elapsedSec);
+    setTimeLeft(remaining);
+    if (remaining <= 0) setTimerExpired(true);
+  }, [order?.created_at]);
+
   // Countdown timer
   useEffect(() => {
     if (timerExpired) return;
