@@ -689,7 +689,7 @@ export default function CheckoutScreen() {
               </View>
               <View style={{ flex: 1, marginLeft: 10 }}>
                 <Text style={styles.gstinTitle}>Add GSTIN</Text>
-                <Text style={styles.gstinSub}>Claim GST credit up to 18% on the order</Text>
+                <Text style={styles.gstinSub}>Get a GST-compliant invoice for input tax credit claims</Text>
               </View>
             </View>
             <TouchableOpacity
