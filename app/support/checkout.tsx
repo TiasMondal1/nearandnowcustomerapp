@@ -48,7 +48,7 @@ import { clearSavedPaymentMethodsCache } from "../../lib/razorpayService";
 const GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
 
 export default function CheckoutScreen() {
-  const { items, appliedCoupon, removeCoupon, discount, clearCart, addItem, updateQty } = useCart();
+  const { items, appliedCoupon, removeCoupon, discount, isCouponEligible, clearCart, addItem, updateQty } = useCart();
   const { user, customer } = useAuth();
   const [placing, setPlacing] = useState(false);
   // Synchronous lock, checked/set before any React re-render — `placing` state
@@ -290,7 +290,11 @@ export default function CheckoutScreen() {
       receiver_phone: orderFor === "others" && receiverPhone.trim() ? `+91${receiverPhone.trim()}` : undefined,
       receiver_address: orderFor === "others" && receiverAddress.trim() ? receiverAddress.trim() : undefined,
       tip_amount: tipAmount > 0 ? tipAmount : undefined,
-      coupon_id: appliedCoupon?.id,
+      // Withheld once the coupon's own min_order_value is no longer met
+      // (e.g. an item was removed after applying it) — discount is already
+      // 0 in that state, and sending a no-longer-eligible coupon_id would
+      // just make the backend re-derive the same "doesn't qualify" outcome.
+      coupon_id: isCouponEligible ? appliedCoupon?.id : undefined,
     };
 
     if (options.optimistic) {
@@ -655,12 +659,20 @@ export default function CheckoutScreen() {
             onPress={() => router.push("../product/coupons")}
           >
             <View style={styles.savingsLeft}>
-              <MaterialCommunityIcons name="shield-check-outline" size={20} color="#2563eb" />
+              <MaterialCommunityIcons
+                name={appliedCoupon && !isCouponEligible ? "alert-circle-outline" : "shield-check-outline"}
+                size={20}
+                color={appliedCoupon && !isCouponEligible ? C.danger : "#2563eb"}
+              />
               <View style={{ flex: 1, marginLeft: 10 }}>
-                <Text style={styles.savingsText}>
-                  {appliedCoupon
-                    ? `${appliedCoupon.code} applied · −₹${discount.toFixed(0)} saved`
-                    : "View all coupons & offers"}
+                <Text style={[styles.savingsText, appliedCoupon && !isCouponEligible && { color: C.danger }]}>
+                  {appliedCoupon && !isCouponEligible
+                    ? `${appliedCoupon.code} no longer applies · add ₹${Math.ceil(
+                        (appliedCoupon.min_order_value ?? 0) - subtotal,
+                      )} more to reapply`
+                    : appliedCoupon
+                      ? `${appliedCoupon.code} applied · −₹${discount.toFixed(0)} saved`
+                      : "View all coupons & offers"}
                 </Text>
               </View>
             </View>

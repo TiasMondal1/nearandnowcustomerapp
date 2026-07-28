@@ -35,6 +35,7 @@ export type Coupon = {
   type: "flat" | "percent";
   value: number;
   max_discount?: number;
+  min_order_value?: number;
 };
 
 type CartContextType = {
@@ -50,6 +51,12 @@ type CartContextType = {
   applyCoupon: (coupon: Coupon) => void;
   removeCoupon: () => void;
   discount: number;
+  // False once the cart's subtotal drops below the applied coupon's own
+  // min_order_value (e.g. after removing an item) — the coupon stays
+  // "applied" so the customer can top the cart back up and reclaim it, but
+  // discount is 0 and coupon_id is withheld from order placement while this
+  // is false.
+  isCouponEligible: boolean;
 };
 
 const CartContext = createContext<CartContextType | null>(null);
@@ -159,8 +166,14 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     [items],
   );
 
+  const isCouponEligible = useMemo(() => {
+    if (!appliedCoupon) return false;
+    if (!appliedCoupon.min_order_value) return true;
+    return subtotal >= appliedCoupon.min_order_value;
+  }, [appliedCoupon, subtotal]);
+
   const discount = useMemo(() => {
-    if (!appliedCoupon) return 0;
+    if (!appliedCoupon || !isCouponEligible) return 0;
     if (appliedCoupon.type === "flat") return Math.min(appliedCoupon.value, subtotal);
     if (appliedCoupon.type === "percent") {
       const raw = (subtotal * appliedCoupon.value) / 100;
@@ -169,7 +182,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         : raw;
     }
     return 0;
-  }, [appliedCoupon, subtotal]);
+  }, [appliedCoupon, isCouponEligible, subtotal]);
 
   // Memoize the context value so downstream consumers only re-render when the *fields they
   // actually use* change (combined with React.memo on list items, this keeps cart taps cheap).
@@ -186,6 +199,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       applyCoupon,
       removeCoupon,
       discount,
+      isCouponEligible,
     }),
     [
       items,
@@ -199,6 +213,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       applyCoupon,
       removeCoupon,
       discount,
+      isCouponEligible,
     ],
   );
 

@@ -14,7 +14,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { C } from "../../constants/colors";
-import { calcOrderTotal } from "../../constants/fees";
+import { calcOrderTotal, DELIVERY_FEE, GST_RATE, HANDLING_FEE, PLATFORM_FEE } from "../../constants/fees";
 import { useCart } from "../../context/CartContext";
 import { cdnImage } from "../../lib/imageUrl";
 
@@ -88,7 +88,7 @@ export default function CartScreen() {
                 </View>
                 <View style={styles.billRow}>
                   <View style={styles.billLabelRow}>
-                    <Text style={styles.billLabel}>GST (18%)</Text>
+                    <Text style={styles.billLabel}>GST ({GST_RATE * 100}%)</Text>
                     <TouchableOpacity onPress={() => setShowInfo(true)}>
                       <MaterialCommunityIcons name="information-outline" size={14} color={C.textLight} />
                     </TouchableOpacity>
@@ -177,17 +177,21 @@ export default function CartScreen() {
             </View>
             <View style={styles.modalBody}>
               <Text style={styles.modalSectionTitle}>Platform Fee</Text>
-              <Text style={styles.modalDesc}>Fixed ₹9.50 per order</Text>
+              <Text style={styles.modalDesc}>Fixed ₹{PLATFORM_FEE.toFixed(2)} per order</Text>
               <View style={styles.divider} />
               <Text style={styles.modalSectionTitle}>Handling Fee</Text>
-              <Text style={styles.modalDesc}>Fixed ₹5.50 per order</Text>
+              <Text style={styles.modalDesc}>Fixed ₹{HANDLING_FEE.toFixed(2)} per order</Text>
               <View style={styles.divider} />
               <Text style={styles.modalSectionTitle}>Delivery Fee</Text>
-              <Text style={styles.modalDesc}>Fixed ₹25.00 per order</Text>
+              <Text style={styles.modalDesc}>
+                {DELIVERY_FEE > 0 ? `Fixed ₹${DELIVERY_FEE.toFixed(2)} per order` : "Free for now — launch promo"}
+              </Text>
               <View style={styles.divider} />
               <Text style={styles.modalSectionTitle}>GST</Text>
-              <Text style={styles.modalDesc}>18% on Platform Fee + Handling Fee</Text>
-              <Text style={styles.modalDesc}>GST = (₹9.50 + ₹5.50) × 18% = ₹2.70</Text>
+              <Text style={styles.modalDesc}>{GST_RATE * 100}% on Platform Fee + Handling Fee</Text>
+              <Text style={styles.modalDesc}>
+                GST = (₹{PLATFORM_FEE.toFixed(2)} + ₹{HANDLING_FEE.toFixed(2)}) × {GST_RATE * 100}% = ₹{((PLATFORM_FEE + HANDLING_FEE) * GST_RATE).toFixed(2)}
+              </Text>
               <View style={styles.divider} />
               <Text style={styles.modalNote}>All fees are calculated and confirmed at checkout.</Text>
             </View>
