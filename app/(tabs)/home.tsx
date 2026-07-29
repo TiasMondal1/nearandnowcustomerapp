@@ -582,16 +582,25 @@ export default function HomeScreen() {
     return counts;
   }, [productsByCategory]);
 
+  // Discards a slower-resolving fetch superseded by a newer one (e.g. two
+  // quick location changes) — the existing per-effect `cancelled` flags at
+  // each call site only stop a superseded effect from *starting* a new
+  // fetchFresh call, they don't stop an already-in-flight call's late
+  // response from overwriting fresher state once it resolves.
+  const fetchFreshSeqRef = useRef(0);
+
   /**
    * Full background refresh — fetches the entire catalog and overwrites cache.
    * Pass `filter` when the user has a location set so only nearby products load.
    */
   const fetchFresh = useCallback(async (filter?: Set<string>) => {
+    const myId = ++fetchFreshSeqRef.current;
     try {
       const [categoriesData, catalog] = await Promise.all([
         getAllCategories(),
         loadMasterCatalog({ nearbyIds: filter }),
       ]);
+      if (myId !== fetchFreshSeqRef.current) return;
       setCategories(categoriesData);
       setProductsByCategory(catalog.productsByCategory);
       // Only persist to cache when no location filter (cache is global, not per-location).

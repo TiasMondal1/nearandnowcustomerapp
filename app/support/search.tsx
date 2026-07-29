@@ -143,6 +143,7 @@ export default function SearchScreen() {
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
           renderItem={({ item }) => {
             const cartItem = cartItemsByProductId.get(item.id);
             const hasDiscount = item.original_price != null && item.original_price > item.price;

@@ -31,7 +31,10 @@ export default function PhoneScreen() {
   };
 
   const emailValid = EMAIL_REGEX.test(email.trim());
-  const isValid = phone.length === 10 && emailValid;
+  // Email is optional here (the helper text below says as much — "You can
+  // verify it after logging in") — only block Continue on a malformed,
+  // non-empty email, not on leaving it blank.
+  const isValid = phone.length === 10 && (email.trim().length === 0 || emailValid);
 
   const handleContinueWithOtp = async () => {
     if (!isValid || loadingOtp) return;

@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
     InteractionManager,
@@ -143,13 +143,20 @@ export default function CategorySlugScreen() {
   const cartItemsByProductId = useCartItemMap();
   const { location, isHydrated } = useLocation();
 
+  // Discards a slower-resolving response from a previously-viewed category —
+  // without this, opening category A then quickly navigating to category B
+  // could let A's response land after B's and show A's data under B's route.
+  const requestIdRef = useRef(0);
+
   const fetchData = useCallback(async (isRefresh = false) => {
     if (!slug) return;
+    const myId = ++requestIdRef.current;
     try {
       setError(null);
       if (!isRefresh) setLoading(true);
 
       const categoryData = await getCategoryBySlug(slug);
+      if (myId !== requestIdRef.current) return;
       if (!categoryData) {
         setCategory(null);
         setProducts([]);
@@ -158,18 +165,23 @@ export default function CategorySlugScreen() {
       let nearbyIds: Set<string> | undefined;
       if (location) {
         const filter = await getNearbyProductFilter(location.latitude, location.longitude);
+        if (myId !== requestIdRef.current) return;
         nearbyIds = filter?.productIds;
       }
       const productsData = await getProductsByCategory(categoryData.name, { nearbyIds });
+      if (myId !== requestIdRef.current) return;
 
       setCategory(categoryData);
       setProducts(productsData);
     } catch (err) {
+      if (myId !== requestIdRef.current) return;
       logError("Load category", err);
       setError("Failed to load products");
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (myId === requestIdRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [slug, location]);
 

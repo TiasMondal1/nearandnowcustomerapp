@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Dimensions,
@@ -29,21 +29,29 @@ export default function ProductDetailsScreen() {
 
   const cartItem = items.find((i) => i.product_id === product?.id);
 
+  // Discards a slower-resolving response from a previously-viewed product —
+  // without this, opening product A then quickly navigating to product B
+  // could let A's response land after B's and show A's data under B's route.
+  const requestIdRef = useRef(0);
+
   useEffect(() => {
     fetchProduct();
   }, [id]);
 
   const fetchProduct = async () => {
+    const myId = ++requestIdRef.current;
     try {
       setLoading(true);
       if (!id) { setProduct(null); return; }
 
       const data = await getProductById(id as string);
+      if (myId !== requestIdRef.current) return;
       setProduct(data);
     } catch {
+      if (myId !== requestIdRef.current) return;
       setProduct(null);
     } finally {
-      setLoading(false);
+      if (myId === requestIdRef.current) setLoading(false);
     }
   };
 
