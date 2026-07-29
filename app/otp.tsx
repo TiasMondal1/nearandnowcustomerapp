@@ -31,6 +31,12 @@ export default function OtpScreen() {
   const [resending, setResending] = useState(false);
 
   const inputsRef = useRef<Array<TextInput | null>>([]);
+  // Synchronous double-submit lock — `loading` is React state, so a fast
+  // double-tap (or a tap racing the auto-submit effect below) could invoke
+  // verifyOTPCode twice concurrently before a re-render ever disabled the
+  // button. Mirrors app/support/checkout.tsx's identical `placingRef` fix
+  // for the same race.
+  const verifyingRef = useRef(false);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -54,9 +60,23 @@ export default function OtpScreen() {
       setDigits(updated);
       return;
     }
-    const char = clean[clean.length - 1];
+    // The OS can deliver more than one character to a single box — an
+    // SMS-autofill banner tap or a manual paste of a copied code both hand
+    // the full string to whichever box has focus. Previously only the last
+    // character survived (`clean[clean.length - 1]`), silently dropping the
+    // other 5 digits. Distribute across the remaining boxes instead,
+    // mirroring the shopkeeper/rider apps' identical `handleDigitChange` fix.
+    if (clean.length > 1) {
+      const updated = [...digits];
+      for (let i = 0; i < clean.length && index + i < 6; i++) {
+        updated[index + i] = clean[i];
+      }
+      setDigits(updated);
+      inputsRef.current[Math.min(index + clean.length, 5)]?.focus();
+      return;
+    }
     const updated = [...digits];
-    updated[index] = char;
+    updated[index] = clean;
     setDigits(updated);
     if (index < 5) inputsRef.current[index + 1]?.focus();
   };
@@ -76,11 +96,12 @@ export default function OtpScreen() {
   };
 
   const handleVerify = async (code: string) => {
-    if (code.length !== 6 || loading) return;
+    if (code.length !== 6 || verifyingRef.current) return;
     if (!phone) {
       Alert.alert("Error", "Missing phone number.");
       return;
     }
+    verifyingRef.current = true;
     try {
       setLoading(true);
       const { isNewUser } = await verifyOTPCode(phone, code, "Customer", email || undefined);
@@ -94,6 +115,7 @@ export default function OtpScreen() {
       setDigits(["", "", "", "", "", ""]);
       inputsRef.current[0]?.focus();
     } finally {
+      verifyingRef.current = false;
       setLoading(false);
     }
   };
@@ -158,9 +180,11 @@ export default function OtpScreen() {
                     onChangeText={(val) => handleChangeDigit(val, idx)}
                     onKeyPress={(e) => handleKeyPress(e, idx)}
                     keyboardType="number-pad"
-                    maxLength={1}
                     returnKeyType="next"
                     autoFocus={idx === 0}
+                    textContentType="oneTimeCode"
+                    autoComplete={idx === 0 ? "sms-otp" : "off"}
+                    importantForAutofill={idx === 0 ? "yes" : "no"}
                   />
                 );
               })}
