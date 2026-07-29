@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { FlashList } from "@shopify/flash-list";
 import { router } from "expo-router";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
@@ -144,6 +144,11 @@ export default function OrdersScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { phase: paymentPhase, payForOrder, RazorpayUI } = usePaymentFlow();
+  // Wallet retry bypasses usePaymentFlow entirely (it has no "wallet" phase),
+  // so paymentPhase never reflects it and the Pay-now button never actually
+  // disables — mirrors usePaymentFlow's own inFlight ref to guard against a
+  // fast double-tap firing two concurrent wallet debits.
+  const walletPaymentInFlight = useRef(false);
 
   const fetchOrders = useCallback(async (isRefresh = false) => {
     try {
@@ -202,6 +207,8 @@ export default function OrdersScreen() {
     async (order: Order) => {
       const paymentMethod = (order.payment_method ?? "").toLowerCase();
       if (paymentMethod === "wallet") {
+        if (walletPaymentInFlight.current) return;
+        walletPaymentInFlight.current = true;
         try {
           await payOrderWithWallet(order.id);
           Alert.alert("Payment successful", "Your order has been paid from your wallet.");
@@ -209,6 +216,7 @@ export default function OrdersScreen() {
           const message = err instanceof Error ? err.message : "Please try again.";
           Alert.alert("Payment failed", message);
         } finally {
+          walletPaymentInFlight.current = false;
           fetchOrders(true);
         }
         return;

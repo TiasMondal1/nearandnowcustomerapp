@@ -57,6 +57,11 @@ export default function OrderDetailScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [autoRefreshing, setAutoRefreshing] = useState(false);
   const { phase: paymentPhase, payForOrder, RazorpayUI } = usePaymentFlow();
+  // Wallet retry bypasses usePaymentFlow entirely (it has no "wallet" phase),
+  // so paymentPhase never reflects it and the Pay-now button never actually
+  // disables — mirrors usePaymentFlow's own inFlight ref to guard against a
+  // fast double-tap firing two concurrent wallet debits.
+  const walletPaymentInFlight = useRef(false);
 
   useEffect(() => {
     if (userId) loadOrder();
@@ -227,6 +232,8 @@ export default function OrderDetailScreen() {
     if (!order) return;
 
     if (paymentMethod === "wallet") {
+      if (walletPaymentInFlight.current) return;
+      walletPaymentInFlight.current = true;
       try {
         await payOrderWithWallet(order.id);
         setOrder((prev) => (prev ? { ...prev, payment_status: "paid" } : prev));
@@ -234,6 +241,8 @@ export default function OrderDetailScreen() {
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : "Please try again.";
         Alert.alert("Payment failed", message);
+      } finally {
+        walletPaymentInFlight.current = false;
       }
       return;
     }
