@@ -38,7 +38,7 @@ type ProductCardProps = {
   item: ServiceProduct;
   cartQty: number;
   onAdd: (product: Omit<import("../../context/CartContext").CartItem, "quantity">) => void;
-  onUpdateQty: (productId: string, qty: number) => void;
+  onUpdateQty: (productId: string, delta: number) => void;
 };
 
 const ProductCard = React.memo(function ProductCard({ item, cartQty, onAdd, onUpdateQty }: ProductCardProps) {
@@ -97,11 +97,11 @@ const ProductCard = React.memo(function ProductCard({ item, cartQty, onAdd, onUp
         {item.in_stock ? (
           cartQty > 0 ? (
             <View style={styles.qtyRow}>
-              <TouchableOpacity style={styles.qtyBtn} onPress={() => onUpdateQty(item.id, cartQty - 1)}>
+              <TouchableOpacity style={styles.qtyBtn} onPress={() => onUpdateQty(item.id, -1)}>
                 <Text style={styles.qtyBtnText}>−</Text>
               </TouchableOpacity>
               <Text style={styles.qtyText}>{cartQty}</Text>
-              <TouchableOpacity style={styles.qtyBtn} onPress={() => onUpdateQty(item.id, cartQty + 1)}>
+              <TouchableOpacity style={styles.qtyBtn} onPress={() => onUpdateQty(item.id, 1)}>
                 <Text style={styles.qtyBtnText}>+</Text>
               </TouchableOpacity>
             </View>
@@ -139,7 +139,7 @@ export default function CategorySlugScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { addItem, updateQty } = useCart();
+  const { addItem, incrementQty } = useCart();
   const cartItemsByProductId = useCartItemMap();
   const { location, isHydrated } = useLocation();
 
@@ -196,10 +196,10 @@ export default function CategorySlugScreen() {
         item={item}
         cartQty={cartItemsByProductId.get(item.id)?.quantity ?? 0}
         onAdd={addItem}
-        onUpdateQty={updateQty}
+        onUpdateQty={incrementQty}
       />
     ),
-    [cartItemsByProductId, addItem, updateQty],
+    [cartItemsByProductId, addItem, incrementQty],
   );
 
   if (!category && !loading) {

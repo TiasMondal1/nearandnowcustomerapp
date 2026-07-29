@@ -44,6 +44,7 @@ type CartContextType = {
   addItem: (item: Omit<CartItem, "quantity">) => void;
   removeItem: (productId: string) => void;
   updateQty: (productId: string, qty: number) => void;
+  incrementQty: (productId: string, delta: number) => void;
   clearCart: () => void;
   subtotal: number;
 
@@ -137,6 +138,25 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     );
   }, []);
 
+  // Unlike updateQty (which sets an absolute value the caller computed from
+  // a render-time snapshot — safe for direct numeric input, but racy for
+  // +/- steppers, where two taps landing before a re-render both compute
+  // the same target from the same stale quantity), this reads the current
+  // quantity from inside the setItems updater itself, so N rapid taps
+  // always net exactly N regardless of React's batching/render timing.
+  const incrementQty = useCallback((productId: string, delta: number) => {
+    setItems((prev) => {
+      const existing = prev.find((p) => p.product_id === productId);
+      if (!existing) return prev;
+      const nextQty = existing.quantity + delta;
+      if (nextQty <= 0) return prev.filter((p) => p.product_id !== productId);
+      const clampedQty = Math.min(nextQty, MAX_QUANTITY_PER_ITEM);
+      return prev.map((p) =>
+        p.product_id === productId ? { ...p, quantity: clampedQty } : p,
+      );
+    });
+  }, []);
+
   const clearCart = useCallback(() => {
     setItems([]);
     setAppliedCoupon(null);
@@ -193,6 +213,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       addItem,
       removeItem,
       updateQty,
+      incrementQty,
       clearCart,
       subtotal,
       appliedCoupon,
@@ -207,6 +228,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       addItem,
       removeItem,
       updateQty,
+      incrementQty,
       clearCart,
       subtotal,
       appliedCoupon,

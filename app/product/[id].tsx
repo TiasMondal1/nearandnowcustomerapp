@@ -22,7 +22,7 @@ const { width } = Dimensions.get("window");
 
 export default function ProductDetailsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { addItem, items, updateQty } = useCart();
+  const { addItem, items, incrementQty } = useCart();
 
   const [loading, setLoading] = useState(true);
   const [product, setProduct] = useState<Product | null>(null);
@@ -183,14 +183,14 @@ export default function ProductDetailsScreen() {
             <View style={styles.qtyControls}>
               <TouchableOpacity
                 style={styles.qtyBtn}
-                onPress={() => updateQty(cartItem.product_id, cartItem.quantity - 1)}
+                onPress={() => incrementQty(cartItem.product_id, -1)}
               >
                 <Text style={styles.qtyBtnText}>−</Text>
               </TouchableOpacity>
               <Text style={styles.qty}>{cartItem.quantity}</Text>
               <TouchableOpacity
                 style={styles.qtyBtn}
-                onPress={() => updateQty(cartItem.product_id, cartItem.quantity + 1)}
+                onPress={() => incrementQty(cartItem.product_id, 1)}
               >
                 <Text style={styles.qtyBtnText}>+</Text>
               </TouchableOpacity>

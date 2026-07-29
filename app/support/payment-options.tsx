@@ -1,5 +1,5 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import {
     ScrollView,
@@ -106,6 +106,11 @@ export default function PaymentOptionsScreen() {
   const { user } = useAuth();
   const userId = user?.id ?? null;
   const current = getPaymentSelection();
+  const { tip } = useLocalSearchParams<{ tip?: string }>();
+  const tipAmount = (() => {
+    const val = parseFloat(Array.isArray(tip) ? tip[0] : tip ?? "0");
+    return Number.isFinite(val) && val > 0 ? val : 0;
+  })();
 
   // Seed from the module-level cache so re-entering the screen paints
   // instantly with the last known list (scoped to this user).
@@ -141,7 +146,12 @@ export default function PaymentOptionsScreen() {
 
   const subtotal = items.reduce((s, i) => s + i.price * i.quantity, 0);
   const totalItems = items.reduce((s, i) => s + i.quantity, 0);
-  const { finalPayable } = calcOrderTotal(subtotal, totalItems, 2, discount);
+  // Mirrors checkout.tsx's own baseFinalPayable + tipAmount formula exactly
+  // (not calcOrderTotal's own rounded finalPayable), since tip is applied
+  // as a separate step after the fee/discount calc, not inside the shared util.
+  const { projected } = calcOrderTotal(subtotal, totalItems, 2);
+  const baseFinalPayable = Math.max(projected - discount, 0);
+  const finalPayable = baseFinalPayable + tipAmount;
 
   useEffect(() => {
     if (!userId) { setLoadingWalletBalance(false); return; }

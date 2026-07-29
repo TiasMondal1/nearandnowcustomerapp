@@ -144,7 +144,7 @@ type ProductCardProps = {
   p: Product;
   cartItem: CartItem | undefined;
   onAdd: (p: Product) => void;
-  onUpdateQty: (p: Product, qty: number) => void;
+  onUpdateQty: (p: Product, delta: number) => void;
   containerStyle?: StyleProp<ViewStyle>;
 };
 
@@ -177,12 +177,12 @@ const ProductCard = React.memo(
     }, [p.id]);
     const handleAdd = useCallback(() => onAdd(p), [onAdd, p]);
     const handleMinus = useCallback(
-      () => onUpdateQty(p, (cartItem?.quantity ?? 1) - 1),
-      [onUpdateQty, p, cartItem?.quantity],
+      () => onUpdateQty(p, -1),
+      [onUpdateQty, p],
     );
     const handlePlus = useCallback(
-      () => onUpdateQty(p, (cartItem?.quantity ?? 0) + 1),
-      [onUpdateQty, p, cartItem?.quantity],
+      () => onUpdateQty(p, 1),
+      [onUpdateQty, p],
     );
 
     return (
@@ -419,7 +419,7 @@ const FrequentlyBoughtSection = React.memo(function FrequentlyBoughtSection({
   products: Product[];
   cartItemsByProductId: Map<string, CartItem>;
   onAdd: (p: Product) => void;
-  onUpdateQty: (p: Product, qty: number) => void;
+  onUpdateQty: (p: Product, delta: number) => void;
 }) {
   const data = useMemo(() => products.slice(0, 10), [products]);
   const renderItem = useCallback(
@@ -550,7 +550,7 @@ export default function HomeScreen() {
   const lastFilteredLocationKey = useRef<string | null>(null);
 
   const { location, isHydrated } = useLocation();
-  const { addItem, updateQty } = useCart();
+  const { addItem, incrementQty } = useCart();
   const cartItemsByProductId = useCartItemMap();
   const totalQty = useMemo(() => {
     let n = 0;
@@ -921,8 +921,8 @@ export default function HomeScreen() {
   );
 
   const handleUpdateQty = useCallback(
-    (p: Product, qty: number) => updateQty(p.id, qty),
-    [updateQty],
+    (p: Product, delta: number) => incrementQty(p.id, delta),
+    [incrementQty],
   );
 
   // ── Build the virtualized list data ──────────────────────────────────────

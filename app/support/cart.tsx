@@ -19,7 +19,7 @@ import { useCart } from "../../context/CartContext";
 import { cdnImage } from "../../lib/imageUrl";
 
 export default function CartScreen() {
-  const { items, updateQty, removeItem, clearCart } = useCart();
+  const { items, incrementQty, removeItem, clearCart } = useCart();
   const [showInfo, setShowInfo] = useState(false);
 
   const subtotal = useMemo(
@@ -124,14 +124,14 @@ export default function CartScreen() {
                     <View style={styles.qtyRow}>
                       <TouchableOpacity
                         style={styles.qtyBtn}
-                        onPress={() => updateQty(item.product_id, item.quantity - 1)}
+                        onPress={() => incrementQty(item.product_id, -1)}
                       >
                         <Text style={styles.qtyBtnText}>−</Text>
                       </TouchableOpacity>
                       <Text style={styles.qty}>{item.quantity}</Text>
                       <TouchableOpacity
                         style={styles.qtyBtn}
-                        onPress={() => updateQty(item.product_id, item.quantity + 1)}
+                        onPress={() => incrementQty(item.product_id, 1)}
                       >
                         <Text style={styles.qtyBtnText}>+</Text>
                       </TouchableOpacity>

@@ -86,7 +86,7 @@ const ProductCard = React.memo(
     p: Product;
     cartItem: CartItem | undefined;
     onAdd: (p: Product) => void;
-    onUpdateQty: (p: Product, qty: number) => void;
+    onUpdateQty: (p: Product, delta: number) => void;
     width?: number;
   }) {
     const hasDiscount = p.original_price != null && p.original_price > p.price;
@@ -96,8 +96,8 @@ const ProductCard = React.memo(
 
     const handleOpen = useCallback(() => { router.push(`/product/${p.id}` as any); }, [p.id]);
     const handleAdd = useCallback(() => onAdd(p), [onAdd, p]);
-    const handleMinus = useCallback(() => onUpdateQty(p, (cartItem?.quantity ?? 1) - 1), [onUpdateQty, p, cartItem?.quantity]);
-    const handlePlus = useCallback(() => onUpdateQty(p, (cartItem?.quantity ?? 0) + 1), [onUpdateQty, p, cartItem?.quantity]);
+    const handleMinus = useCallback(() => onUpdateQty(p, -1), [onUpdateQty, p]);
+    const handlePlus = useCallback(() => onUpdateQty(p, 1), [onUpdateQty, p]);
 
     return (
       <View style={[styles.card, width ? { width } : undefined]}>
@@ -269,7 +269,7 @@ function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }
 // ─── Screen ──────────────────────────────────────────────────────────────────
 export default function OrderAgainScreen() {
   const { userId } = useAuth();
-  const { addItem, updateQty } = useCart();
+  const { addItem, incrementQty } = useCart();
   const cartItemsByProductId = useCartItemMap();
 
   const [orders, setOrders] = useState<Order[] | null>(null);
@@ -436,8 +436,8 @@ export default function OrderAgainScreen() {
     [addItem],
   );
   const handleUpdateQty = useCallback(
-    (p: Product, qty: number) => updateQty(p.id, qty),
-    [updateQty],
+    (p: Product, delta: number) => incrementQty(p.id, delta),
+    [incrementQty],
   );
   const handleChipPress = useCallback((chip: CategoryChipDef) => {
     const slug = chip.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");

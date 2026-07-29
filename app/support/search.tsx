@@ -36,7 +36,7 @@ export default function SearchScreen() {
       nearbyIdsRef.current = filter?.productIds;
     });
   }, [location?.latitude, location?.longitude]);
-  const { addItem, updateQty } = useCart();
+  const { addItem, incrementQty } = useCart();
   const cartItemsByProductId = useCartItemMap();
   // Allow `/support/search?q=Amul+Milk` (used by the Order Again fallback card
   // when the item is no longer in the live catalog).
@@ -197,14 +197,14 @@ export default function SearchScreen() {
                   <View style={styles.qtyRow}>
                     <TouchableOpacity
                       style={styles.qtyBtnWrap}
-                      onPress={() => updateQty(item.id, cartItem.quantity - 1)}
+                      onPress={() => incrementQty(item.id, -1)}
                     >
                       <Text style={styles.qtyBtnText}>−</Text>
                     </TouchableOpacity>
                     <Text style={styles.qtyValue}>{cartItem.quantity}</Text>
                     <TouchableOpacity
                       style={styles.qtyBtnWrap}
-                      onPress={() => updateQty(item.id, cartItem.quantity + 1)}
+                      onPress={() => incrementQty(item.id, 1)}
                     >
                       <Text style={styles.qtyBtnText}>+</Text>
                     </TouchableOpacity>

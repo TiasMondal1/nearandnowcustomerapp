@@ -48,7 +48,7 @@ import { clearSavedPaymentMethodsCache } from "../../lib/razorpayService";
 const GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
 
 export default function CheckoutScreen() {
-  const { items, appliedCoupon, removeCoupon, discount, isCouponEligible, clearCart, addItem, updateQty } = useCart();
+  const { items, appliedCoupon, removeCoupon, discount, isCouponEligible, clearCart, addItem, incrementQty } = useCart();
   const { user, customer } = useAuth();
   const [placing, setPlacing] = useState(false);
   // Synchronous lock, checked/set before any React re-render — `placing` state
@@ -614,7 +614,7 @@ export default function CheckoutScreen() {
                 <View style={styles.quantityControls}>
                   <TouchableOpacity
                     style={styles.quantityBtn}
-                    onPress={() => updateQty(item.product_id, item.quantity - 1)}
+                    onPress={() => incrementQty(item.product_id, -1)}
                     activeOpacity={0.7}
                   >
                     <MaterialCommunityIcons name="minus" size={14} color={C.primary} />
@@ -622,7 +622,7 @@ export default function CheckoutScreen() {
                   <Text style={styles.quantityText}>{item.quantity}</Text>
                   <TouchableOpacity
                     style={styles.quantityBtn}
-                    onPress={() => updateQty(item.product_id, item.quantity + 1)}
+                    onPress={() => incrementQty(item.product_id, 1)}
                     activeOpacity={0.7}
                   >
                     <MaterialCommunityIcons name="plus" size={14} color={C.primary} />
@@ -1002,7 +1002,7 @@ export default function CheckoutScreen() {
 
       {/* ─── Pay Dock ─── */}
       <View style={styles.payDock}>
-        <PayMethodRow />
+        <PayMethodRow tipAmount={tipAmount} />
 
         {/* Slide to Pay button */}
         <TouchableOpacity
@@ -1114,13 +1114,18 @@ function usePaymentSelectionSubscription(): PaymentSelection {
   return sel;
 }
 
-function PayMethodRow() {
+function PayMethodRow({ tipAmount }: { tipAmount: number }) {
   const sel = usePaymentSelectionSubscription();
   return (
     <TouchableOpacity
       style={styles.payMethodRow}
       activeOpacity={0.8}
-      onPress={() => router.push("/support/payment-options")}
+      onPress={() =>
+        router.push({
+          pathname: "/support/payment-options",
+          params: { tip: String(tipAmount) },
+        })
+      }
     >
       <View style={styles.payMethodLeft}>
         <MaterialCommunityIcons
