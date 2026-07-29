@@ -24,5 +24,6 @@
     "**/android/.gradle/**": true,
     "**/android/build/**": true,
     "**/android/app/build/**": true
-  }
+  },
+  "postman.settings.dotenv-detection-notification-visibility": false
 }
