@@ -2,15 +2,20 @@ export const PLATFORM_FEE = 9.5;
 export const HANDLING_FEE = 5.5;
 // ₹0 always — delivery is free. Was a flat ₹25; see git history to restore.
 export const DELIVERY_FEE = 0;
+// 5% GST on Platform Fee + Handling Fee, matching the website's FEE_GST_RATE
+// (near-and-now/frontend/src/utils/checkoutCalculations.ts) so an identical
+// cart totals the same on both platforms.
+export const GST_RATE = 0.05;
 
 export function calcDeliveryFee(): number {
   return DELIVERY_FEE;
 }
 
 /**
- * Bill = item total + platform fee + handling charges + delivery fee (₹0).
- * No checkout GST line. Only the **final payable** is rounded to the nearest
- * rupee so the pay button / Razorpay / DB agree on the same integer total.
+ * Bill = item total + platform fee + handling charges + delivery fee (₹0)
+ * + GST (5% on platform + handling fee). Only the **final payable** is
+ * rounded to the nearest rupee so the pay button / Razorpay / DB agree on
+ * the same integer total.
  */
 export function calcOrderTotal(
   subtotal: number,
@@ -28,7 +33,7 @@ export function calcOrderTotal(
   const platformFee = PLATFORM_FEE;
   const handlingFee = HANDLING_FEE;
   const deliveryFee = calcDeliveryFee();
-  const gst = 0;
+  const gst = (platformFee + handlingFee) * GST_RATE;
   const projected = subtotal + platformFee + handlingFee + deliveryFee + gst;
   const finalPayable = Math.round(Math.max(projected - discount, 0));
   return { platformFee, handlingFee, deliveryFee, gst, projected, finalPayable };

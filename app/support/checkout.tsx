@@ -49,7 +49,7 @@ import { clearSavedPaymentMethodsCache } from "../../lib/razorpayService";
 const GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
 
 export default function CheckoutScreen() {
-  const { items, appliedCoupon, removeCoupon, discount, isCouponEligible, clearCart, addItem, incrementQty } = useCart();
+  const { items, isHydrated, appliedCoupon, removeCoupon, discount, isCouponEligible, clearCart, addItem, incrementQty } = useCart();
   const { user, customer } = useAuth();
   const [placing, setPlacing] = useState(false);
   // Synchronous lock, checked/set before any React re-render — `placing` state
@@ -96,12 +96,15 @@ export default function CheckoutScreen() {
   // synchronously via `getPaymentSelection()`.
   const { phase: paymentPhase, payForOrder, RazorpayUI } = usePaymentFlow();
 
-  // Empty cart → home (e.g. user removed the last item).
+  // Empty cart → home (e.g. user removed the last item). Gated on
+  // isHydrated so a real, non-empty persisted cart that just hasn't finished
+  // loading from AsyncStorage yet (e.g. this screen reached via deep link or
+  // restored navigation state) doesn't get incorrectly kicked to Home.
   useEffect(() => {
-    if (items.length === 0) {
+    if (isHydrated && items.length === 0) {
       router.replace("/(tabs)/home");
     }
-  }, [items.length]);
+  }, [isHydrated, items.length]);
 
   useEffect(() => {
     if (!location || items.length === 0) {
@@ -231,7 +234,7 @@ export default function CheckoutScreen() {
 
   const subtotal = useMemo(() => items.reduce((s, i) => s + i.price * i.quantity, 0), [items]);
   const totalItems = useMemo(() => items.reduce((s, i) => s + i.quantity, 0), [items]);
-  const { platformFee, handlingFee, deliveryFee, projected } = useMemo(
+  const { platformFee, handlingFee, deliveryFee, gst, projected } = useMemo(
     () => calcOrderTotal(subtotal, totalItems, maxDistance),
     [subtotal, totalItems, maxDistance],
   );
@@ -888,6 +891,7 @@ export default function CheckoutScreen() {
             }
           />
           <BillRow label="Delivery Fee" value={deliveryFee} />
+          <BillRow label="GST charges" value={gst} />
           {tipAmount > 0 && <BillRow label="Delivery Partner Tip" value={tipAmount} />}
           <View style={styles.billDivider} />
           <View style={styles.totalRow}>
