@@ -34,6 +34,8 @@ export async function getStoreDistance(
       .from('stores')
       .select('latitude, longitude')
       .eq('id', storeId)
+      .eq('is_active', true)
+      .eq('is_approved', true)
       .single();
 
     if (error || !store) return 50;
@@ -63,9 +65,11 @@ export async function getProductStoreDistance(
   try {
     const { data: product, error } = await supabase
       .from('products')
-      .select('store_id, stores(latitude, longitude)')
+      .select('store_id, stores!inner(latitude, longitude, is_active, is_approved)')
       .eq('master_product_id', productId)
       .eq('is_active', true)
+      .eq('stores.is_active', true)
+      .eq('stores.is_approved', true)
       .limit(1)
       .single();
 
@@ -106,9 +110,11 @@ export async function getBatchProductStoreDistances(
   try {
     const { data, error } = await supabase
       .from('products')
-      .select('master_product_id, stores(latitude, longitude)')
+      .select('master_product_id, stores!inner(latitude, longitude, is_active, is_approved)')
       .in('master_product_id', productIds)
-      .eq('is_active', true);
+      .eq('is_active', true)
+      .eq('stores.is_active', true)
+      .eq('stores.is_approved', true);
 
     if (error || !data) return productIds.map(() => 50);
 

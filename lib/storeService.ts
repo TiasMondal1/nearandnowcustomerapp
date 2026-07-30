@@ -12,8 +12,10 @@ export interface NearbyStore {
 export const NEARBY_RADIUS_KM = 4;
 
 /**
- * Fetches all active stores, filters to those within radiusKm of the customer,
- * and returns them sorted by distance (nearest first).
+ * Fetches verified + online stores, filters to those within radiusKm of the
+ * customer, and returns them sorted by distance (nearest first).
+ *
+ * `is_approved` = admin-verified shopkeeper; `is_active` = shop is online.
  */
 export async function getNearbyActiveStores(
   lat: number,
@@ -23,7 +25,8 @@ export async function getNearbyActiveStores(
   const { data, error } = await supabase
     .from('stores')
     .select('id, name, latitude, longitude')
-    .eq('is_active', true);
+    .eq('is_active', true)
+    .eq('is_approved', true);
 
   if (error || !data) return [];
 
@@ -62,9 +65,9 @@ export async function getMasterProductIdsForStores(storeIds: string[]): Promise<
 let _cachedActiveProductIds: Set<string> | null = null;
 
 /**
- * Returns the set of master_product_ids that are listed in ANY active store
+ * Returns the set of master_product_ids listed in ANY verified + online store
  * (regardless of location). Used as a base filter so we never show master
- * products that no active store actually carries.
+ * products that no eligible store actually carries.
  *
  * Result is cached in memory for the session — subsequent calls are O(1).
  */
@@ -73,7 +76,8 @@ export async function getAllActiveProductIds(): Promise<Set<string>> {
   const { data: stores, error } = await supabase
     .from('stores')
     .select('id')
-    .eq('is_active', true);
+    .eq('is_active', true)
+    .eq('is_approved', true);
   if (error || !stores?.length) return new Set();
   const storeIds = (stores as { id: string }[]).map((s) => s.id);
   const ids = await getMasterProductIdsForStores(storeIds);

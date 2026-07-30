@@ -1,20 +1,16 @@
 export const PLATFORM_FEE = 9.5;
 export const HANDLING_FEE = 5.5;
-// ₹0 for now — a launch-goodwill promo for the first customers, matching the
-// website. Was a flat ₹25; see git history to restore when the promo ends.
+// ₹0 always — delivery is free. Was a flat ₹25; see git history to restore.
 export const DELIVERY_FEE = 0;
-// 5% GST is applied only on Platform Fee + Handling Charges.
-export const GST_RATE = 0.05;
 
 export function calcDeliveryFee(): number {
   return DELIVERY_FEE;
 }
 
 /**
- * Individual fees stay at their true decimal values (9.5, 5.5, 25, 0.75 …).
- * Only the **final payable** is rounded to the nearest rupee so the customer
- * never sees a paise amount at the pay button and Razorpay / DB agree on the
- * same integer total.
+ * Bill = item total + platform fee + handling charges + delivery fee (₹0).
+ * No checkout GST line. Only the **final payable** is rounded to the nearest
+ * rupee so the pay button / Razorpay / DB agree on the same integer total.
  */
 export function calcOrderTotal(
   subtotal: number,
@@ -32,7 +28,7 @@ export function calcOrderTotal(
   const platformFee = PLATFORM_FEE;
   const handlingFee = HANDLING_FEE;
   const deliveryFee = calcDeliveryFee();
-  const gst = (platformFee + handlingFee) * GST_RATE;
+  const gst = 0;
   const projected = subtotal + platformFee + handlingFee + deliveryFee + gst;
   const finalPayable = Math.round(Math.max(projected - discount, 0));
   return { platformFee, handlingFee, deliveryFee, gst, projected, finalPayable };

@@ -96,6 +96,13 @@ export default function CheckoutScreen() {
   // synchronously via `getPaymentSelection()`.
   const { phase: paymentPhase, payForOrder, RazorpayUI } = usePaymentFlow();
 
+  // Empty cart → home (e.g. user removed the last item).
+  useEffect(() => {
+    if (items.length === 0) {
+      router.replace("/(tabs)/home");
+    }
+  }, [items.length]);
+
   useEffect(() => {
     if (!location || items.length === 0) {
       setMaxDistance(2);
@@ -224,7 +231,7 @@ export default function CheckoutScreen() {
 
   const subtotal = useMemo(() => items.reduce((s, i) => s + i.price * i.quantity, 0), [items]);
   const totalItems = useMemo(() => items.reduce((s, i) => s + i.quantity, 0), [items]);
-  const { platformFee, handlingFee, deliveryFee, gst, projected } = useMemo(
+  const { platformFee, handlingFee, deliveryFee, projected } = useMemo(
     () => calcOrderTotal(subtotal, totalItems, maxDistance),
     [subtotal, totalItems, maxDistance],
   );
@@ -880,7 +887,6 @@ export default function CheckoutScreen() {
               )
             }
           />
-          <BillRow label="GST charges" value={gst} />
           <BillRow label="Delivery Fee" value={deliveryFee} />
           {tipAmount > 0 && <BillRow label="Delivery Partner Tip" value={tipAmount} />}
           <View style={styles.billDivider} />
