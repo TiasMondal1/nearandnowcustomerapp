@@ -12,6 +12,8 @@
  * "Place order".
  */
 
+import type { PaymentLogoKey } from "./paymentLogos";
+
 /** Internal rail that the order will actually run on. */
 export type PaymentMode = "upi" | "cod" | "wallet";
 
@@ -26,6 +28,11 @@ export type PaymentSelection = {
   subLabel?: string;
   /** Material Community icon name for the pay-row chip. */
   icon?: string;
+  /**
+   * Bundled brand mark key (see `paymentLogos.ts`). When set, the checkout
+   * pay-dock and payment-options rows prefer this over the generic icon.
+   */
+  logoKey?: PaymentLogoKey;
   /**
    * If set and `mode === 'upi'`, this is passed to Razorpay's `prefill.method`
    * so the matching tab (UPI / Card / Netbanking / Wallet) is pre-selected
@@ -42,9 +49,11 @@ export type PaymentSelection = {
 
 const DEFAULT: PaymentSelection = {
   mode: "upi",
-  label: "Pay by UPI / Card",
-  subLabel: "Secured by Razorpay",
-  icon: "credit-card-outline",
+  label: "UPI",
+  subLabel: "Google Pay, PhonePe, Paytm & more",
+  icon: "cellphone-wireless",
+  logoKey: "upi",
+  method: "upi",
 };
 
 let current: PaymentSelection = DEFAULT;

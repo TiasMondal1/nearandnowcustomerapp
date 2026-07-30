@@ -1,4 +1,5 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Image } from "expo-image";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import {
@@ -19,6 +20,10 @@ import {
     loadOrderHistoryFlag,
 } from "../../lib/orderHistoryFlag";
 import {
+    PAYMENT_LOGOS,
+    type PaymentLogoKey,
+} from "../../lib/paymentLogos";
+import {
     getPaymentSelection,
     setPaymentSelection,
     type PaymentSelection,
@@ -36,27 +41,80 @@ type RailOption = {
   key: string;
   mode: "upi" | "cod";
   method?: RazorpayMethod;
+  /** Short label shown on the checkout "PAY USING" row. */
   label: string;
   subLabel?: string;
   icon: keyof typeof MaterialCommunityIcons.glyphMap;
   iconColor?: string;
   iconBg?: string;
+  /** Bundled brand mark for UPI apps. */
+  logoKey?: PaymentLogoKey;
 };
 
-// All rails that Razorpay exposes. Tapping any of these writes the selection
-// and returns to the checkout — the checkout then launches the Razorpay sheet
-// with `prefill.method` pointing at the chosen rail so the user lands on the
-// right tab immediately.
-const UPI_OPTION: RailOption = {
-  key: "upi",
-  mode: "upi",
-  method: "upi",
-  label: "Pay by UPI",
-  subLabel: "Google Pay, PhonePe, Paytm, BHIM & any UPI app",
-  icon: "cellphone-wireless",
-  iconColor: "#fc8019",
-  iconBg: "#fff2e5",
-};
+// UPI apps — all open Razorpay on the UPI tab; the label is what the
+// checkout footer displays under "PAY USING".
+const UPI_APPS: RailOption[] = [
+  {
+    key: "gpay",
+    mode: "upi",
+    method: "upi",
+    label: "Google Pay",
+    subLabel: "Pay via Google Pay UPI",
+    icon: "cellphone-wireless",
+    logoKey: "gpay",
+    iconBg: "#ffffff",
+  },
+  {
+    key: "phonepe",
+    mode: "upi",
+    method: "upi",
+    label: "PhonePe",
+    subLabel: "Pay via PhonePe UPI",
+    icon: "cellphone-wireless",
+    logoKey: "phonepe",
+    iconBg: "#5f259f",
+  },
+  {
+    key: "paytm",
+    mode: "upi",
+    method: "upi",
+    label: "Paytm",
+    subLabel: "Pay via Paytm UPI",
+    icon: "cellphone-wireless",
+    logoKey: "paytm",
+    iconBg: "#ffffff",
+  },
+  {
+    key: "cred",
+    mode: "upi",
+    method: "upi",
+    label: "CRED UPI",
+    subLabel: "Pay via CRED",
+    icon: "cellphone-wireless",
+    logoKey: "cred",
+    iconBg: "#ffffff",
+  },
+  {
+    key: "bhim",
+    mode: "upi",
+    method: "upi",
+    label: "BHIM UPI",
+    subLabel: "Pay via BHIM",
+    icon: "cellphone-wireless",
+    logoKey: "bhim",
+    iconBg: "#ffffff",
+  },
+  {
+    key: "upi-other",
+    mode: "upi",
+    method: "upi",
+    label: "Other UPI Apps",
+    subLabel: "Any UPI ID or UPI app",
+    icon: "cellphone-wireless",
+    logoKey: "upi",
+    iconBg: "#ffffff",
+  },
+];
 
 const CARD_OPTION: RailOption = {
   key: "card",
@@ -67,17 +125,6 @@ const CARD_OPTION: RailOption = {
   icon: "credit-card-outline",
   iconColor: "#1a1f71",
   iconBg: "#e8ecff",
-};
-
-const WALLET_OPTION: RailOption = {
-  key: "wallet",
-  mode: "upi",
-  method: "wallet",
-  label: "Wallets",
-  subLabel: "PhonePe, Amazon Pay, Paytm & more",
-  icon: "wallet-outline",
-  iconColor: "#6d28d9",
-  iconBg: "#ede9fe",
 };
 
 const NETBANKING_OPTION: RailOption = {
@@ -94,11 +141,22 @@ const NETBANKING_OPTION: RailOption = {
 const COD_OPTION: RailOption = {
   key: "cod",
   mode: "cod",
-  label: "Pay on Delivery",
+  label: "Cash on Delivery",
   subLabel: "Pay in cash when your order arrives",
   icon: "cash-multiple",
   iconColor: "#16a34a",
   iconBg: "#dcfce7",
+};
+
+const WALLET_OPTION: RailOption = {
+  key: "wallet",
+  mode: "upi",
+  method: "wallet",
+  label: "Wallets",
+  subLabel: "PhonePe, Amazon Pay, Paytm & more",
+  icon: "wallet-outline",
+  iconColor: "#6d28d9",
+  iconBg: "#ede9fe",
 };
 
 export default function PaymentOptionsScreen() {
@@ -224,6 +282,7 @@ export default function PaymentOptionsScreen() {
         subLabel: opt.subLabel,
         icon: opt.icon as string,
         method: opt.method,
+        logoKey: opt.logoKey,
       });
     },
     [applyAndClose],
@@ -352,7 +411,7 @@ export default function PaymentOptionsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* UPI — single rail entry, hands off to Razorpay UPI tab */}
+        {/* UPI apps */}
         <View style={styles.upiHeaderRow}>
           <View style={styles.upiBadge}>
             <Text style={styles.upiBadgeText}>UPI</Text>
@@ -360,10 +419,24 @@ export default function PaymentOptionsScreen() {
           <Text style={styles.sectionTitleInline}>Pay by any UPI App</Text>
         </View>
         <View style={styles.card}>
+          {UPI_APPS.map((opt, i) => (
+            <RailRow
+              key={opt.key}
+              opt={opt}
+              selected={isSelectedRail(opt)}
+              onPress={() => handlePickRail(opt)}
+              divider={i < UPI_APPS.length - 1}
+            />
+          ))}
+        </View>
+
+        {/* COD */}
+        <Text style={styles.sectionTitle}>Cash on Delivery</Text>
+        <View style={styles.card}>
           <RailRow
-            opt={UPI_OPTION}
-            selected={isSelectedRail(UPI_OPTION)}
-            onPress={() => handlePickRail(UPI_OPTION)}
+            opt={COD_OPTION}
+            selected={isSelectedRail(COD_OPTION)}
+            onPress={() => handlePickRail(COD_OPTION)}
           />
         </View>
 
@@ -377,25 +450,23 @@ export default function PaymentOptionsScreen() {
           />
         </View>
 
-        {/* More Payment Options */}
+        {/* Netbanking */}
+        <Text style={styles.sectionTitle}>Netbanking</Text>
+        <View style={styles.card}>
+          <RailRow
+            opt={NETBANKING_OPTION}
+            selected={isSelectedRail(NETBANKING_OPTION)}
+            onPress={() => handlePickRail(NETBANKING_OPTION)}
+          />
+        </View>
+
+        {/* More — third-party wallets via Razorpay */}
         <Text style={styles.sectionTitle}>More Payment Options</Text>
         <View style={styles.card}>
           <RailRow
             opt={WALLET_OPTION}
             selected={isSelectedRail(WALLET_OPTION)}
             onPress={() => handlePickRail(WALLET_OPTION)}
-            divider
-          />
-          <RailRow
-            opt={NETBANKING_OPTION}
-            selected={isSelectedRail(NETBANKING_OPTION)}
-            onPress={() => handlePickRail(NETBANKING_OPTION)}
-            divider
-          />
-          <RailRow
-            opt={COD_OPTION}
-            selected={isSelectedRail(COD_OPTION)}
-            onPress={() => handlePickRail(COD_OPTION)}
           />
         </View>
 
@@ -452,6 +523,7 @@ function RailRow({
   onPress: () => void;
   divider?: boolean;
 }) {
+  const logo = opt.logoKey ? PAYMENT_LOGOS[opt.logoKey] : null;
   return (
     <>
       <TouchableOpacity
@@ -463,13 +535,22 @@ function RailRow({
           style={[
             styles.rowIcon,
             { backgroundColor: opt.iconBg ?? C.bgSoft },
+            logo ? styles.rowIconLogo : null,
           ]}
         >
-          <MaterialCommunityIcons
-            name={opt.icon}
-            size={20}
-            color={opt.iconColor ?? C.text}
-          />
+          {logo ? (
+            <Image
+              source={logo}
+              style={styles.rowLogo}
+              contentFit="contain"
+            />
+          ) : (
+            <MaterialCommunityIcons
+              name={opt.icon}
+              size={20}
+              color={opt.iconColor ?? C.text}
+            />
+          )}
         </View>
         <View style={{ flex: 1 }}>
           <Text style={styles.rowTitle}>{opt.label}</Text>
@@ -615,6 +696,16 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
+    overflow: "hidden",
+  },
+  rowIconLogo: {
+    borderWidth: 1,
+    borderColor: C.borderSoft,
+    padding: 0,
+  },
+  rowLogo: {
+    width: 40,
+    height: 40,
   },
   rowTitle: { color: C.text, fontSize: 14, fontWeight: "700" },
   rowSub: { color: C.textSub, fontSize: 12, marginTop: 2 },

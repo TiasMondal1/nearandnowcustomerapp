@@ -31,6 +31,7 @@ import {
     subscribePaymentSelection,
     type PaymentSelection,
 } from "../../lib/paymentSelection";
+import { PAYMENT_LOGOS } from "../../lib/paymentLogos";
 import { getWalletBalance, payOrderWithWallet } from "../../lib/walletService";
 import { logSilentFailure } from "../../lib/logSilentFailure";
 import { logError } from "../../lib/logError";
@@ -89,10 +90,10 @@ export default function CheckoutScreen() {
   // on this screen. Subscribing here would re-render the entire (large)
   // checkout tree every time the user picks a payment method, which was
   // causing a visible hang when returning from the payment-options page.
-  // Instead, the small `<PayMethodRow>` component near the bottom of this
-  // file subscribes on its own and re-renders in isolation, and the
-  // placeOrder handler reads the latest selection synchronously via
-  // `getPaymentSelection()`.
+  // Instead, the small `<PayMethodSelector>` / `<PayButtonLabel>` components
+  // near the bottom of this file subscribe on their own and re-render in
+  // isolation, and the placeOrder handler reads the latest selection
+  // synchronously via `getPaymentSelection()`.
   const { phase: paymentPhase, payForOrder, RazorpayUI } = usePaymentFlow();
 
   useEffect(() => {
@@ -1000,31 +1001,35 @@ export default function CheckoutScreen() {
         <View style={{ height: 16 }} />
       </ScrollView>
 
-      {/* ─── Pay Dock ─── */}
+      {/* ─── Pay Dock (Blinkit-style: method left, Place Order right) ─── */}
       <View style={styles.payDock}>
-        <PayMethodRow tipAmount={tipAmount} />
+        <View style={styles.payDockRow}>
+          <PayMethodSelector tipAmount={tipAmount} />
 
-        {/* Slide to Pay button */}
-        <TouchableOpacity
-          style={[styles.payButton, placing && styles.payButtonPlacing]}
-          onPress={placeOrder}
-          disabled={placing}
-          activeOpacity={0.85}
-        >
-          {placing ? (
-            <>
-              <MaterialCommunityIcons name="loading" size={20} color="#fff" />
-              <Text style={styles.payButtonText}>Placing your order…</Text>
-            </>
-          ) : (
-            <>
-              <View style={styles.paySlideArrow}>
-                <MaterialCommunityIcons name="chevron-double-right" size={22} color="#fff" />
+          <TouchableOpacity
+            style={[styles.payButton, placing && styles.payButtonPlacing]}
+            onPress={placeOrder}
+            disabled={placing}
+            activeOpacity={0.85}
+          >
+            {placing ? (
+              <View style={styles.payButtonPlacingInner}>
+                <MaterialCommunityIcons name="loading" size={18} color="#fff" />
+                <Text style={styles.payButtonCtaText}>Placing…</Text>
               </View>
-              <PayButtonLabel finalPayable={finalPayable} />
-            </>
-          )}
-        </TouchableOpacity>
+            ) : (
+              <>
+                <View style={styles.payButtonAmount}>
+                  <Text style={styles.payButtonAmountValue}>
+                    ₹{finalPayable.toFixed(0)}
+                  </Text>
+                  <Text style={styles.payButtonAmountLabel}>TOTAL</Text>
+                </View>
+                <PayButtonLabel />
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
 
       {RazorpayUI}
@@ -1114,11 +1119,12 @@ function usePaymentSelectionSubscription(): PaymentSelection {
   return sel;
 }
 
-function PayMethodRow({ tipAmount }: { tipAmount: number }) {
+function PayMethodSelector({ tipAmount }: { tipAmount: number }) {
   const sel = usePaymentSelectionSubscription();
+  const logo = sel.logoKey ? PAYMENT_LOGOS[sel.logoKey] : null;
   return (
     <TouchableOpacity
-      style={styles.payMethodRow}
+      style={styles.payMethodSelector}
       activeOpacity={0.8}
       onPress={() =>
         router.push({
@@ -1127,34 +1133,38 @@ function PayMethodRow({ tipAmount }: { tipAmount: number }) {
         })
       }
     >
-      <View style={styles.payMethodLeft}>
-        <MaterialCommunityIcons
-          name={(sel.icon as any) || "credit-card-outline"}
-          size={20}
-          color={C.text}
-        />
-        <View style={{ marginLeft: 10, flex: 1 }}>
-          <Text style={styles.payMethodLabel}>Pay using</Text>
-          <Text style={styles.payMethodValue} numberOfLines={1}>
-            {sel.label}
-            {sel.subLabel ? ` · ${sel.subLabel}` : ""}
-          </Text>
-        </View>
+      <View style={styles.payMethodIconWrap}>
+        {logo ? (
+          <Image source={logo} style={styles.payMethodLogo} contentFit="contain" />
+        ) : (
+          <MaterialCommunityIcons
+            name={(sel.icon as any) || "cellphone-wireless"}
+            size={22}
+            color={C.text}
+          />
+        )}
       </View>
-      <View style={styles.payMethodChange}>
-        <Text style={styles.payMethodChangeText}>Change</Text>
-        <MaterialCommunityIcons name="chevron-right" size={16} color={C.primary} />
+      <View style={styles.payMethodTextCol}>
+        <View style={styles.payMethodLabelRow}>
+          <Text style={styles.payMethodLabel}>PAY USING</Text>
+          <MaterialCommunityIcons name="menu-up" size={16} color={C.text} />
+        </View>
+        <Text style={styles.payMethodValue} numberOfLines={1}>
+          {sel.label}
+        </Text>
       </View>
     </TouchableOpacity>
   );
 }
 
-function PayButtonLabel({ finalPayable }: { finalPayable: number }) {
+function PayButtonLabel() {
   const sel = usePaymentSelectionSubscription();
+  const cta = sel.mode === "cod" ? "Place Order" : "Pay";
   return (
-    <Text style={styles.payButtonText}>
-      {sel.mode === "cod" ? "Place Order" : `Slide to Pay | ₹${finalPayable.toFixed(0)}`}
-    </Text>
+    <View style={styles.payButtonCta}>
+      <Text style={styles.payButtonCtaText}>{cta}</Text>
+      <MaterialCommunityIcons name="play" size={12} color="#fff" />
+    </View>
   );
 }
 
@@ -1162,7 +1172,7 @@ function PayButtonLabel({ finalPayable }: { finalPayable: number }) {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#f0f0f5" },
-  scrollContent: { paddingBottom: 200 },
+  scrollContent: { paddingBottom: 120 },
 
   backBtn: {
     width: 38,
@@ -1511,16 +1521,16 @@ const styles = StyleSheet.create({
   orderForChipTextActive: {
     color: C.primary,
   },
-  // Pay dock
+  // Pay dock — Blinkit-style horizontal bar
   payDock: {
     position: "absolute",
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: C.card,
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 30,
+    backgroundColor: "#f0f0f5",
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 28,
     borderTopWidth: 1,
     borderTopColor: C.border,
     shadowColor: "#000",
@@ -1529,55 +1539,96 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 16,
   },
-  payMethodRow: {
+  payDockRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  payMethodSelector: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexShrink: 1,
+    maxWidth: "38%",
+    gap: 8,
+    paddingVertical: 4,
+  },
+  payMethodIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: C.card,
+    borderWidth: 1,
+    borderColor: C.border,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  payMethodLogo: {
+    width: 36,
+    height: 36,
+  },
+  payMethodTextCol: { flexShrink: 1 },
+  payMethodLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+  },
+  payMethodLabel: {
+    color: C.text,
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.4,
+  },
+  payMethodValue: {
+    color: C.text,
+    fontSize: 13,
+    fontWeight: "800",
+    marginTop: 1,
+  },
+  payButton: {
+    flex: 1,
+    backgroundColor: C.primary,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingBottom: 12,
-    marginBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: C.borderSoft,
+    minHeight: 56,
   },
-  payMethodLeft: { flexDirection: "row", alignItems: "center", flex: 1, marginRight: 8 },
-  payMethodLabel: { color: C.textSub, fontSize: 11, fontWeight: "600" },
-  payMethodValue: { color: C.text, fontSize: 14, fontWeight: "800", marginTop: 1 },
-  payMethodChange: { flexDirection: "row", alignItems: "center" },
-  payMethodChangeText: { color: C.primary, fontSize: 13, fontWeight: "700" },
-  paymentToggleRow: {
-    flexDirection: "row",
-    gap: 8,
-    marginBottom: 12,
-  },
-  paymentToggleBtn: {
+  payButtonPlacing: { opacity: 0.65, justifyContent: "center" },
+  payButtonPlacingInner: {
     flex: 1,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    borderColor: C.border,
-    alignItems: "center",
-    backgroundColor: C.bgSoft,
-  },
-  paymentToggleBtnActive: { borderColor: C.primary, backgroundColor: C.primaryXLight },
-  paymentToggleText: { color: C.textSub, fontSize: 12, fontWeight: "700" },
-  paymentToggleTextActive: { color: C.primary },
-  payButton: {
-    backgroundColor: C.primary,
-    borderRadius: 14,
-    paddingVertical: 16,
-    paddingHorizontal: 24,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 10,
+    gap: 8,
   },
-  payButtonPlacing: { opacity: 0.65 },
-  paySlideArrow: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: "rgba(255,255,255,0.25)",
-    alignItems: "center",
+  payButtonAmount: {
     justifyContent: "center",
   },
-  payButtonText: { color: "#fff", fontSize: 16, fontWeight: "900", letterSpacing: 0.2 },
+  payButtonAmountValue: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "900",
+    letterSpacing: 0.2,
+  },
+  payButtonAmountLabel: {
+    color: "rgba(255,255,255,0.85)",
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 0.6,
+    marginTop: 1,
+  },
+  payButtonCta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  payButtonCtaText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "900",
+    letterSpacing: 0.2,
+  },
 });
