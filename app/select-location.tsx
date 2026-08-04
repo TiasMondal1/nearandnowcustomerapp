@@ -6,6 +6,7 @@ import {
     ActivityIndicator,
     Alert,
     FlatList,
+    Share,
     StyleSheet,
     Text,
     TextInput,
@@ -204,6 +205,13 @@ export default function SelectLocationScreen() {
     }
   };
 
+  const handleShareAddress = (address: SavedAddress) => {
+    const lines = [address.label, address.address, address.landmark]
+      .filter(Boolean)
+      .join("\n");
+    Share.share({ message: lines }).catch(() => {});
+  };
+
   const handleAddNewAddress = () => {
     router.push("/location/select-map");
   };
@@ -286,7 +294,7 @@ export default function SelectLocationScreen() {
         <View style={styles.addressActions}>
           <TouchableOpacity
             style={styles.shareBtn}
-            onPress={() => {}}
+            onPress={() => handleShareAddress(item)}
             hitSlop={8}
           >
             <MaterialCommunityIcons name="share-variant" size={18} color={T.barkLight} />

@@ -29,9 +29,25 @@ export default function SupportScreen() {
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
         <Section title="Quick Help">
-          <SupportAction icon="package-variant-closed" title="Order Issues" subtitle="Missing items, wrong order" />
-          <SupportAction icon="credit-card-outline" title="Payments & Refunds" subtitle="Charges, refunds, failed payments" />
-          <SupportAction icon="truck-delivery-outline" title="Delivery Problems" subtitle="Late or incomplete delivery" isLast />
+          <SupportAction
+            icon="package-variant-closed"
+            title="Order Issues"
+            subtitle="Missing items, wrong order"
+            onPress={() => Linking.openURL("mailto:support@nearandnow.app?subject=Order%20Issue")}
+          />
+          <SupportAction
+            icon="credit-card-outline"
+            title="Payments & Refunds"
+            subtitle="Charges, refunds, failed payments"
+            onPress={() => Linking.openURL("mailto:support@nearandnow.app?subject=Payment%20or%20Refund%20Issue")}
+          />
+          <SupportAction
+            icon="truck-delivery-outline"
+            title="Delivery Problems"
+            subtitle="Late or incomplete delivery"
+            onPress={() => Linking.openURL("mailto:support@nearandnow.app?subject=Delivery%20Problem")}
+            isLast
+          />
         </Section>
 
         <Section title="Contact Us">
