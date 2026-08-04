@@ -126,8 +126,14 @@ export default function PhoneScreen() {
 
             <Text style={styles.termsText}>
               By continuing, you agree to our{" "}
-              <Text style={styles.termsLink}>Terms</Text> &amp;{" "}
-              <Text style={styles.termsLink}>Privacy Policy</Text>.
+              <Text style={styles.termsLink} onPress={() => router.push("/settings/terms")}>
+                Terms
+              </Text>{" "}
+              &amp;{" "}
+              <Text style={styles.termsLink} onPress={() => router.push("/settings/terms")}>
+                Privacy Policy
+              </Text>
+              .
             </Text>
           </View>
         </View>

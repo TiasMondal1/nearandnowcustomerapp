@@ -767,6 +767,7 @@ export default function CheckoutScreen() {
                   <TouchableOpacity
                     style={styles.recoBookmark}
                     hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+                    onPress={() => Alert.alert("Coming soon", "Saving items for later isn't available yet.")}
                   >
                     <MaterialCommunityIcons name="bookmark-outline" size={14} color={C.textSub} />
                   </TouchableOpacity>
