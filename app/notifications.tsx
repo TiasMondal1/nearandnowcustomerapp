@@ -82,6 +82,7 @@ export default function NotificationsScreen() {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState(false);
 
   const fetchNotifications = useCallback(async (isRefresh = false) => {
     if (!userId) {
@@ -92,8 +93,10 @@ export default function NotificationsScreen() {
       if (!isRefresh) setLoading(true);
       const data = await apiFetch<AppNotification[]>(`/api/notifications/users/${userId}`);
       setNotifications(data);
+      setLoadError(false);
     } catch (err) {
       logSilentFailure("Fetch notifications", err);
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -187,11 +190,22 @@ export default function NotificationsScreen() {
           />
         }
         ListEmptyComponent={
-          <View style={styles.empty}>
-            <MaterialCommunityIcons name="bell-outline" size={56} color={C.textLight} />
-            <Text style={styles.emptyTitle}>No notifications yet</Text>
-            <Text style={styles.emptyText}>Order updates will appear here</Text>
-          </View>
+          loadError ? (
+            <View style={styles.empty}>
+              <MaterialCommunityIcons name="wifi-off" size={56} color={C.warning} />
+              <Text style={styles.emptyTitle}>Couldn&apos;t load notifications</Text>
+              <Text style={styles.emptyText}>Check your connection and try again.</Text>
+              <TouchableOpacity style={styles.retryBtn} onPress={() => fetchNotifications()}>
+                <Text style={styles.retryBtnText}>Try Again</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.empty}>
+              <MaterialCommunityIcons name="bell-outline" size={56} color={C.textLight} />
+              <Text style={styles.emptyTitle}>No notifications yet</Text>
+              <Text style={styles.emptyText}>Order updates will appear here</Text>
+            </View>
+          )
         }
         renderItem={({ item }) => <NotificationCard item={item} onPress={handlePress} />}
       />
@@ -258,4 +272,12 @@ const styles = StyleSheet.create({
   empty: { marginTop: 80, alignItems: "center", gap: 10, padding: 32 },
   emptyTitle: { color: C.text, fontSize: 16, fontWeight: "800" },
   emptyText: { color: C.textSub, fontSize: 14, textAlign: "center" },
+  retryBtn: {
+    marginTop: 8,
+    backgroundColor: C.warning,
+    borderRadius: 10,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+  },
+  retryBtnText: { color: "#fff", fontWeight: "700" },
 });

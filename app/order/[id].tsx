@@ -347,6 +347,16 @@ export default function OrderDetailScreen() {
             </Text>
           </View>
 
+          {order.receiver_name && (
+            <View style={styles.infoRow}>
+              <MaterialCommunityIcons name="account-outline" size={15} color={C.textSub} />
+              <Text style={styles.infoText}>
+                Ordered for {order.receiver_name}
+                {order.receiver_phone ? ` · ${order.receiver_phone}` : ""}
+              </Text>
+            </View>
+          )}
+
           <View style={styles.infoRow}>
             <MaterialCommunityIcons name="credit-card-outline" size={15} color={C.textSub} />
             <Text style={styles.infoText}>

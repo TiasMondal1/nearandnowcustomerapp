@@ -13,6 +13,7 @@ import {
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import StarRating from "../../components/StarRating";
 import { C } from "../../constants/colors";
 import { useCart } from "../../context/CartContext";
 import { cdnImage } from "../../lib/imageUrl";
@@ -119,6 +120,12 @@ export default function ProductDetailsScreen() {
 
         <View style={styles.detailsCard}>
           <Text style={styles.name}>{product.name}</Text>
+
+          {typeof product.avgRating === "number" && product.avgRating > 0 && (
+            <View style={styles.ratingRow}>
+              <StarRating rating={product.avgRating} reviewCount={product.reviewCount} starSize={14} />
+            </View>
+          )}
 
           <View style={styles.priceRow}>
             <Text style={styles.price}>₹{product.price}</Text>
@@ -267,6 +274,7 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   name: { color: C.text, fontSize: 22, fontWeight: "800", lineHeight: 28 },
+  ratingRow: { marginTop: 6 },
   priceRow: {
     flexDirection: "row",
     alignItems: "center",
