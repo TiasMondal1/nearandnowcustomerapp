@@ -91,6 +91,16 @@ export interface Order {
   order_total: number;
   subtotal?: number;
   delivery_fee?: number;
+  /** Coupon discount actually applied server-side at checkout, if any. */
+  discount_amount?: number;
+  /** Delivery partner tip actually applied server-side at checkout, if any. */
+  tip_amount?: number;
+  gstin?: string;
+  gstin_business_name?: string;
+  /** "Order for someone else" — who actually received the order, if not the customer themself. */
+  receiver_name?: string;
+  receiver_phone?: string;
+  receiver_address?: string;
   items?: OrderItem[];
   items_count?: number;
   delivery_address?: string;
@@ -155,6 +165,13 @@ type BackendCustomerOrder = {
   total_amount?: number | string | null;
   subtotal_amount?: number | string | null;
   delivery_fee?: number | string | null;
+  discount_amount?: number | string | null;
+  tip_amount?: number | string | null;
+  gstin?: string | null;
+  gstin_business_name?: string | null;
+  receiver_name?: string | null;
+  receiver_phone?: string | null;
+  receiver_address?: string | null;
   delivery_address?: string | null;
   placed_at?: string | null;
   created_at?: string | null;
@@ -207,6 +224,13 @@ function mapBackendOrder(order: BackendCustomerOrder): Order {
     order_total: toNumber(order.total_amount, 0),
     subtotal: toNumber(order.subtotal_amount, undefined as unknown as number) || undefined,
     delivery_fee: toNumber(order.delivery_fee, undefined as unknown as number) || undefined,
+    discount_amount: toNumber(order.discount_amount, undefined as unknown as number) || undefined,
+    tip_amount: toNumber(order.tip_amount, undefined as unknown as number) || undefined,
+    gstin: order.gstin || undefined,
+    gstin_business_name: order.gstin_business_name || undefined,
+    receiver_name: order.receiver_name || undefined,
+    receiver_phone: order.receiver_phone || undefined,
+    receiver_address: order.receiver_address || undefined,
     items,
     items_count: items.length,
     delivery_address: order.delivery_address || undefined,

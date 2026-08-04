@@ -12,10 +12,27 @@ export function calcDeliveryFee(): number {
 }
 
 /**
- * Bill = item total + platform fee + handling charges + delivery fee (₹0)
- * + GST (5% on platform + handling fee). Only the **final payable** is
- * rounded to the nearest rupee so the pay button / Razorpay / DB agree on
- * the same integer total.
+ * Informational-only GST breakdown embedded in PLATFORM_FEE + HANDLING_FEE —
+ * shared by the live checkout bill and the read-only order detail/confirmation
+ * screens (which reconstruct the same breakdown from an already-placed order,
+ * where only subtotal/delivery/discount/tip/total are actually persisted).
+ */
+export function calcFeeGst(): number {
+  const feesGstInclusive = PLATFORM_FEE + HANDLING_FEE;
+  return Math.round((feesGstInclusive - feesGstInclusive / (1 + GST_RATE)) * 100) / 100;
+}
+
+/**
+ * Bill = item total + platform fee + handling charges + delivery fee (₹0).
+ * PLATFORM_FEE/HANDLING_FEE are already GST-inclusive final amounts (matching
+ * the website's checkoutCalculations.ts, which reverse-extracts GST from the
+ * same fixed ₹9.50/₹5.50 rather than adding it) — `gst` below is purely an
+ * informational breakdown for display, not an additional charge. Previously
+ * this added `gst` on top of the already-inclusive fees too, silently
+ * charging GST on the fee portion twice: for a ₹100 cart this billed ₹116
+ * here vs. the website's ₹115 for an identical order. Only the **final
+ * payable** is rounded to the nearest rupee so the pay button / Razorpay /
+ * DB agree on the same integer total.
  */
 export function calcOrderTotal(
   subtotal: number,
@@ -33,8 +50,8 @@ export function calcOrderTotal(
   const platformFee = PLATFORM_FEE;
   const handlingFee = HANDLING_FEE;
   const deliveryFee = calcDeliveryFee();
-  const gst = (platformFee + handlingFee) * GST_RATE;
-  const projected = subtotal + platformFee + handlingFee + deliveryFee + gst;
+  const gst = calcFeeGst();
+  const projected = subtotal + platformFee + handlingFee + deliveryFee;
   const finalPayable = Math.round(Math.max(projected - discount, 0));
   return { platformFee, handlingFee, deliveryFee, gst, projected, finalPayable };
 }

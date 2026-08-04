@@ -15,6 +15,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { PaymentProcessingOverlay } from "../../components/PaymentProcessingOverlay";
 import { C } from "../../constants/colors";
+import { PLATFORM_FEE, HANDLING_FEE, GST_RATE, calcFeeGst } from "../../constants/fees";
 import {
     CANCELLED_STATUSES,
     ORDER_TIMELINE,
@@ -499,12 +500,25 @@ export default function OrderDetailScreen() {
           </View>
         </View>
 
-        {/* Bill */}
+        {/* Bill — reconstructs the fee/GST breakdown from the fixed
+            PLATFORM_FEE/HANDLING_FEE constants (not persisted per-order,
+            since they haven't varied since this order model), matching the
+            live checkout screen's own display convention. Coupon Discount
+            and Tip come straight from the order record when present. */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Bill Summary</Text>
           <View style={styles.billCard}>
             <BillLine label="Subtotal" value={`₹${(order.subtotal ?? 0).toFixed(2)}`} />
+            <BillLine label="Platform Fee" value={`₹${PLATFORM_FEE.toFixed(2)}`} />
+            <BillLine label="Handling Charges" value={`₹${HANDLING_FEE.toFixed(2)}`} />
             <BillLine label="Delivery fee" value={`₹${(order.delivery_fee ?? 0).toFixed(2)}`} />
+            <BillLine label={`GST charges (${GST_RATE * 100}%)`} value={`₹${calcFeeGst().toFixed(2)}`} />
+            {!!order.discount_amount && (
+              <BillLine label="Coupon Discount" value={`-₹${order.discount_amount.toFixed(2)}`} />
+            )}
+            {!!order.tip_amount && (
+              <BillLine label="Delivery Partner Tip" value={`₹${order.tip_amount.toFixed(2)}`} />
+            )}
             <View style={styles.billDivider} />
             <BillLine
               label={order.payment_status === "paid" ? "Total Paid" : "Total Payable"}

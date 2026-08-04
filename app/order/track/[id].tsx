@@ -608,7 +608,7 @@ export default function TrackOrderScreen() {
         <TouchableOpacity
           style={styles.helpRow}
           activeOpacity={0.85}
-          onPress={() => router.push("/support/help" as any)}
+          onPress={() => router.push("/settings/support")}
         >
           <MaterialCommunityIcons name="headset" size={20} color={C.primary} />
           <View style={{ flex: 1 }}>
