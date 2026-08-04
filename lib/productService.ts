@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import type { Category } from './categoryService';
 import { supabase } from './supabase';
+import { getAllActiveProductIds } from './storeService';
 
 // Real schema columns for popularity sorting are `rating` and `rating_count`
 // (NOT `avg_rating` / `review_count`).
@@ -459,6 +460,15 @@ export async function getProductsPage(
 
 export async function getProductById(masterProductId: string): Promise<Product | null> {
   try {
+    // Unlike every other product-fetch function in this file, the detail
+    // screen may be reached with no location context at all (deep link,
+    // shared link, stale cached list) — so it can't use `nearbyIds`. Fall
+    // back to the location-independent "carried by any approved + online
+    // store" filter instead of skipping the check entirely, matching the
+    // same is_active/is_approved gate every other product path enforces.
+    const activeIds = await getAllActiveProductIds();
+    if (!activeIds.has(masterProductId)) return null;
+
     const { data, error } = await supabase
       .from('master_products')
       .select(MASTER_PRODUCT_FIELDS)
