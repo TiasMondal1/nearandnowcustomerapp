@@ -21,6 +21,7 @@ import { logError } from "../../../lib/logError";
 import { logSilentFailure } from "../../../lib/logSilentFailure";
 import { getAllProducts, type Product } from "../../../lib/productService";
 import { createAdditionPayment, verifyAdditionPayment } from "../../../lib/orderAdditionService";
+import { getAllActiveProductIds } from "../../../lib/storeService";
 
 // Matches ADD_ITEMS_WINDOW_MS's 35s server-side backstop in
 // backend/src/controllers/orderAdditions.controller.ts (a few seconds'
@@ -88,7 +89,11 @@ export default function OrderConfirmationScreen() {
 
     (async () => {
       try {
-        const products = await getAllProducts();
+        // Same base filter every other product-fetch path in the app
+        // applies — these suggestions are addable to the order, so they must
+        // only come from approved + online stores.
+        const nearbyIds = await getAllActiveProductIds();
+        const products = await getAllProducts({ nearbyIds });
         if (!cancelled) {
           // Get random products not in the current order
           const orderProductIds = new Set(order?.items?.map((i) => i.product_id) ?? []);
