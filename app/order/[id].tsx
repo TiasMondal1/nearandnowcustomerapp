@@ -15,7 +15,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { PaymentProcessingOverlay } from "../../components/PaymentProcessingOverlay";
 import { C } from "../../constants/colors";
-import { PLATFORM_FEE, HANDLING_FEE, GST_RATE, calcFeeGst } from "../../constants/fees";
+import { PLATFORM_FEE, HANDLING_FEE } from "../../constants/fees";
 import {
     CANCELLED_STATUSES,
     ORDER_TIMELINE,
@@ -500,7 +500,7 @@ export default function OrderDetailScreen() {
           </View>
         </View>
 
-        {/* Bill — reconstructs the fee/GST breakdown from the fixed
+        {/* Bill — reconstructs the fee breakdown from the fixed
             PLATFORM_FEE/HANDLING_FEE constants (not persisted per-order,
             since they haven't varied since this order model), matching the
             live checkout screen's own display convention. Coupon Discount
@@ -512,7 +512,6 @@ export default function OrderDetailScreen() {
             <BillLine label="Platform Fee" value={`₹${PLATFORM_FEE.toFixed(2)}`} />
             <BillLine label="Handling Charges" value={`₹${HANDLING_FEE.toFixed(2)}`} />
             <BillLine label="Delivery fee" value={`₹${(order.delivery_fee ?? 0).toFixed(2)}`} />
-            <BillLine label={`GST charges (${GST_RATE * 100}%)`} value={`₹${calcFeeGst().toFixed(2)}`} />
             {!!order.discount_amount && (
               <BillLine label="Coupon Discount" value={`-₹${order.discount_amount.toFixed(2)}`} />
             )}

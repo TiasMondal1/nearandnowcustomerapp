@@ -240,7 +240,7 @@ export default function CheckoutScreen() {
 
   const subtotal = useMemo(() => items.reduce((s, i) => s + i.price * i.quantity, 0), [items]);
   const totalItems = useMemo(() => items.reduce((s, i) => s + i.quantity, 0), [items]);
-  const { platformFee, handlingFee, deliveryFee, gst, projected } = useMemo(
+  const { platformFee, handlingFee, deliveryFee, projected } = useMemo(
     () => calcOrderTotal(subtotal, totalItems, maxDistance),
     [subtotal, totalItems, maxDistance],
   );
@@ -897,7 +897,6 @@ export default function CheckoutScreen() {
             }
           />
           <BillRow label="Delivery Fee" value={deliveryFee} />
-          <BillRow label="GST charges" value={gst} />
           {tipAmount > 0 && <BillRow label="Delivery Partner Tip" value={tipAmount} />}
           <View style={styles.billDivider} />
           <View style={styles.totalRow}>

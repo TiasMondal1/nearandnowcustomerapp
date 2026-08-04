@@ -14,7 +14,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRazorpay } from "@codearcade/expo-razorpay";
 
 import { C } from "../../../constants/colors";
-import { PLATFORM_FEE, HANDLING_FEE, GST_RATE, calcFeeGst } from "../../../constants/fees";
+import { PLATFORM_FEE, HANDLING_FEE } from "../../../constants/fees";
 import { useAuth } from "../../../context/AuthContext";
 import { useCart } from "../../../context/CartContext";
 import { getOrderById, type Order } from "../../../lib/orderService";
@@ -561,10 +561,6 @@ export default function OrderConfirmationScreen() {
               <Text style={styles.summaryValue}>
                 ₹{(order?.delivery_fee ?? 0).toFixed(2)}
               </Text>
-            </View>
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>GST charges ({GST_RATE * 100}%)</Text>
-              <Text style={styles.summaryValue}>₹{calcFeeGst().toFixed(2)}</Text>
             </View>
             {!!order?.discount_amount && (
               <View style={styles.summaryRow}>

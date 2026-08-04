@@ -14,7 +14,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { C } from "../../constants/colors";
-import { calcOrderTotal, DELIVERY_FEE, GST_RATE, HANDLING_FEE, PLATFORM_FEE } from "../../constants/fees";
+import { calcOrderTotal, DELIVERY_FEE, HANDLING_FEE, PLATFORM_FEE } from "../../constants/fees";
 import { useCart } from "../../context/CartContext";
 import { cdnImage } from "../../lib/imageUrl";
 
@@ -40,7 +40,7 @@ export default function CartScreen() {
     () => items.reduce((sum, i) => sum + i.quantity, 0),
     [items],
   );
-  const { platformFee, handlingFee, deliveryFee, gst, projected } = useMemo(
+  const { platformFee, handlingFee, deliveryFee, projected } = useMemo(
     () => calcOrderTotal(subtotal, totalItems),
     [subtotal, totalItems],
   );
@@ -82,19 +82,15 @@ export default function CartScreen() {
                   <Text style={styles.billValue}>₹{handlingFee.toFixed(2)}</Text>
                 </View>
                 <View style={styles.billRow}>
-                  <Text style={styles.billLabel}>Delivery fee</Text>
-                  <Text style={styles.billValue}>
-                    {deliveryFee === 0 ? "Free" : `₹${deliveryFee.toFixed(2)}`}
-                  </Text>
-                </View>
-                <View style={styles.billRow}>
                   <View style={styles.billLabelRow}>
-                    <Text style={styles.billLabel}>GST ({GST_RATE * 100}%)</Text>
+                    <Text style={styles.billLabel}>Delivery fee</Text>
                     <TouchableOpacity onPress={() => setShowInfo(true)}>
                       <MaterialCommunityIcons name="information-outline" size={14} color={C.textLight} />
                     </TouchableOpacity>
                   </View>
-                  <Text style={styles.billValue}>₹{gst.toFixed(2)}</Text>
+                  <Text style={styles.billValue}>
+                    {deliveryFee === 0 ? "Free" : `₹${deliveryFee.toFixed(2)}`}
+                  </Text>
                 </View>
                 <View style={styles.billDivider} />
                 <View style={styles.billRow}>
@@ -184,12 +180,6 @@ export default function CartScreen() {
               <Text style={styles.modalSectionTitle}>Delivery Fee</Text>
               <Text style={styles.modalDesc}>
                 {DELIVERY_FEE > 0 ? `Fixed ₹${DELIVERY_FEE.toFixed(2)} per order` : "Always free — ₹0"}
-              </Text>
-              <View style={styles.divider} />
-              <Text style={styles.modalSectionTitle}>GST</Text>
-              <Text style={styles.modalDesc}>{GST_RATE * 100}% on Platform Fee + Handling Fee</Text>
-              <Text style={styles.modalDesc}>
-                GST = (₹{PLATFORM_FEE.toFixed(2)} + ₹{HANDLING_FEE.toFixed(2)}) × {GST_RATE * 100}% = ₹{((PLATFORM_FEE + HANDLING_FEE) * GST_RATE).toFixed(2)}
               </Text>
               <View style={styles.divider} />
               <Text style={styles.modalNote}>All fees are calculated and confirmed at checkout.</Text>
