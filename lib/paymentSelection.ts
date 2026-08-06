@@ -49,8 +49,8 @@ export type PaymentSelection = {
 
 const DEFAULT: PaymentSelection = {
   mode: "upi",
-  label: "UPI",
-  subLabel: "Google Pay, PhonePe, Paytm & more",
+  label: "Other UPI Apps",
+  subLabel: "Any UPI ID or UPI app",
   icon: "cellphone-wireless",
   logoKey: "upi",
   method: "upi",

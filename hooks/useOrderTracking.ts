@@ -154,6 +154,7 @@ export function useOrderTracking(orderId: string | undefined): UseOrderTrackingR
 
   // Driver location poll — independent from order refetch since it ticks 2.5x faster.
   useEffect(() => {
+    setDriverLocations({});
     if (!orderId) return;
 
     let cancelled = false;

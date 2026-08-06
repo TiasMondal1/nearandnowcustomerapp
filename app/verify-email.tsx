@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
@@ -49,6 +49,13 @@ export default function VerifyEmailScreen() {
   };
 
   const code = digits.join("");
+
+  useEffect(() => {
+    if (code.length === 4 && !loading) {
+      handleVerify();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [digits]);
 
   const handleVerify = async () => {
     if (code.length !== 4 || loading) return;

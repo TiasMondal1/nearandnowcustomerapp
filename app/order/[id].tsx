@@ -357,6 +357,16 @@ export default function OrderDetailScreen() {
             </View>
           )}
 
+          {order.gstin && (
+            <View style={styles.infoRow}>
+              <MaterialCommunityIcons name="file-document-outline" size={15} color={C.textSub} />
+              <Text style={styles.infoText}>
+                GSTIN {order.gstin}
+                {order.gstin_business_name ? ` · ${order.gstin_business_name}` : ""}
+              </Text>
+            </View>
+          )}
+
           <View style={styles.infoRow}>
             <MaterialCommunityIcons name="credit-card-outline" size={15} color={C.textSub} />
             <Text style={styles.infoText}>

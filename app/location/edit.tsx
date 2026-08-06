@@ -221,7 +221,11 @@ export default function EditLocationScreen() {
             />
           </View>
 
-          <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
+          <TouchableOpacity
+            style={[styles.saveBtn, saving && { opacity: 0.6 }]}
+            onPress={handleSave}
+            disabled={saving}
+          >
             <Text style={styles.saveText}>
               {saving ? "Saving…" : "Update address"}
             </Text>

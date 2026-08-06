@@ -204,6 +204,14 @@ export default function SelectMapLocationScreen() {
     void getCurrentLocation();
   }, [getCurrentLocation]);
 
+  useEffect(() => {
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const fetchPredictions = useCallback(async (input: string) => {
     if (!input.trim()) {
       setPredictions([]);
