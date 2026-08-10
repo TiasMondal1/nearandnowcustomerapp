@@ -293,6 +293,7 @@ export default function OrderConfirmationScreen() {
         price: product.price,
         image_url: product.image_url,
         unit: product.unit,
+        isLoose: product.isLoose,
       });
     },
     [addItem]

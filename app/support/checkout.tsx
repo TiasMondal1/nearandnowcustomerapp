@@ -807,6 +807,7 @@ export default function CheckoutScreen() {
                         price: p.price,
                         unit: p.unit,
                         image_url: p.image_url,
+                        isLoose: p.isLoose,
                       })
                     }
                   >

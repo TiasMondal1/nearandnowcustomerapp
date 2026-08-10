@@ -27,6 +27,11 @@ export type CartItem = {
   unit?: string;
   image_url?: string;
   quantity: number;
+  // Loose/weighed products (e.g. produce sold by weight) step in 0.25 kg
+  // increments instead of whole units — matches the website cart and the
+  // backend's own validateQuantity(), which now accepts fractional
+  // quantities for these products.
+  isLoose?: boolean;
 };
 
 export type Coupon = {
@@ -109,15 +114,16 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const addItem = useCallback((product: Omit<CartItem, "quantity">) => {
     setItems((prev) => {
       const existing = prev.find((p) => p.product_id === product.product_id);
+      const step = product.isLoose ? 0.25 : 1;
       if (existing) {
         if (existing.quantity >= MAX_QUANTITY_PER_ITEM) return prev;
         return prev.map((p) =>
           p.product_id === product.product_id
-            ? { ...p, quantity: p.quantity + 1 }
+            ? { ...p, quantity: Math.round((p.quantity + step) * 100) / 100 }
             : p,
         );
       }
-      return [...prev, { ...product, quantity: 1 }];
+      return [...prev, { ...product, quantity: step }];
     });
   }, []);
 
@@ -144,13 +150,22 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   // the same target from the same stale quantity), this reads the current
   // quantity from inside the setItems updater itself, so N rapid taps
   // always net exactly N regardless of React's batching/render timing.
-  const incrementQty = useCallback((productId: string, delta: number) => {
+  //
+  // `direction` is a sign, not a magnitude — every call site passes ±1 to
+  // mean "one step up/down." The actual step size (0.25 kg for loose
+  // products, matching the website cart and the backend's own
+  // validateQuantity(); 1 unit otherwise) is resolved here from the item's
+  // own isLoose flag, so callers don't need to know or care about it.
+  const incrementQty = useCallback((productId: string, direction: number) => {
     setItems((prev) => {
       const existing = prev.find((p) => p.product_id === productId);
       if (!existing) return prev;
-      const nextQty = existing.quantity + delta;
-      if (nextQty <= 0) return prev.filter((p) => p.product_id !== productId);
-      const clampedQty = Math.min(nextQty, MAX_QUANTITY_PER_ITEM);
+      const step = existing.isLoose ? 0.25 : 1;
+      const nextQty = existing.quantity + Math.sign(direction) * step;
+      // Round off float drift from repeated 0.25 addition/subtraction.
+      const rounded = Math.round(nextQty * 100) / 100;
+      if (rounded <= 0) return prev.filter((p) => p.product_id !== productId);
+      const clampedQty = Math.min(rounded, MAX_QUANTITY_PER_ITEM);
       return prev.map((p) =>
         p.product_id === productId ? { ...p, quantity: clampedQty } : p,
       );

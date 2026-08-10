@@ -432,7 +432,7 @@ export default function OrderAgainScreen() {
 
   const handleAdd = useCallback(
     (p: Product) =>
-      addItem({ product_id: p.id, name: p.name, price: p.price, unit: p.unit, image_url: p.image_url }),
+      addItem({ product_id: p.id, name: p.name, price: p.price, unit: p.unit, image_url: p.image_url, isLoose: p.isLoose }),
     [addItem],
   );
   const handleUpdateQty = useCallback(

@@ -183,6 +183,7 @@ export default function ProductDetailsScreen() {
                 price: product.price,
                 unit: product.unit,
                 image_url: product.image_url,
+                isLoose: product.isLoose,
               })
             }
           >

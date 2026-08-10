@@ -220,6 +220,7 @@ export default function SearchScreen() {
                         price: item.price,
                         unit: item.unit,
                         image_url: item.image_url,
+                        isLoose: item.isLoose,
                       })
                     }
                   >

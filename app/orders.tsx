@@ -37,10 +37,12 @@ function formatDate(iso: string) {
 const OrderCard = React.memo(function OrderCard({
   item,
   paymentPhase,
+  walletPayingOrderId,
   onRetryPayment,
 }: {
   item: Order;
   paymentPhase: string;
+  walletPayingOrderId: string | null;
   onRetryPayment: (order: Order) => void;
 }) {
   const status = item.order_status ?? "";
@@ -99,12 +101,16 @@ const OrderCard = React.memo(function OrderCard({
               <Text style={[styles.trackText, { color: C.text }]}>Details</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.trackBtn, styles.payNowBtn]}
+              style={[styles.trackBtn, styles.payNowBtn, walletPayingOrderId === item.id && { opacity: 0.6 }]}
               onPress={() => onRetryPayment(item)}
-              disabled={paymentPhase !== "idle"}
+              disabled={paymentPhase !== "idle" || walletPayingOrderId === item.id}
             >
-              <MaterialCommunityIcons name="credit-card-fast-outline" size={14} color="#fff" />
-              <Text style={styles.trackText}>Pay now</Text>
+              {walletPayingOrderId === item.id ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <MaterialCommunityIcons name="credit-card-fast-outline" size={14} color="#fff" />
+              )}
+              <Text style={styles.trackText}>{walletPayingOrderId === item.id ? "Paying…" : "Pay now"}</Text>
             </TouchableOpacity>
           </View>
         ) : isDelivered ? (
@@ -147,8 +153,12 @@ export default function OrdersScreen() {
   // Wallet retry bypasses usePaymentFlow entirely (it has no "wallet" phase),
   // so paymentPhase never reflects it and the Pay-now button never actually
   // disables — mirrors usePaymentFlow's own inFlight ref to guard against a
-  // fast double-tap firing two concurrent wallet debits.
+  // fast double-tap firing two concurrent wallet debits. walletPayingId is
+  // the state twin of the same guard, used only to drive the button's
+  // loading/disabled UI (the ref remains the actual synchronous guard —
+  // state updates aren't guaranteed to have committed before a second tap).
   const walletPaymentInFlight = useRef(false);
+  const [walletPayingId, setWalletPayingId] = useState<string | null>(null);
 
   const fetchOrders = useCallback(async (isRefresh = false) => {
     try {
@@ -209,6 +219,7 @@ export default function OrdersScreen() {
       if (paymentMethod === "wallet") {
         if (walletPaymentInFlight.current) return;
         walletPaymentInFlight.current = true;
+        setWalletPayingId(order.id);
         try {
           await payOrderWithWallet(order.id);
           Alert.alert("Payment successful", "Your order has been paid from your wallet.");
@@ -217,6 +228,7 @@ export default function OrdersScreen() {
           Alert.alert("Payment failed", message);
         } finally {
           walletPaymentInFlight.current = false;
+          setWalletPayingId(null);
           fetchOrders(true);
         }
         return;
@@ -250,8 +262,8 @@ export default function OrdersScreen() {
   );
 
   const renderOrder = useCallback(({ item }: { item: Order }) => (
-    <OrderCard item={item} paymentPhase={paymentPhase} onRetryPayment={handleRetryPayment} />
-  ), [paymentPhase, handleRetryPayment]);
+    <OrderCard item={item} paymentPhase={paymentPhase} walletPayingOrderId={walletPayingId} onRetryPayment={handleRetryPayment} />
+  ), [paymentPhase, walletPayingId, handleRetryPayment]);
 
   const Header = (
     <View style={styles.header}>

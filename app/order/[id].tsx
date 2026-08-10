@@ -61,8 +61,11 @@ export default function OrderDetailScreen() {
   // Wallet retry bypasses usePaymentFlow entirely (it has no "wallet" phase),
   // so paymentPhase never reflects it and the Pay-now button never actually
   // disables — mirrors usePaymentFlow's own inFlight ref to guard against a
-  // fast double-tap firing two concurrent wallet debits.
+  // fast double-tap firing two concurrent wallet debits. walletPaying is the
+  // state twin of the same guard, used only to drive the button's
+  // loading/disabled UI — the ref is the real synchronous guard.
   const walletPaymentInFlight = useRef(false);
+  const [walletPaying, setWalletPaying] = useState(false);
 
   useEffect(() => {
     if (userId) loadOrder();
@@ -235,6 +238,7 @@ export default function OrderDetailScreen() {
     if (paymentMethod === "wallet") {
       if (walletPaymentInFlight.current) return;
       walletPaymentInFlight.current = true;
+      setWalletPaying(true);
       try {
         await payOrderWithWallet(order.id);
         setOrder((prev) => (prev ? { ...prev, payment_status: "paid" } : prev));
@@ -244,6 +248,7 @@ export default function OrderDetailScreen() {
         Alert.alert("Payment failed", message);
       } finally {
         walletPaymentInFlight.current = false;
+        setWalletPaying(false);
       }
       return;
     }
@@ -315,13 +320,17 @@ export default function OrderDetailScreen() {
               </Text>
             </View>
             <TouchableOpacity
-              style={styles.payBannerBtn}
+              style={[styles.payBannerBtn, walletPaying && { opacity: 0.6 }]}
               activeOpacity={0.85}
               onPress={handleRetryPayment}
-              disabled={paymentPhase !== "idle"}
+              disabled={paymentPhase !== "idle" || walletPaying}
             >
-              <MaterialCommunityIcons name="credit-card-fast-outline" size={16} color="#fff" />
-              <Text style={styles.payBannerBtnText}>Pay now</Text>
+              {walletPaying ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <MaterialCommunityIcons name="credit-card-fast-outline" size={16} color="#fff" />
+              )}
+              <Text style={styles.payBannerBtnText}>{walletPaying ? "Paying…" : "Pay now"}</Text>
             </TouchableOpacity>
           </View>
         )}
