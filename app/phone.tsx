@@ -1,4 +1,4 @@
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import React, { useState } from "react";
 import {
     Alert,
@@ -19,7 +19,10 @@ import { sendOTP } from "../lib/authService";
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function PhoneScreen() {
-  const [phone, setPhone] = useState("");
+  const params = useLocalSearchParams();
+  const prefillPhone = typeof params.phone === "string" ? params.phone : "";
+
+  const [phone, setPhone] = useState(prefillPhone);
   const [email, setEmail] = useState("");
   const [loadingOtp, setLoadingOtp] = useState(false);
 
@@ -31,9 +34,12 @@ export default function PhoneScreen() {
   };
 
   const emailValid = EMAIL_REGEX.test(email.trim());
-  // Email is optional here (the helper text below says as much — "You can
-  // verify it after logging in") — only block Continue on a malformed,
-  // non-empty email, not on leaving it blank.
+  // This screen serves both login and signup, and we don't know which one
+  // this phone number is until after OTP verification — so email can't be
+  // force-required here without also nagging returning users on every login.
+  // The backend enforces email as mandatory for brand-new signups (see
+  // auth.controller.ts); otp.tsx sends the user back here to fill it in if
+  // that happens. No verification is required at this point — only capture.
   const isValid = phone.length === 10 && (email.trim().length === 0 || emailValid);
 
   const handleContinueWithOtp = async () => {

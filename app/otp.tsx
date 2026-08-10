@@ -105,13 +105,29 @@ export default function OtpScreen() {
     try {
       setLoading(true);
       const { isNewUser } = await verifyOTPCode(phone, code, "Customer", email || undefined);
+      // Email verification step disabled for now — email is captured (mandatory) during
+      // signup but not verified. Re-enable by routing new users to "/verify-email" instead.
+      // if (isNewUser) {
+      //   router.replace({ pathname: "/verify-email", params: { email } });
+      // } else {
+      //   router.replace("/welcome");
+      // }
       if (isNewUser) {
-        router.replace({ pathname: "/verify-email", params: { email } });
+        router.replace("/onboarding");
       } else {
         router.replace("/welcome");
       }
     } catch (err: any) {
-      Alert.alert("Error", err?.message || "Verification failed");
+      const message = err?.message || "Verification failed";
+      if (message.toLowerCase().includes("email")) {
+        // Backend rejects brand-new signups without an email (auth.controller.ts).
+        // Send the user back to add one rather than showing a raw error.
+        Alert.alert("Email required", "Please enter your email address to finish creating your account.", [
+          { text: "OK", onPress: () => router.replace({ pathname: "/phone", params: { phone: phone.replace("+91", "") } }) },
+        ]);
+      } else {
+        Alert.alert("Error", message);
+      }
       setDigits(["", "", "", "", "", ""]);
       inputsRef.current[0]?.focus();
     } finally {
