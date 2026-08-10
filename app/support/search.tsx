@@ -18,7 +18,7 @@ import { useCartItemMap, useCart } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
 import { cdnImage } from "../../lib/imageUrl";
 import { searchProducts, type Product } from "../../lib/productService";
-import { getNearbyProductFilter } from "../../lib/storeService";
+import { getAllActiveProductIds, getNearbyProductFilter } from "../../lib/storeService";
 import StarRating from "../../components/StarRating";
 
 export default function SearchScreen() {
@@ -28,7 +28,18 @@ export default function SearchScreen() {
   const lastLocationKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!location) { nearbyIdsRef.current = undefined; return; }
+    if (!location) {
+      // No location yet (fresh install, geolocation denied, direct deep
+      // link into this screen) — without this fallback, searchProducts()
+      // was called with nearbyIds: undefined, which skips the
+      // store-approved/active filter entirely, matching the same gap
+      // already fixed elsewhere (checkout, product detail, order
+      // confirmation) via getAllActiveProductIds() but missed here.
+      getAllActiveProductIds().then((filter) => {
+        nearbyIdsRef.current = filter.size > 0 ? filter : undefined;
+      });
+      return;
+    }
     const key = `${location.latitude.toFixed(3)},${location.longitude.toFixed(3)}`;
     if (lastLocationKeyRef.current === key) return;
     lastLocationKeyRef.current = key;
@@ -46,6 +57,8 @@ export default function SearchScreen() {
   const [results, setResults] = useState<Product[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
+  const [searchError, setSearchError] = useState(false);
+  const [retryNonce, setRetryNonce] = useState(0);
   const inputRef = useRef<TextInput>(null);
 
   // Monotonically-increasing request id so a slow stale response can't overwrite
@@ -76,22 +89,31 @@ export default function SearchScreen() {
         if (myId !== requestIdRef.current) return;
         setResults(data);
         setSearched(true);
+        setSearchError(false);
       } catch {
+        // Previously indistinguishable from a genuine "no results" —
+        // searchProducts() already swallows its own errors and resolves []
+        // (see lib/productService.ts), so this catch only ever fires for
+        // something thrown before that, but keeping a real error state here
+        // means the render below doesn't have to guess.
         if (myId !== requestIdRef.current) return;
         setResults([]);
         setSearched(true);
+        setSearchError(true);
       } finally {
         if (myId === requestIdRef.current) setLoading(false);
       }
     }, 350);
 
     return () => clearTimeout(timeout);
-  }, [query, location]);
+  }, [query, location, retryNonce]);
 
   const doSearch = () => {
     // Keep onSubmitEditing wired to dismiss keyboard / no-op (debounced effect runs on its own).
     inputRef.current?.blur();
   };
+
+  const retrySearch = () => setRetryNonce((n) => n + 1);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -130,6 +152,15 @@ export default function SearchScreen() {
           <MaterialCommunityIcons name="magnify" size={52} color={C.textLight} />
           <Text style={styles.hintTitle}>Search products</Text>
           <Text style={styles.hintText}>Type at least 2 characters to search</Text>
+        </View>
+      ) : searchError ? (
+        <View style={styles.centerState}>
+          <MaterialCommunityIcons name="alert-circle-outline" size={52} color={C.textLight} />
+          <Text style={styles.hintTitle}>Couldn't load results</Text>
+          <Text style={styles.hintText}>Something went wrong — try again</Text>
+          <TouchableOpacity onPress={retrySearch} style={styles.retryBtn}>
+            <Text style={styles.retryBtnText}>Try again</Text>
+          </TouchableOpacity>
         </View>
       ) : results.length === 0 ? (
         <View style={styles.centerState}>
@@ -287,6 +318,14 @@ const styles = StyleSheet.create({
   },
   hintTitle: { color: C.text, fontSize: 16, fontWeight: "700" },
   hintText: { color: C.textSub, fontSize: 14, textAlign: "center" },
+  retryBtn: {
+    marginTop: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: C.primary,
+  },
+  retryBtnText: { color: "#fff", fontSize: 14, fontWeight: "700" },
 
   resultCard: {
     flexDirection: "row",

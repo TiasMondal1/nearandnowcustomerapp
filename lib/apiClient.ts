@@ -122,7 +122,19 @@ export async function apiFetch<T>(
         if (token) onSessionExpired?.();
         throw new Error('Session expired. Please log in again.');
       } else if (response.status === 403) {
-        throw new Error('Access denied. Please contact support.');
+        // Previously always overridden with a generic "Access denied" string,
+        // discarding whatever the backend actually said — including
+        // requireCustomer's real "This account has been suspended." message,
+        // which then never reached the user at all. A suspended account
+        // 403s on every subsequent authenticated call, so — unlike a one-off
+        // "not authorized for this specific resource" 403 — this needs to
+        // force a logout the same way an expired session does, otherwise the
+        // user stays stuck "logged in," repeatedly hitting the same
+        // unexplained error on every action with no way out.
+        if (token && message.toLowerCase().includes('suspended')) {
+          onSessionExpired?.();
+        }
+        throw new Error(String(message));
       } else if (response.status === 404) {
         throw new Error('Resource not found.');
       } else if (response.status >= 500) {
