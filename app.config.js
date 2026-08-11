@@ -28,7 +28,7 @@ module.exports = {
     slug: "near-and-now-customer",
     version: "1.0.0",
     orientation: "default",
-    icon: "./assets/near_now_image.png",
+    icon: "./assets/images/icon.png",
     scheme: "nearandnow",
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
@@ -43,7 +43,7 @@ module.exports = {
     android: {
       adaptiveIcon: {
         backgroundColor: "#ffffff",
-        foregroundImage: "./assets/near_now_image.png",
+        foregroundImage: "./assets/images/adaptive-icon-foreground.png",
         monochromeImage: "./assets/images/adaptive-icon-monochrome.png",
       },
       edgeToEdgeEnabled: true,
