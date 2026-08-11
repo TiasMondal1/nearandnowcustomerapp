@@ -46,6 +46,14 @@ export interface TrackingOrder {
   store_orders?: TrackingStoreOrder[];
   /** 4-digit delivery verification PIN, generated when order is dispatched */
   delivery_otp?: string;
+  /**
+   * "Who is this order for" (gift orders) — already selected server-side
+   * via customer_orders' own `select('*')`, just never typed/rendered on
+   * this screen. order/[id].tsx already shows the equivalent fields on the
+   * post-purchase detail screen; this was the one tracking-specific gap.
+   */
+  receiver_name?: string | null;
+  receiver_phone?: string | null;
 }
 
 export interface TrackingStoreLocation {

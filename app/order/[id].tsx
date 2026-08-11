@@ -27,6 +27,7 @@ import { useAuth } from "../../context/AuthContext";
 import { usePaymentFlow } from "../../hooks/usePaymentFlow";
 import { logError } from "../../lib/logError";
 import { getOrderPaymentStatus, getUserOrders, type Order } from "../../lib/orderService";
+import { formatQuantityDisplay } from "../../lib/quantityFormat";
 import { supabase } from "../../lib/supabase";
 import { payOrderWithWallet } from "../../lib/walletService";
 
@@ -519,7 +520,7 @@ export default function OrderDetailScreen() {
                   <Text style={styles.itemUnit}>₹{item.price} / {item.unit}</Text>
                 </View>
                 <View style={styles.itemRight}>
-                  <Text style={styles.itemQty}>×{item.quantity}</Text>
+                  <Text style={styles.itemQty}>×{formatQuantityDisplay(item.quantity)}</Text>
                   <Text style={styles.itemTotal}>
                     ₹{(item.price * item.quantity).toFixed(2)}
                   </Text>

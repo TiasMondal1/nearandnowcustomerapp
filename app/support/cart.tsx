@@ -17,6 +17,7 @@ import { C } from "../../constants/colors";
 import { calcOrderTotal, DELIVERY_FEE, HANDLING_FEE, PLATFORM_FEE } from "../../constants/fees";
 import { useCart } from "../../context/CartContext";
 import { cdnImage } from "../../lib/imageUrl";
+import { formatQuantityDisplay } from "../../lib/quantityFormat";
 
 export default function CartScreen() {
   const { items, isHydrated, incrementQty, removeItem, clearCart } = useCart();
@@ -125,7 +126,7 @@ export default function CartScreen() {
                       >
                         <Text style={styles.qtyBtnText}>−</Text>
                       </TouchableOpacity>
-                      <Text style={styles.qty}>{item.quantity}</Text>
+                      <Text style={styles.qty}>{formatQuantityDisplay(item.quantity, item.isLoose)}</Text>
                       <TouchableOpacity
                         style={styles.qtyBtn}
                         onPress={() => incrementQty(item.product_id, 1)}

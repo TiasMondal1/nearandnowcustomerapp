@@ -488,7 +488,7 @@ export default function OrderAgainScreen() {
             <MaterialCommunityIcons name="account-outline" size={36} color={T.green} />
           </View>
           <Text style={styles.emptyTitle}>Sign in first</Text>
-          <Text style={styles.emptyDesc}>Reorder your favourites in one tap once you're signed in.</Text>
+          <Text style={styles.emptyDesc}>Reorder your favourites in one tap once you&apos;re signed in.</Text>
           <TouchableOpacity style={styles.emptyBtn} onPress={() => router.push("/phone" as any)} activeOpacity={0.85}>
             <Text style={styles.emptyBtnText}>Sign in</Text>
           </TouchableOpacity>
@@ -650,7 +650,7 @@ export default function OrderAgainScreen() {
         {/* Bottom stamp */}
         <View style={styles.endRow}>
           <MaterialCommunityIcons name="history" size={13} color={T.barkLight} />
-          <Text style={styles.endText}>That's everything you've ordered</Text>
+          <Text style={styles.endText}>That&apos;s everything you&apos;ve ordered</Text>
         </View>
       </ScrollView>
     </SafeAreaView>

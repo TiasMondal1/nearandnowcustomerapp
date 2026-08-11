@@ -24,6 +24,7 @@ import { useLocation } from "../../context/LocationContext";
 import { usePaymentFlow } from "../../hooks/usePaymentFlow";
 import { getBatchProductStoreDistances } from "../../lib/distanceUtils";
 import { cdnImage } from "../../lib/imageUrl";
+import { formatQuantityDisplay } from "../../lib/quantityFormat";
 import { markOrderPlaced } from "../../lib/orderHistoryFlag";
 import { createOrder, type Order } from "../../lib/orderService";
 import {
@@ -636,7 +637,7 @@ export default function CheckoutScreen() {
                   >
                     <MaterialCommunityIcons name="minus" size={14} color={C.primary} />
                   </TouchableOpacity>
-                  <Text style={styles.quantityText}>{item.quantity}</Text>
+                  <Text style={styles.quantityText}>{formatQuantityDisplay(item.quantity, item.isLoose)}</Text>
                   <TouchableOpacity
                     style={styles.quantityBtn}
                     onPress={() => incrementQty(item.product_id, 1)}

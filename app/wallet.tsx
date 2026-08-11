@@ -67,9 +67,17 @@ export default function WalletScreen() {
   // until the next render commits.
   const inFlight = useRef(false);
 
+  const TX_PAGE_SIZE = 20;
   const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
   const [txLoading, setTxLoading] = useState(true);
   const [txError, setTxError] = useState(false);
+  // getWalletTransactions() always used its default limit=20/offset=0 with
+  // no way to see anything older — a customer with more than 20 wallet
+  // events (top-ups, order payments, refunds) had no way to reach any of
+  // them. loadingMore/hasMore drive a "Load more" button that pages forward
+  // instead of ever refetching/replacing what's already on screen.
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMoreTx, setHasMoreTx] = useState(true);
 
   const finalAmount = custom.trim() !== "" ? Number(custom) : selected;
   const isValid =
@@ -97,11 +105,28 @@ export default function WalletScreen() {
   const fetchTransactions = React.useCallback(() => {
     setTxLoading(true);
     setTxError(false);
-    getWalletTransactions()
-      .then(setTransactions)
+    getWalletTransactions(TX_PAGE_SIZE, 0)
+      .then((page) => {
+        setTransactions(page);
+        setHasMoreTx(page.length === TX_PAGE_SIZE);
+      })
       .catch(() => setTxError(true))
       .finally(() => setTxLoading(false));
   }, []);
+
+  const loadMoreTransactions = React.useCallback(async () => {
+    if (loadingMore || !hasMoreTx) return;
+    setLoadingMore(true);
+    try {
+      const page = await getWalletTransactions(TX_PAGE_SIZE, transactions.length);
+      setTransactions((prev) => [...prev, ...page]);
+      setHasMoreTx(page.length === TX_PAGE_SIZE);
+    } catch {
+      // Non-fatal — the button just stays available to retry.
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMoreTx, transactions.length]);
 
   useEffect(() => { fetchTransactions(); }, [fetchTransactions]);
 
@@ -307,7 +332,7 @@ export default function WalletScreen() {
             <ActivityIndicator color={T.green} style={{ marginVertical: 12 }} />
           ) : txError ? (
             <View style={{ alignItems: "center", paddingVertical: 12 }}>
-              <Text style={styles.emptyText}>Couldn't load transaction history.</Text>
+              <Text style={styles.emptyText}>Couldn&apos;t load transaction history.</Text>
               <TouchableOpacity onPress={fetchTransactions} style={{ marginTop: 8 }}>
                 <Text style={styles.retryText}>Try again</Text>
               </TouchableOpacity>
@@ -334,6 +359,19 @@ export default function WalletScreen() {
                 </Text>
               </View>
             ))
+          )}
+          {!txLoading && !txError && hasMoreTx && transactions.length > 0 && (
+            <TouchableOpacity
+              onPress={loadMoreTransactions}
+              disabled={loadingMore}
+              style={{ alignItems: "center", paddingVertical: 12 }}
+            >
+              {loadingMore ? (
+                <ActivityIndicator color={T.green} />
+              ) : (
+                <Text style={styles.retryText}>Load more</Text>
+              )}
+            </TouchableOpacity>
           )}
         </View>
 

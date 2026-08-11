@@ -504,6 +504,21 @@ export default function TrackOrderScreen() {
               </Text>
             </View>
           </View>
+          {order.receiver_name && (
+            <>
+              <View style={styles.addressDivider} />
+              <View style={styles.addressRow}>
+                <MaterialCommunityIcons name="account-outline" size={18} color={C.primary} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.addressLabel}>Ordered for</Text>
+                  <Text style={styles.addressValue}>
+                    {order.receiver_name}
+                    {order.receiver_phone ? ` · ${order.receiver_phone}` : ""}
+                  </Text>
+                </View>
+              </View>
+            </>
+          )}
         </View>
 
         {/* ─── Timeline (collapsible) ──────────────────────────────────────── */}

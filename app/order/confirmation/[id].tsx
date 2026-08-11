@@ -23,6 +23,7 @@ import { logSilentFailure } from "../../../lib/logSilentFailure";
 import { getAllProducts, type Product } from "../../../lib/productService";
 import { createAdditionPayment, verifyAdditionPayment } from "../../../lib/orderAdditionService";
 import { getAllActiveProductIds } from "../../../lib/storeService";
+import { formatQuantityDisplay } from "../../../lib/quantityFormat";
 
 // Matches ADD_ITEMS_WINDOW_MS's 35s server-side backstop in
 // backend/src/controllers/orderAdditions.controller.ts (a few seconds'
@@ -382,7 +383,7 @@ export default function OrderConfirmationScreen() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.timerTitle}>Want to add more items?</Text>
                 <Text style={styles.timerSub}>
-                  Add items now and they'll be delivered with this order!
+                  Add items now and they&apos;ll be delivered with this order!
                 </Text>
               </View>
             </View>
@@ -439,7 +440,7 @@ export default function OrderConfirmationScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.timerExpiredTitle}>Items added to your order!</Text>
                   <Text style={styles.timerExpiredSub}>
-                    They'll arrive with this delivery — no separate trip needed.
+                    They&apos;ll arrive with this delivery — no separate trip needed.
                   </Text>
                 </View>
               </>
@@ -447,7 +448,7 @@ export default function OrderConfirmationScreen() {
               <>
                 <MaterialCommunityIcons name="alert-circle" size={28} color={C.danger} />
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.timerExpiredTitle}>Couldn't add those items</Text>
+                  <Text style={styles.timerExpiredTitle}>Couldn&apos;t add those items</Text>
                   <Text style={styles.timerExpiredSub}>
                     {addItemsError || "They're still in your cart — check out separately whenever you like."}
                   </Text>
@@ -527,7 +528,7 @@ export default function OrderConfirmationScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.summaryItemName}>{item.name}</Text>
                   <Text style={styles.summaryItemUnit}>
-                    ₹{item.price} × {item.quantity}
+                    ₹{item.price} × {formatQuantityDisplay(item.quantity)}
                   </Text>
                 </View>
                 <Text style={styles.summaryItemTotal}>
@@ -609,7 +610,7 @@ export default function OrderConfirmationScreen() {
         <View style={styles.deliveryInfo}>
           <MaterialCommunityIcons name="information-outline" size={18} color={C.textSub} />
           <Text style={styles.deliveryInfoText}>
-            You'll receive a 4-digit PIN once your order is dispatched. Share this PIN
+            You&apos;ll receive a 4-digit PIN once your order is dispatched. Share this PIN
             with the delivery partner to confirm delivery.
           </Text>
         </View>

@@ -156,7 +156,7 @@ export default function SearchScreen() {
       ) : searchError ? (
         <View style={styles.centerState}>
           <MaterialCommunityIcons name="alert-circle-outline" size={52} color={C.textLight} />
-          <Text style={styles.hintTitle}>Couldn't load results</Text>
+          <Text style={styles.hintTitle}>Couldn&apos;t load results</Text>
           <Text style={styles.hintText}>Something went wrong — try again</Text>
           <TouchableOpacity onPress={retrySearch} style={styles.retryBtn}>
             <Text style={styles.retryBtnText}>Try again</Text>
@@ -165,7 +165,7 @@ export default function SearchScreen() {
       ) : results.length === 0 ? (
         <View style={styles.centerState}>
           <MaterialCommunityIcons name="emoticon-sad-outline" size={52} color={C.textLight} />
-          <Text style={styles.hintTitle}>No results for "{query}"</Text>
+          <Text style={styles.hintTitle}>No results for &quot;{query}&quot;</Text>
           <Text style={styles.hintText}>Try a different keyword or browse categories</Text>
         </View>
       ) : (

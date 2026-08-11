@@ -25,6 +25,7 @@ import {
     type Order,
 } from "../lib/orderService";
 import { logError } from "../lib/logError";
+import { formatQuantityDisplay } from "../lib/quantityFormat";
 import { payOrderWithWallet } from "../lib/walletService";
 
 function formatDate(iso: string) {
@@ -79,7 +80,7 @@ const OrderCard = React.memo(function OrderCard({
       <View style={styles.itemsWrap}>
         {item.items?.slice(0, 3).map((it, idx) => (
           <Text key={idx} style={styles.itemLine} numberOfLines={1}>
-            • {it.name} ×{it.quantity}
+            • {it.name} ×{formatQuantityDisplay(it.quantity)}
           </Text>
         ))}
         {(item.items?.length ?? 0) > 3 && (

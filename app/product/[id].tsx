@@ -18,6 +18,7 @@ import { C } from "../../constants/colors";
 import { useCart } from "../../context/CartContext";
 import { cdnImage } from "../../lib/imageUrl";
 import { getProductById, type Product } from "../../lib/productService";
+import { formatQuantityDisplay } from "../../lib/quantityFormat";
 
 const { width } = Dimensions.get("window");
 
@@ -203,7 +204,7 @@ export default function ProductDetailsScreen() {
               >
                 <Text style={styles.qtyBtnText}>−</Text>
               </TouchableOpacity>
-              <Text style={styles.qty}>{cartItem.quantity}</Text>
+              <Text style={styles.qty}>{formatQuantityDisplay(cartItem.quantity, product.isLoose)}</Text>
               <TouchableOpacity
                 style={styles.qtyBtn}
                 onPress={() => incrementQty(cartItem.product_id, 1)}
