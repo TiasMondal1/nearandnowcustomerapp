@@ -19,7 +19,9 @@ import { useAuth } from "../context/AuthContext";
 import {
     createWalletTopupOrder,
     getWalletBalance,
+    getWalletTransactions,
     verifyWalletTopup,
+    type WalletTransaction,
 } from "../lib/walletService";
 
 const T = {
@@ -35,6 +37,9 @@ const T = {
 };
 
 const QUICK_AMOUNTS = [100, 250, 500, 1000];
+// Must match MIN_TOPUP_RUPEES/MAX_TOPUP_RUPEES in backend/src/controllers/wallet.controller.ts
+const MIN_TOPUP = 10;
+const MAX_TOPUP = 50_000;
 
 type TopupPhase = "idle" | "preparing" | "awaiting_gateway" | "verifying";
 
@@ -42,6 +47,12 @@ const PHASE_LABEL: Record<Exclude<TopupPhase, "idle">, string> = {
   preparing: "Setting up…",
   awaiting_gateway: "Waiting for payment…",
   verifying: "Verifying…",
+};
+
+const TX_REASON_LABEL: Record<WalletTransaction["reason"], string> = {
+  topup: "Wallet Top-up",
+  order_payment: "Order Payment",
+  refund: "Refund",
 };
 
 export default function WalletScreen() {
@@ -56,8 +67,18 @@ export default function WalletScreen() {
   // until the next render commits.
   const inFlight = useRef(false);
 
+  const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
+  const [txLoading, setTxLoading] = useState(true);
+  const [txError, setTxError] = useState(false);
+
   const finalAmount = custom.trim() !== "" ? Number(custom) : selected;
-  const isValid = finalAmount != null && finalAmount > 0 && Number.isFinite(finalAmount);
+  const isValid =
+    finalAmount != null &&
+    Number.isFinite(finalAmount) &&
+    finalAmount >= MIN_TOPUP &&
+    finalAmount <= MAX_TOPUP;
+  const customOutOfRange =
+    custom.trim() !== "" && Number.isFinite(Number(custom)) && !isValid;
 
   useEffect(() => {
     (async () => {
@@ -72,6 +93,17 @@ export default function WalletScreen() {
       }
     })();
   }, []);
+
+  const fetchTransactions = React.useCallback(() => {
+    setTxLoading(true);
+    setTxError(false);
+    getWalletTransactions()
+      .then(setTransactions)
+      .catch(() => setTxError(true))
+      .finally(() => setTxLoading(false));
+  }, []);
+
+  useEffect(() => { fetchTransactions(); }, [fetchTransactions]);
 
   const handleAddMoney = async () => {
     if (!isValid || inFlight.current) return;
@@ -141,6 +173,7 @@ export default function WalletScreen() {
       setSelected(null);
       setCustom("");
       Alert.alert("Money added", `₹${finalAmount} was added to your wallet.`);
+      fetchTransactions();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Something went wrong. Please try again.";
       Alert.alert("Add money failed", message);
@@ -240,6 +273,11 @@ export default function WalletScreen() {
               maxLength={6}
             />
           </View>
+          {customOutOfRange && (
+            <Text style={styles.rangeError}>
+              Amount must be between ₹{MIN_TOPUP} and ₹{MAX_TOPUP.toLocaleString("en-IN")}
+            </Text>
+          )}
 
           <TouchableOpacity
             style={[styles.addBtn, (!isValid || phase !== "idle") && styles.addBtnDisabled]}
@@ -260,6 +298,43 @@ export default function WalletScreen() {
               {phase !== "idle" ? PHASE_LABEL[phase] : isValid ? `Add ₹${finalAmount}` : "Add Money"}
             </Text>
           </TouchableOpacity>
+        </View>
+
+        {/* Transaction history */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Transaction History</Text>
+          {txLoading ? (
+            <ActivityIndicator color={T.green} style={{ marginVertical: 12 }} />
+          ) : txError ? (
+            <View style={{ alignItems: "center", paddingVertical: 12 }}>
+              <Text style={styles.emptyText}>Couldn't load transaction history.</Text>
+              <TouchableOpacity onPress={fetchTransactions} style={{ marginTop: 8 }}>
+                <Text style={styles.retryText}>Try again</Text>
+              </TouchableOpacity>
+            </View>
+          ) : transactions.length === 0 ? (
+            <Text style={styles.emptyText}>No transactions yet.</Text>
+          ) : (
+            transactions.map((tx) => (
+              <View key={tx.id} style={styles.txRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.txReason}>{TX_REASON_LABEL[tx.reason] || tx.reason}</Text>
+                  <Text style={styles.txDate}>
+                    {new Date(tx.created_at).toLocaleDateString("en-IN", {
+                      year: "numeric",
+                      month: "short",
+                      day: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </Text>
+                </View>
+                <Text style={[styles.txAmount, { color: tx.type === "credit" ? T.green : "#dc2626" }]}>
+                  {tx.type === "credit" ? "+" : "-"}₹{Number(tx.amount).toFixed(2)}
+                </Text>
+              </View>
+            ))
+          )}
         </View>
 
         {/* How it works */}
@@ -376,6 +451,7 @@ const styles = StyleSheet.create({
   },
   inputPrefix: { fontSize: 18, fontWeight: "800", color: T.bark },
   input: { flex: 1, fontSize: 18, fontWeight: "700", color: T.bark },
+  rangeError: { fontSize: 12, color: "#dc2626", marginTop: -6 },
 
   addBtn: {
     flexDirection: "row",
@@ -398,6 +474,20 @@ const styles = StyleSheet.create({
   },
   addBtnText: { fontSize: 15, fontWeight: "800", color: T.white, letterSpacing: 0.2 },
   addBtnTextDisabled: { color: T.barkLight },
+
+  emptyText: { fontSize: 13, color: T.barkLight, textAlign: "center", paddingVertical: 4 },
+  retryText: { fontSize: 13, fontWeight: "700", color: T.green },
+  txRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: T.cardBorder,
+  },
+  txReason: { fontSize: 14, fontWeight: "700", color: T.bark },
+  txDate: { fontSize: 12, color: T.barkLight, marginTop: 2 },
+  txAmount: { fontSize: 14, fontWeight: "800" },
 
   howRow: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
   howIconWrap: {
