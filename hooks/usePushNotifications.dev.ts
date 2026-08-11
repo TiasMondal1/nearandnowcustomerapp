@@ -37,6 +37,22 @@ function navigateFromPushData(data: Record<string, unknown> | undefined) {
   }
 }
 
+// Set right before every failure return in registerForPushNotifications so
+// a caller (e.g. a "Enable Notifications" button) can show a specific,
+// actionable message instead of a silent no-op on failure — same pattern
+// already built for the store-owner app's NotificationSettings.tsx.
+let lastRegistrationError: 'expo-go' | 'permission-denied' | 'token-failed' | 'unknown' | null = null;
+
+export function getLastPushRegistrationError() {
+  return lastRegistrationError;
+}
+
+/** Current permission state without prompting — for an "Enable" button to know whether to show itself. */
+export async function checkPushPermissionStatus(): Promise<'granted' | 'denied' | 'undetermined' | 'unavailable'> {
+  const { status } = await Notifications.getPermissionsAsync();
+  return status;
+}
+
 export function usePushNotifications(userId: string | null) {
   const [expoPushToken, setExpoPushToken] = useState<string | null>(null);
   const notificationListener = useRef<Notifications.Subscription | null>(null);
@@ -92,7 +108,8 @@ export function usePushNotifications(userId: string | null) {
   return { expoPushToken };
 }
 
-async function registerForPushNotifications(userId: string): Promise<string | null> {
+export async function registerForPushNotifications(userId: string): Promise<string | null> {
+  lastRegistrationError = null;
   try {
     if (Platform.OS === 'android') {
       // Channel id bumped to _v2: Android locks a channel's sound at creation
@@ -116,14 +133,27 @@ async function registerForPushNotifications(userId: string): Promise<string | nu
       finalStatus = status;
     }
 
-    if (finalStatus !== 'granted') return null;
+    if (finalStatus !== 'granted') {
+      lastRegistrationError = 'permission-denied';
+      return null;
+    }
 
     const projectId = resolveEasProjectId();
-    const tokenData = projectId
-      ? await Notifications.getExpoPushTokenAsync({ projectId })
-      : await Notifications.getExpoPushTokenAsync();
+    let tokenData;
+    try {
+      tokenData = projectId
+        ? await Notifications.getExpoPushTokenAsync({ projectId })
+        : await Notifications.getExpoPushTokenAsync();
+    } catch {
+      lastRegistrationError = 'token-failed';
+      return null;
+    }
 
     const token = tokenData.data;
+    if (!token) {
+      lastRegistrationError = 'token-failed';
+      return null;
+    }
 
     await apiFetch('/api/push-token', {
       method: 'POST',
@@ -134,6 +164,7 @@ async function registerForPushNotifications(userId: string): Promise<string | nu
 
     return token;
   } catch {
+    lastRegistrationError = 'unknown';
     return null;
   }
 }

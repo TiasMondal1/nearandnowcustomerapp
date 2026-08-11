@@ -41,7 +41,7 @@ const args = process.argv.slice(2).reduce((acc, raw) => {
 
 const alias = args.alias || "upload";
 const validity = args.validity || "10000";
-const dname = args.dname || "CN=Near and Now, OU=Customer App, O=Near and Now, L=Kolkata, S=West Bengal, C=IN";
+const dname = args.dname || "CN=Near & Now, OU=Customer App, O=Near & Now, L=Kolkata, S=West Bengal, C=IN";
 
 function randomPassword() {
   return crypto.randomBytes(18).toString("base64").replace(/[^A-Za-z0-9]/g, "").slice(0, 20);

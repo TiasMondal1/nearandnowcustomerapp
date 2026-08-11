@@ -4,6 +4,7 @@ import { router } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import {
     ActivityIndicator,
+    Alert,
     RefreshControl,
     StyleSheet,
     Text,
@@ -16,6 +17,11 @@ import { C } from "../constants/colors";
 import { useAuth } from "../context/AuthContext";
 import { apiFetch } from "../lib/apiClient";
 import { logSilentFailure } from "../lib/logSilentFailure";
+import {
+    checkPushPermissionStatus,
+    getLastPushRegistrationError,
+    registerForPushNotifications,
+} from "../lib/pushNotificationStatus";
 
 interface AppNotification {
   id: string;
@@ -83,6 +89,42 @@ export default function NotificationsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(false);
+  // Unlike the store-owner/rider apps, this app had no "Enable Notifications"
+  // affordance anywhere — a customer who denied the permission prompt once
+  // had no discoverable way to find out push was off or retry. `null` means
+  // "not checked yet" so the card doesn't flash on/off before the initial
+  // check resolves.
+  const [pushEnabled, setPushEnabled] = useState<boolean | null>(null);
+  const [enablingPush, setEnablingPush] = useState(false);
+
+  useEffect(() => {
+    checkPushPermissionStatus().then((status) => setPushEnabled(status === "granted"));
+  }, []);
+
+  const handleEnablePush = useCallback(async () => {
+    if (!userId || enablingPush) return;
+    setEnablingPush(true);
+    try {
+      const token = await registerForPushNotifications(userId);
+      if (token) {
+        setPushEnabled(true);
+        return;
+      }
+      const reason = getLastPushRegistrationError();
+      if (reason === "permission-denied") {
+        Alert.alert(
+          "Permission needed",
+          "Notifications are blocked for this app. Enable them in your device settings to get order updates.",
+        );
+      } else if (reason === "expo-go") {
+        Alert.alert("Not available", "Push notifications aren't available in this environment.");
+      } else {
+        Alert.alert("Couldn't enable notifications", "Something went wrong. Please try again.");
+      }
+    } finally {
+      setEnablingPush(false);
+    }
+  }, [userId, enablingPush]);
 
   const fetchNotifications = useCallback(async (isRefresh = false) => {
     if (!userId) {
@@ -162,10 +204,28 @@ export default function NotificationsScreen() {
     </View>
   );
 
+  const PushStatusCard = pushEnabled === false ? (
+    <View style={styles.pushCard}>
+      <MaterialCommunityIcons name="bell-alert-outline" size={20} color={C.primary} />
+      <View style={{ flex: 1 }}>
+        <Text style={styles.pushCardTitle}>Turn on notifications</Text>
+        <Text style={styles.pushCardText}>Get order updates the moment they happen.</Text>
+      </View>
+      <TouchableOpacity style={styles.pushCardBtn} onPress={handleEnablePush} disabled={enablingPush} activeOpacity={0.8}>
+        {enablingPush ? (
+          <ActivityIndicator size="small" color="#fff" />
+        ) : (
+          <Text style={styles.pushCardBtnText}>Enable</Text>
+        )}
+      </TouchableOpacity>
+    </View>
+  ) : null;
+
   if (loading) {
     return (
       <SafeAreaView style={styles.safe}>
         {Header}
+        {PushStatusCard}
         <View style={styles.centerContainer}>
           <ActivityIndicator size="large" color={C.primary} />
         </View>
@@ -176,6 +236,7 @@ export default function NotificationsScreen() {
   return (
     <SafeAreaView style={styles.safe}>
       {Header}
+      {PushStatusCard}
       <FlashList
         data={notifications}
         keyExtractor={(item) => item.id}
@@ -215,6 +276,29 @@ export default function NotificationsScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: C.bg },
+
+  pushCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    margin: 12,
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: C.primaryXLight,
+    borderWidth: 1,
+    borderColor: C.primaryLight,
+  },
+  pushCardTitle: { fontSize: 14, fontWeight: "700", color: C.text },
+  pushCardText: { fontSize: 12, color: C.textSub, marginTop: 1 },
+  pushCardBtn: {
+    backgroundColor: C.primary,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    minWidth: 68,
+    alignItems: "center",
+  },
+  pushCardBtnText: { color: "#fff", fontSize: 13, fontWeight: "700" },
 
   header: {
     flexDirection: "row",
