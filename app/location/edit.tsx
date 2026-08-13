@@ -30,6 +30,8 @@ export default function EditLocationScreen() {
 
   const isReverseRef = useRef(false);
   const isForwardRef = useRef(false);
+  const pendingReverseRef = useRef<{ lat: number; lng: number } | null>(null);
+  const pendingForwardRef = useRef<string | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -105,7 +107,13 @@ export default function EditLocationScreen() {
   }, [id, userId]);
 
   const reverseGeocode = useCallback(async (lat: number, lng: number) => {
-    if (isReverseRef.current) return;
+    // Queue-latest-while-busy: a call arriving while one's already in
+    // flight used to be silently dropped instead of re-run, leaving
+    // formattedAddress stale relative to wherever the pin ended up.
+    if (isReverseRef.current) {
+      pendingReverseRef.current = { lat, lng };
+      return;
+    }
     isReverseRef.current = true;
 
     try {
@@ -115,11 +123,20 @@ export default function EditLocationScreen() {
       }
     } finally {
       isReverseRef.current = false;
+      const pending = pendingReverseRef.current;
+      if (pending) {
+        pendingReverseRef.current = null;
+        reverseGeocode(pending.lat, pending.lng);
+      }
     }
   }, []);
 
   const forwardGeocode = useCallback(async (address: string) => {
-    if (!address || isForwardRef.current) return;
+    if (!address) return;
+    if (isForwardRef.current) {
+      pendingForwardRef.current = address;
+      return;
+    }
     isForwardRef.current = true;
 
     try {
@@ -131,6 +148,11 @@ export default function EditLocationScreen() {
       }
     } finally {
       isForwardRef.current = false;
+      const pending = pendingForwardRef.current;
+      if (pending) {
+        pendingForwardRef.current = null;
+        forwardGeocode(pending);
+      }
     }
   }, []);
 

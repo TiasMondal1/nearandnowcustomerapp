@@ -123,12 +123,19 @@ export default function SelectMapLocationScreen() {
   const [placeDetails, setPlaceDetails] = useState<PlaceDetails | null>(null);
 
   const isGeocodingRef = useRef(false);
+  const pendingReverseGeocodeRef = useRef<{ lat: number; lng: number } | null>(null);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
 
   const reverseGeocode = useCallback(async (lat: number, lng: number) => {
-    if (isGeocodingRef.current) return;
+    // Queue-latest-while-busy: a second drag arriving before the first
+    // call's response lands used to be silently dropped, leaving the
+    // displayed address stale relative to the pin's actual position.
+    if (isGeocodingRef.current) {
+      pendingReverseGeocodeRef.current = { lat, lng };
+      return;
+    }
 
     isGeocodingRef.current = true;
     setReverseLoading(true);
@@ -173,6 +180,11 @@ export default function SelectMapLocationScreen() {
     } finally {
       setReverseLoading(false);
       isGeocodingRef.current = false;
+      const pending = pendingReverseGeocodeRef.current;
+      if (pending) {
+        pendingReverseGeocodeRef.current = null;
+        reverseGeocode(pending.lat, pending.lng);
+      }
     }
   }, []);
 

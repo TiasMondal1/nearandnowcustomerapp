@@ -29,6 +29,7 @@ export default function AddLocationScreen() {
   const { userId, user } = useAuth();
   const { setLocation } = useLocation();
   const isGeocodingRef = useRef(false);
+  const pendingReverseGeocodeRef = useRef<{ lat: number; lng: number } | null>(null);
 
   const [label, setLabel] = useState<(typeof LABELS)[number]>("Home");
   const [customLabel, setCustomLabel] = useState("");
@@ -55,6 +56,7 @@ export default function AddLocationScreen() {
   const [saving, setSaving] = useState(false);
   const [reverseLoading, setReverseLoading] = useState(false);
   const isForwardGeocodingRef = useRef(false);
+  const pendingForwardGeocodeRef = useRef<string | null>(null);
 
   function normalizeIndianPhone(input: string): string | null {
     const digits = input.replace(/\D/g, "");
@@ -137,7 +139,17 @@ export default function AddLocationScreen() {
   };
 
   const reverseGeocode = useCallback(async (lat: number, lng: number) => {
-    if (isGeocodingRef.current) return;
+    // Previously a plain in-flight guard: a second drag arriving before the
+    // first call's network response landed was silently dropped (no queue,
+    // no re-run), leaving formattedAddress showing the *previous* pin's
+    // address while the marker itself sat at the new position. Now the
+    // latest coordinates while busy are remembered and re-run once the
+    // in-flight call finishes, so the displayed address always converges on
+    // wherever the pin actually ended up.
+    if (isGeocodingRef.current) {
+      pendingReverseGeocodeRef.current = { lat, lng };
+      return;
+    }
 
     isGeocodingRef.current = true;
     setReverseLoading(true);
@@ -151,11 +163,21 @@ export default function AddLocationScreen() {
     } finally {
       setReverseLoading(false);
       isGeocodingRef.current = false;
+      const pending = pendingReverseGeocodeRef.current;
+      if (pending) {
+        pendingReverseGeocodeRef.current = null;
+        reverseGeocode(pending.lat, pending.lng);
+      }
     }
   }, []);
 
   const forwardGeocode = useCallback(async (address: string) => {
-    if (!address || isForwardGeocodingRef.current) return;
+    if (!address) return;
+    // Same queue-latest-while-busy treatment as reverseGeocode above.
+    if (isForwardGeocodingRef.current) {
+      pendingForwardGeocodeRef.current = address;
+      return;
+    }
 
     isForwardGeocodingRef.current = true;
 
@@ -164,7 +186,7 @@ export default function AddLocationScreen() {
 
       if (json.status !== "OK" || !json.results?.[0]) return;
 
-      const location = json.results[0].geometry.location;
+      const { location } = json.results[0].geometry;
 
       const latitude = location.lat;
       const longitude = location.lng;
@@ -177,6 +199,11 @@ export default function AddLocationScreen() {
       }));
     } finally {
       isForwardGeocodingRef.current = false;
+      const pending = pendingForwardGeocodeRef.current;
+      if (pending) {
+        pendingForwardGeocodeRef.current = null;
+        forwardGeocode(pending);
+      }
     }
   }, []);
 
