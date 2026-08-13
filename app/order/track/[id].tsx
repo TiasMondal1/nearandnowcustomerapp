@@ -130,12 +130,37 @@ export default function TrackOrderScreen() {
     driverLocationAgeMs !== null && driverLocationAgeMs > STALE_DRIVER_LOCATION_MS;
 
   const storeLocation = data?.storeLocations?.[0];
-  const dest =
-    order?.delivery_latitude != null && order?.delivery_longitude != null
-      ? { latitude: Number(order.delivery_latitude), longitude: Number(order.delivery_longitude) }
-      : undefined;
+  // Memoized on the actual coordinate values (not just [order] — a new order
+  // object arrives on every poll/realtime refresh even when nothing moved),
+  // so `dest` only changes reference when the delivery point itself does.
+  const dest = useMemo(() => {
+    if (order?.delivery_latitude == null || order?.delivery_longitude == null) return undefined;
+    return { latitude: Number(order.delivery_latitude), longitude: Number(order.delivery_longitude) };
+  }, [order?.delivery_latitude, order?.delivery_longitude]);
 
   // Center the map so destination + store + driver are all in frame.
+  // Keyed on rounded coordinates (~1m precision) rather than the raw
+  // dest/storeLocation/driverLocation objects — those are new references on
+  // every render even when nothing actually moved (driverLocations updates
+  // every 2s poll), which previously made this recompute continuously and,
+  // combined with passing it as MapView's controlled `region` prop, forced
+  // the map to re-snap to the fitted bounds on every poll tick — the
+  // customer could never manually pan or zoom the map before it got reset.
+  // Found 2026-08-13 via a live click-test/code-review deep dive of the map
+  // implementation. Fixed the same way the website's DeliveryMap.tsx
+  // already does it (see fitBoundsToFullRoute's driverPosKey there): only
+  // recompute when a rounded-coordinate key actually changes, and drive the
+  // map imperatively (mapRef.animateToRegion, below) instead of a
+  // continuously-bound controlled `region` prop, so the user can freely
+  // pan/zoom between real position updates.
+  const regionKey = [
+    dest ? `${dest.latitude.toFixed(5)},${dest.longitude.toFixed(5)}` : '',
+    storeLocation ? `${storeLocation.lat.toFixed(5)},${storeLocation.lng.toFixed(5)}` : '',
+    primaryDriverLocation
+      ? `${primaryDriverLocation.latitude.toFixed(5)},${primaryDriverLocation.longitude.toFixed(5)}`
+      : '',
+  ].join('|');
+
   const mapRegion: Region | undefined = useMemo(() => {
     const points: { latitude: number; longitude: number }[] = [];
     if (dest) points.push(dest);
@@ -163,7 +188,18 @@ export default function TrackOrderScreen() {
       latitudeDelta: latDelta,
       longitudeDelta: lngDelta,
     };
-  }, [dest, storeLocation, primaryDriverLocation]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally keyed on regionKey, not the raw objects (see comment above)
+  }, [regionKey]);
+
+  const mapRef = useRef<MapView>(null);
+  const lastAnimatedKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!mapRegion || !mapRef.current) return;
+    if (lastAnimatedKeyRef.current === regionKey) return;
+    const isFirstFix = lastAnimatedKeyRef.current === null;
+    lastAnimatedKeyRef.current = regionKey;
+    mapRef.current.animateToRegion(mapRegion, isFirstFix ? 0 : 500);
+  }, [regionKey, mapRegion]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -282,10 +318,10 @@ export default function TrackOrderScreen() {
         {!isCancelled && status !== "order_delivered" && mapRegion && !isMultiStore ? (
           <View style={styles.mapWrap}>
             <MapView
+              ref={mapRef}
               provider={PROVIDER_GOOGLE}
               style={styles.map}
               initialRegion={mapRegion}
-              region={mapRegion}
               showsUserLocation={false}
               showsMyLocationButton={false}
               toolbarEnabled={false}
