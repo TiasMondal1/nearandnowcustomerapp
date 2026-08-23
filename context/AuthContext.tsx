@@ -17,6 +17,7 @@ import { apiFetch, setSessionExpiredHandler } from '../lib/apiClient';
 import { logSilentFailure } from '../lib/logSilentFailure';
 import { clearOrderHistoryFlag } from '../lib/orderHistoryFlag';
 import { clearSavedPaymentMethodsCache } from '../lib/razorpayService';
+import { resetPaymentSelection } from '../lib/paymentSelection';
 
 // Renews the sliding 25-day session window as a side effect of requireCustomer
 // (see backend customerAuth.middleware.ts). Fired on cold start and on every
@@ -210,9 +211,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       AsyncStorage.removeItem('customerData'),
     ]);
     // Wipe user-scoped caches so the next user doesn't inherit any of the
-    // previous user's state (saved Razorpay tokens, first-order flag).
+    // previous user's state (saved Razorpay tokens, first-order flag,
+    // selected payment method — the last of these was previously missed:
+    // resetPaymentSelection existed but had zero call sites, so a picked
+    // saved card/UPI selection survived logout and appeared pre-selected
+    // for the next customer on a shared device).
     clearSavedPaymentMethodsCache();
     await clearOrderHistoryFlag();
+    resetPaymentSelection();
     setUser(null);
     setCustomer(null);
     setUserId(null);
