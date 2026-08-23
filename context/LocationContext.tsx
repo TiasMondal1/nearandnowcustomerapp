@@ -6,6 +6,7 @@ import React, {
     useCallback,
     useContext,
     useEffect,
+    useMemo,
     useRef,
     useState,
 } from "react";
@@ -78,8 +79,16 @@ export function LocationProvider({ children }: { children: ReactNode }) {
     }
   }, [isAuthenticated, clearLocation]);
 
+  // Memoized so LocationProvider's own re-renders (for reasons unrelated to
+  // location itself) don't force every useLocation() consumer to re-render
+  // — mirrors CartContext.tsx's identical fix in this same directory.
+  const value = useMemo(
+    () => ({ location, isHydrated, setLocation, clearLocation }),
+    [location, isHydrated, setLocation, clearLocation]
+  );
+
   return (
-    <LocationContext.Provider value={{ location, isHydrated, setLocation, clearLocation }}>
+    <LocationContext.Provider value={value}>
       {children}
     </LocationContext.Provider>
   );

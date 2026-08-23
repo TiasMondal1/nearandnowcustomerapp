@@ -279,6 +279,15 @@ export default function OrderAgainScreen() {
   });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // "All Previously Bought" renders a growing window instead of mounting
+  // every distinct previously-bought product's ProductCard at once — unlike
+  // the sections above it (which already use tuned, virtualized horizontal
+  // FlatLists), this section used a plain `.map()` inside the screen's
+  // outer ScrollView, so a long-tenured customer's full product history
+  // mounted (image + add/quantity controls each) simultaneously, on and
+  // off screen, defeating virtualization entirely.
+  const GRID_PAGE_SIZE = 24;
+  const [gridVisibleCount, setGridVisibleCount] = useState(GRID_PAGE_SIZE);
   const [error, setError] = useState<string | null>(null);
 
   // ── Product catalog ─────────────────────────────────────────────────────
@@ -392,6 +401,8 @@ export default function OrderAgainScreen() {
     }
     return out;
   }, [orders, allProducts]);
+
+  useEffect(() => { setGridVisibleCount(GRID_PAGE_SIZE); }, [displayItems]);
 
   // Top items sorted by how often they were ordered
   const topItems = useMemo(
@@ -630,7 +641,7 @@ export default function OrderAgainScreen() {
             subtitle={`${displayItems.length} item${displayItems.length !== 1 ? "s" : ""}`}
           />
           <View style={styles.grid}>
-            {displayItems.map((it) => (
+            {displayItems.slice(0, gridVisibleCount).map((it) => (
               <View key={it.key} style={styles.gridCell}>
                 {it.product ? (
                   <ProductCard
@@ -645,6 +656,17 @@ export default function OrderAgainScreen() {
               </View>
             ))}
           </View>
+          {gridVisibleCount < displayItems.length && (
+            <TouchableOpacity
+              style={styles.loadMoreBtn}
+              onPress={() => setGridVisibleCount((c) => c + GRID_PAGE_SIZE)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.loadMoreText}>
+                Load More ({displayItems.length - gridVisibleCount} remaining)
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Bottom stamp */}
@@ -680,6 +702,17 @@ const Header = React.memo(function Header() {
 // ─── Styles ──────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: T.bg },
+
+  loadMoreBtn: {
+    alignSelf: "center",
+    marginTop: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 28,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    borderColor: T.green,
+  },
+  loadMoreText: { color: T.green, fontWeight: "700", fontSize: 13 },
 
   // Header
   header: {
