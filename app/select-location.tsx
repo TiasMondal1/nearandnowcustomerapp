@@ -161,10 +161,19 @@ export default function SelectLocationScreen() {
     });
   }, [addresses, currentLocation]);
 
+  const requestingLocationRef = useRef(false);
+
   const handleUseCurrentLocation = async () => {
     // Use-current-location now shares the same map-confirm + search flow as
     // "Add new address": we just ensure permission is granted, then hand off
     // to the map screen which auto-centers on the user's GPS fix on mount.
+    // The `disabled={fetchingCurrentLocation}` guard on the button below is
+    // state-based (not synchronous), so a fast double-tap before the first
+    // render commits could still fire this twice concurrently — this ref
+    // closes that narrow window. Already try/catch'd, so this was never a
+    // crash risk, just a wasted duplicate permission request.
+    if (requestingLocationRef.current) return;
+    requestingLocationRef.current = true;
     try {
       setFetchingCurrentLocation(true);
       const { status } = await ExpoLocation.requestForegroundPermissionsAsync();
@@ -183,6 +192,7 @@ export default function SelectLocationScreen() {
       Alert.alert("Error", "Failed to get your current location");
     } finally {
       setFetchingCurrentLocation(false);
+      requestingLocationRef.current = false;
     }
   };
 

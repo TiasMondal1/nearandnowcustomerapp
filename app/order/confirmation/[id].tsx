@@ -35,7 +35,7 @@ type AddItemsPhase = "idle" | "processing" | "done" | "failed";
 
 export default function OrderConfirmationScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { userId, user } = useAuth();
+  const { userId, user, isLoading: authLoading } = useAuth();
   const { items: cartItems, addItem, clearCart } = useCart();
   const { openCheckout, closeCheckout, RazorpayUI } = useRazorpay();
 
@@ -59,7 +59,22 @@ export default function OrderConfirmationScreen() {
 
   // Load order details
   useEffect(() => {
-    if (!id || !userId) return;
+    // While auth is still hydrating, `userId` is transiently null — wait
+    // for it rather than treating that the same as "genuinely logged out".
+    // Only once auth has settled (authLoading is false) and there's still
+    // no userId (e.g. a stale deep link opened while logged out — not
+    // reachable via this app's own navigation, but possible via a raw
+    // link) do we stop waiting; previously this returned unconditionally
+    // with no way to ever clear the initial `loading` state, leaving the
+    // screen stuck on the spinner forever in that case.
+    if (!id) return;
+    if (!userId) {
+      if (!authLoading) {
+        setLoading(false);
+        setLoadError("Please log in to view this order.");
+      }
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
@@ -83,7 +98,7 @@ export default function OrderConfirmationScreen() {
     return () => {
       cancelled = true;
     };
-  }, [id, userId, retryTick]);
+  }, [id, userId, authLoading, retryTick]);
 
   // Load suggested products
   useEffect(() => {

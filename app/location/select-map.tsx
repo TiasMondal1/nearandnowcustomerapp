@@ -365,7 +365,15 @@ export default function SelectMapLocationScreen() {
     });
   };
 
+  const myLocationInFlightRef = useRef(false);
+
   const handleMyLocation = async () => {
+    // Recenter button had no guard at all against a fast double-tap firing
+    // two overlapping requestForegroundPermissionsAsync()/getCurrentPositionAsync()
+    // calls — already try/catch'd so not a crash risk, just a wasted duplicate
+    // native-module call.
+    if (myLocationInFlightRef.current) return;
+    myLocationInFlightRef.current = true;
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== "granted") {
@@ -392,6 +400,8 @@ export default function SelectMapLocationScreen() {
       reverseGeocode(latitude, longitude);
     } catch (error) {
       Alert.alert("Error", "Failed to get your current location");
+    } finally {
+      myLocationInFlightRef.current = false;
     }
   };
 
