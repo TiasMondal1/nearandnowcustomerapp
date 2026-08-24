@@ -231,6 +231,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const verifyOTPCode = async (phone: string, otp: string, name = 'Customer', email?: string) => {
+    // This call is the only step that can legitimately mean "verification
+    // failed" — it's the one that talks to the backend/Twilio. Everything
+    // below is local post-login bookkeeping; a hiccup there (e.g. a
+    // transient SecureStore/AsyncStorage error) must never be reported back
+    // to the caller as a failed login, since the backend has already
+    // authenticated the user and issued a session token by this point.
+    // Mirrors the same fix applied to the rider app's otp.tsx/riderVerification.ts.
     const response = await verifyOTP(phone, otp, name, email);
     const isNewUser = response.isNewUser;
 
@@ -240,15 +247,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUserToken(response.token);
     setIsAuthenticated(true);
 
-    await Promise.all([
-      AsyncStorage.setItem('userId', response.user.id),
-      SecureStore.setItemAsync('userToken', response.token),
-      AsyncStorage.setItem('userData', JSON.stringify(response.user)),
-      AsyncStorage.setItem(
-        'customerData',
-        response.customer ? JSON.stringify(response.customer) : '',
-      ),
-    ]);
+    try {
+      await Promise.all([
+        AsyncStorage.setItem('userId', response.user.id),
+        SecureStore.setItemAsync('userToken', response.token),
+        AsyncStorage.setItem('userData', JSON.stringify(response.user)),
+        AsyncStorage.setItem(
+          'customerData',
+          response.customer ? JSON.stringify(response.customer) : '',
+        ),
+      ]);
+    } catch (err) {
+      logSilentFailure('Persist session after OTP verification', err);
+    }
 
     return { isNewUser };
   };
