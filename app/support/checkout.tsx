@@ -59,6 +59,12 @@ export default function CheckoutScreen() {
   // actually re-render as disabled until after the first tap's state update
   // commits, leaving a window where a second tap can still fire placeOrder().
   const placingRef = useRef(false);
+  // Set right before any clearCart() that's followed by an intentional
+  // away-navigation (confirmation, /orders). clearCart() re-renders this
+  // still-mounted screen with items.length === 0, which would otherwise
+  // trip the "empty cart -> home" guard below and race it against — and
+  // frequently win over — the real navigation issued a line later.
+  const navigatingAwayRef = useRef(false);
   const { location } = useLocation();
   const [maxDistance, setMaxDistance] = useState<number>(2);
   const [loadingDistance, setLoadingDistance] = useState(false);
@@ -102,8 +108,13 @@ export default function CheckoutScreen() {
   // isHydrated so a real, non-empty persisted cart that just hasn't finished
   // loading from AsyncStorage yet (e.g. this screen reached via deep link or
   // restored navigation state) doesn't get incorrectly kicked to Home.
+  // Also skipped while navigatingAwayRef is set — placeOrder() clears the
+  // cart on every success/failure path right before navigating to
+  // confirmation or /orders, and without this guard that clearCart() would
+  // itself trigger this effect and redirect Home instead, racing (and often
+  // winning) against the intended navigation.
   useEffect(() => {
-    if (isHydrated && items.length === 0) {
+    if (isHydrated && items.length === 0 && !navigatingAwayRef.current) {
       router.replace("/(tabs)/home");
     }
   }, [isHydrated, items.length]);
@@ -329,6 +340,7 @@ export default function CheckoutScreen() {
         // attach added items to this order (separately tracked bug), so
         // leaving the just-ordered items sitting in the cart just looked
         // like checkout silently failed to empty it.
+        navigatingAwayRef.current = true;
         clearCart();
         // Navigate to order confirmation page with 40-second add-more window
         router.replace(`/order/confirmation/${created.id}` as any);
@@ -429,9 +441,11 @@ export default function CheckoutScreen() {
         try {
           await payOrderWithWallet(internalOrder.id);
           markOrderPlaced().catch((err) => logSilentFailure("Mark order-placed flag", err));
+          navigatingAwayRef.current = true;
           clearCart();
           router.replace(`/order/confirmation/${internalOrder.id}` as any);
         } catch (err: unknown) {
+          navigatingAwayRef.current = true;
           clearCart();
           const message = err instanceof Error ? err.message : "Payment could not be completed.";
           Alert.alert(
@@ -485,6 +499,7 @@ export default function CheckoutScreen() {
         // for this payment shows up on the very next visit to the
         // payment-options screen (instead of the stale empty cache).
         clearSavedPaymentMethodsCache();
+        navigatingAwayRef.current = true;
         clearCart();
         // Navigate to order confirmation page with 40-second add-more window
         router.replace(`/order/confirmation/${internalOrder.id}` as any);
@@ -494,6 +509,7 @@ export default function CheckoutScreen() {
       // Anything other than 'paid' means the order is saved but payment isn't
       // confirmed. Clear the cart (order is in DB, customer can pay from
       // Orders) and route them there with a message tuned to the failure mode.
+      navigatingAwayRef.current = true;
       clearCart();
 
       if (result.status === "error") {
