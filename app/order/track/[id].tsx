@@ -82,6 +82,14 @@ export default function TrackOrderScreen() {
   const { data, driverLocations, loading, error, autoRefreshing, refresh } = useOrderTracking(id);
   const [showHistory, setShowHistory] = useState(false);
   const [showItems, setShowItems] = useState(false);
+  // Per-store "items from this store" collapsible toggle, keyed by store_orders.id.
+  const [expandedStoreOrderIds, setExpandedStoreOrderIds] = useState<Set<string>>(new Set());
+  const toggleStoreItems = (id: string) =>
+    setExpandedStoreOrderIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
   const [refreshing, setRefreshing] = useState(false);
   const order = data?.order;
   const status = (order?.status ?? "pending_at_store") as OrderStatus;
@@ -96,12 +104,30 @@ export default function TrackOrderScreen() {
   const isMultiStore = storeOrders.length > 1;
   const meta = getStatusMeta(status);
   const isCancelled = CANCELLED_STATUSES.includes(status);
+  // A store's own store_orders.status starts (and used to stay stuck) at
+  // 'pending_at_store' until that specific store accepts (backend now sets
+  // it to 'store_accepted' on acceptAllocation). Gates the store map/cards
+  // below: nothing about individual stores is shown until at least one has
+  // actually confirmed. `isMultiStore` above stays based on the FULL live
+  // store list so a structurally multi-store order keeps a stable layout as
+  // more stores accept one by one, rather than flipping layouts partway
+  // through.
+  const acceptedStoreOrders = storeOrders.filter((so: any) => so.status && so.status !== "pending_at_store");
+  // Also requires status === 'pending_at_store' (not just the per-store
+  // check) — a safety net for orders already in flight at the moment this
+  // per-store status write shipped: their store_orders.status may still be
+  // stuck at 'pending_at_store' forever (acceptAllocation never wrote it
+  // before), but customer_orders.status only ever leaves 'pending_at_store'
+  // once a store has genuinely accepted, so it's a reliable independent
+  // signal that doesn't depend on the per-store column being fresh.
+  const noStoreAcceptedYet =
+    !isCancelled && status !== "order_delivered" && acceptedStoreOrders.length === 0 && status === "pending_at_store";
   const isRunningLate = Boolean(
     order?.estimated_delivery_time && new Date(order.estimated_delivery_time).getTime() < Date.now()
   );
 
   // Pick the agent for the (single) store order. For multi-store we'd render a card per store.
-  const primaryStoreOrder = storeOrders[0];
+  const primaryStoreOrder = acceptedStoreOrders[0];
   const primaryAgent = useMemo(() => {
     if (!primaryStoreOrder?.delivery_partner_id) return data?.deliveryAgent;
     return data?.deliveryAgents?.[primaryStoreOrder.delivery_partner_id] ?? data?.deliveryAgent;
@@ -314,8 +340,18 @@ export default function TrackOrderScreen() {
           )}
         </View>
 
+        {/* ─── Pending at store: no stores have accepted yet ──────────────────── */}
+        {noStoreAcceptedYet && (
+          <View style={styles.infoCard}>
+            <MaterialCommunityIcons name="storefront-outline" size={22} color={C.textSub} />
+            <Text style={styles.infoCardText}>
+              {getStatusMeta("pending_at_store").description || "Waiting for the store to confirm your order."}
+            </Text>
+          </View>
+        )}
+
         {/* ─── Map ──────────────────────────────────────────────────────────── */}
-        {!isCancelled && status !== "order_delivered" && mapRegion && !isMultiStore ? (
+        {!noStoreAcceptedYet && !isCancelled && status !== "order_delivered" && mapRegion && !isMultiStore ? (
           <View style={styles.mapWrap}>
             <MapView
               ref={mapRef}
@@ -409,13 +445,81 @@ export default function TrackOrderScreen() {
               </View>
             )}
           </View>
-        ) : isMultiStore ? (
-          <View style={styles.infoCard}>
-            <MaterialCommunityIcons name="store-outline" size={22} color={C.textSub} />
-            <Text style={styles.infoCardText}>
-              This is a multi-store order. Each store is being tracked separately — see the timeline
-              below for status updates.
-            </Text>
+        ) : !noStoreAcceptedYet && isMultiStore ? (
+          <View style={{ marginHorizontal: 16, gap: 10 }}>
+            {/* One card per store that has actually accepted — a store still at
+                'pending_at_store' is excluded from acceptedStoreOrders entirely
+                (no placeholder box), so cards appear one by one as each store
+                responds, matching the single-store map behavior above. */}
+            {acceptedStoreOrders.map((so: any) => {
+              const loc = data?.storeLocations?.find((s) => s.store_id === so.store_id);
+              const storeMeta = getStatusMeta(so.status);
+              const items = so.order_items || [];
+              const expanded = expandedStoreOrderIds.has(so.id);
+              return (
+                <View key={so.id} style={styles.storeOrderCard}>
+                  <View style={styles.storeOrderHeader}>
+                    <MaterialCommunityIcons name="storefront" size={20} color={C.primary} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.storeOrderName}>{loc?.label || "Store"}</Text>
+                      {loc?.address && <Text style={styles.storeOrderAddress}>{loc.address}</Text>}
+                    </View>
+                    {loc?.phone && (
+                      <TouchableOpacity onPress={() => Linking.openURL(`tel:${loc.phone}`)}>
+                        <MaterialCommunityIcons name="phone" size={18} color={C.primary} />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  <View style={[styles.statusPill, { backgroundColor: storeMeta.bg, alignSelf: "flex-start", marginTop: 10 }]}>
+                    <MaterialCommunityIcons name={storeMeta.icon} size={14} color={storeMeta.color} />
+                    <Text style={[styles.statusPillText, { color: storeMeta.color, fontSize: 12 }]}>{storeMeta.label}</Text>
+                  </View>
+
+                  {items.length > 0 && (
+                    <>
+                      <Pressable
+                        style={styles.sectionToggle}
+                        onPress={() => toggleStoreItems(so.id)}
+                        android_ripple={{ color: C.bgSoft }}
+                      >
+                        <Text style={styles.sectionTitle}>
+                          Items from this store <Text style={styles.sectionCount}>({items.length})</Text>
+                        </Text>
+                        <MaterialCommunityIcons
+                          name={expanded ? "chevron-up" : "chevron-down"}
+                          size={20}
+                          color={C.textSub}
+                        />
+                      </Pressable>
+                      {expanded && (
+                        <View>
+                          {items.map((it: any, idx: number) => (
+                            <View
+                              key={`${it.product_name}-${idx}`}
+                              style={[styles.itemRow, idx < items.length - 1 && styles.itemRowBorder]}
+                            >
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.itemName}>{it.product_name}</Text>
+                                <Text style={styles.itemUnit}>
+                                  ₹{Number(it.unit_price).toFixed(2)} {it.unit ? `/ ${it.unit}` : ""}
+                                </Text>
+                              </View>
+                              <View style={{ alignItems: "flex-end" }}>
+                                <Text style={styles.itemQty}>×{it.quantity}</Text>
+                                <Text style={styles.itemTotal}>
+                                  ₹{Math.round(Number(it.unit_price) * Number(it.quantity))}
+                                </Text>
+                              </View>
+                            </View>
+                          ))}
+                        </View>
+                      )}
+                    </>
+                  )}
+                </View>
+              );
+            })}
           </View>
         ) : null}
 
@@ -866,6 +970,18 @@ const styles = StyleSheet.create({
     borderColor: C.border,
   },
   infoCardText: { flex: 1, color: C.textSub, fontSize: 13, lineHeight: 19 },
+
+  // Per-store card (multi-store tracking)
+  storeOrderCard: {
+    padding: 14,
+    borderRadius: 16,
+    backgroundColor: C.card,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  storeOrderHeader: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  storeOrderName: { color: C.text, fontSize: 15, fontWeight: "800" },
+  storeOrderAddress: { color: C.textSub, fontSize: 12.5, marginTop: 2 },
 
   // Delivery partner
   partnerCard: {
