@@ -19,8 +19,18 @@ const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
 const apiBaseUrl =
   process.env.EXPO_PUBLIC_API_BASE_URL ||
   "https://near-and-now-backend.vercel.app";
+// Fallback hardcoded, not just env-sourced — this app's EAS project (auto-
+// created 2026-08-25 via `eas credentials`, since none existed until then)
+// previously had no projectId anywhere and no EXPO_PUBLIC_EAS_PROJECT_ID set
+// in .env either, so getExpoPushTokenAsync() had nothing to resolve and push
+// registration silently failed client-side for every install. Hardcoding the
+// real id here (same pattern as near-now-store_owner/app.config.js) means it
+// no longer depends on any particular environment having the env var set —
+// EAS can't auto-write this into a dynamic (.js) config, so it has to be here.
 const easProjectId =
-  process.env.EAS_PROJECT_ID || process.env.EXPO_PUBLIC_EAS_PROJECT_ID || "";
+  process.env.EAS_PROJECT_ID ||
+  process.env.EXPO_PUBLIC_EAS_PROJECT_ID ||
+  "e82db4c9-66dc-4d49-b134-9bdd64a3c8f2";
 
 module.exports = {
   expo: {
