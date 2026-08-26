@@ -26,7 +26,7 @@ import { getBatchProductStoreDistances } from "../../lib/distanceUtils";
 import { cdnImage } from "../../lib/imageUrl";
 import { formatQuantityDisplay } from "../../lib/quantityFormat";
 import { markOrderPlaced } from "../../lib/orderHistoryFlag";
-import { createOrder, type Order } from "../../lib/orderService";
+import { cancelOrder, createOrder, type Order } from "../../lib/orderService";
 import {
     getPaymentSelection,
     subscribePaymentSelection,
@@ -364,6 +364,28 @@ export default function CheckoutScreen() {
     return createOrder(orderPayload);
   };
 
+  // The order row is created before payment is attempted (Razorpay needs an
+  // existing internal orderId to create its own payment order against — see
+  // usePaymentFlow.ts), and creating it already fires the shopkeeper
+  // notification/store-allocation broadcast (placeCheckoutOrder,
+  // backend/src/services/database.service.ts). So a payment that's
+  // genuinely cancelled or fails outright (as opposed to an *ambiguous*
+  // verify-failure that a webhook might still settle) must actively void the
+  // order via the same cancel endpoint used from Orders, not leave it
+  // "placed" for a shopkeeper to start prepping something nobody paid for.
+  const voidUnpaidOrder = async (orderId: string) => {
+    try {
+      await cancelOrder(orderId);
+    } catch (err) {
+      // Best-effort — if this fails (e.g. a delivery partner was assigned in
+      // the vanishingly unlikely window between order creation and the
+      // payment being cancelled), the order is still real; swallowing this
+      // silently would hide that from the customer, but the Alert shown by
+      // the caller already tells them to check Orders regardless.
+      logSilentFailure("Void unpaid order after payment cancellation", err);
+    }
+  };
+
   const placeOrder = async () => {
     if (placingRef.current) return;
     if (!location) {
@@ -445,14 +467,15 @@ export default function CheckoutScreen() {
           clearCart();
           router.replace(`/order/confirmation/${internalOrder.id}` as any);
         } catch (err: unknown) {
-          navigatingAwayRef.current = true;
-          clearCart();
+          // Wallet debit is atomic (either fully succeeds or fully fails, no
+          // ambiguous in-flight state like a Razorpay webhook) — safe to void
+          // outright and let the customer retry from checkout, cart intact.
+          await voidUnpaidOrder(internalOrder.id);
           const message = err instanceof Error ? err.message : "Payment could not be completed.";
           Alert.alert(
             "Wallet payment failed",
-            `${message}\n\nYour order has been saved. You can retry payment from your Orders.`,
+            `${message}\n\nYour order was not placed — please try again.`,
           );
-          router.replace("/orders");
         }
         return;
       }
@@ -506,34 +529,41 @@ export default function CheckoutScreen() {
         return;
       }
 
-      // Anything other than 'paid' means the order is saved but payment isn't
-      // confirmed. Clear the cart (order is in DB, customer can pay from
-      // Orders) and route them there with a message tuned to the failure mode.
-      navigatingAwayRef.current = true;
-      clearCart();
-
+      // `error` (payment setup itself failed — the Razorpay sheet never even
+      // opened) is a clean "no charge happened" outcome — void the order and
+      // let the customer retry right here on checkout instead of being sent
+      // to Orders for an order that no longer really exists.
       if (result.status === "error") {
-        Alert.alert(
-          "Payment unavailable",
-          `${result.message}\n\nYour order has been saved. You can retry payment from your Orders.`,
-        );
-        router.replace("/orders");
+        await voidUnpaidOrder(internalOrder.id);
+        Alert.alert("Payment unavailable", `${result.message}\n\nYour order was not placed — please try again.`);
         return;
       }
 
-      // status === 'pending'
+      // `pending`/cancelled|failed (the sheet opened but the customer backed
+      // out, or the bank/card declined outright) is equally clean — same
+      // void-and-retry treatment.
+      if (result.reason === "cancelled" || result.reason === "failed") {
+        await voidUnpaidOrder(internalOrder.id);
+        const title = result.reason === "cancelled" ? "Payment cancelled" : "Payment failed";
+        const detail = result.message ?? (result.reason === "cancelled" ? "You cancelled the payment." : "Payment could not be completed.");
+        Alert.alert(title, `${detail}\n\nYour order was not placed — please try again.`);
+        return;
+      }
+
+      // status === 'pending', reason 'verify_failed' or 'unverified' — this
+      // is genuinely ambiguous (Razorpay's webhook may still land and
+      // confirm the charge after we gave up polling), so unlike a clean
+      // cancel/fail above, voiding the order here risks cancelling one that
+      // then gets marked paid. Kept exactly as before: order stays, customer
+      // is routed to Orders to follow up.
+      navigatingAwayRef.current = true;
+      clearCart();
+
       const titleByReason = {
-        cancelled: "Payment cancelled",
-        failed: "Payment failed",
         verify_failed: "Payment not confirmed",
         unverified: "Payment not confirmed",
       } as const;
       const messageByReason = {
-        cancelled:
-          "Your order has been saved. You can complete payment anytime from your Orders.",
-        failed:
-          (result.message ?? "Payment could not be completed.") +
-          "\n\nYour order has been saved — retry from your Orders.",
         verify_failed:
           (result.message ?? "Payment could not be verified.") +
           "\n\nIf money was debited it will reflect shortly, or auto-refund within 5–7 days.",

@@ -365,6 +365,21 @@ export async function getOrderPaymentStatus(
 }
 
 /**
+ * Voids an order that was created (needed for Razorpay's order_id linkage —
+ * see usePaymentFlow.ts) before payment was actually confirmed, but then had
+ * its payment cancelled or fail outright. Same backend endpoint the website
+ * uses (`orders.controller.ts`'s cancelOrder / database.service.ts's
+ * cancelOrder) — unwinds `order_store_allocations`/`store_orders` and
+ * notifies the shopkeeper of the cancellation, so a store doesn't keep
+ * prepping/see an order nobody actually paid for.
+ */
+export async function cancelOrder(orderId: string): Promise<void> {
+  await apiFetch(`/api/orders/${encodeURIComponent(orderId)}/cancel`, {
+    method: 'POST',
+  });
+}
+
+/**
  * A hydrated line item used by the Order Again tab. It stores everything we
  * need to render a card WITHOUT the home catalog — so even when a product has
  * been removed from the store, the customer still sees their past purchase.
