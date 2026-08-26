@@ -13,6 +13,20 @@
  * for production builds: EXPO_PUBLIC_SUPABASE_URL, EXPO_PUBLIC_SUPABASE_ANON_KEY,
  * EXPO_PUBLIC_API_BASE_URL, EXPO_PUBLIC_GOOGLE_MAPS_API_KEY.
  */
+const fs = require("fs");
+const path = require("path");
+
+// This app's android/ directory is gitignored (managed workflow — EAS Build
+// runs `expo prebuild` fresh from this config every time), so referencing a
+// googleServicesFile path that doesn't exist yet would make prebuild throw
+// ("Cannot copy google-services.json ... Ensure the source and destination
+// paths exist", @expo/config-plugins android/GoogleServices.js) and fail
+// every build, not just leave push notifications broken. Guard it so the
+// field only activates once the real file (from Firebase console — see
+// FCM_PUSH_NOTIFICATIONS_SETUP.md) is actually placed here.
+const googleServicesFilePath = path.join(__dirname, "google-services.json");
+const hasGoogleServicesFile = fs.existsSync(googleServicesFilePath);
+
 const googleMapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || "";
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -59,6 +73,13 @@ module.exports = {
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
       package: "com.nearandnow.customer",
+      // Firebase Android config for this app (package com.nearandnow.customer)
+      // in the Firebase console — required for getExpoPushTokenAsync() to work
+      // on Android at all. Without it, FCM never initializes natively and push
+      // registration silently fails (falls into the token-failed catch in
+      // hooks/usePushNotifications.dev.ts) even though everything else looks configured.
+      // Only set once the file actually exists — see guard comment above.
+      ...(hasGoogleServicesFile ? { googleServicesFile: "./google-services.json" } : {}),
       versionCode: 1,
       permissions: [
         "android.permission.ACCESS_FINE_LOCATION",

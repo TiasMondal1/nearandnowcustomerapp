@@ -55,3 +55,6 @@ app-example
 # generated native folders
 /ios
 /android
+
+# Firebase Android app config — contains project identifiers, not committed
+google-services.json
