@@ -201,6 +201,13 @@ export default function NotificationsScreen() {
           <Text style={styles.markAllText}>Mark all read</Text>
         </TouchableOpacity>
       )}
+      <TouchableOpacity
+        style={styles.settingsBtn}
+        onPress={() => router.push("/notification-preferences" as any)}
+        activeOpacity={0.7}
+      >
+        <MaterialCommunityIcons name="cog-outline" size={20} color={C.text} />
+      </TouchableOpacity>
     </View>
   );
 
@@ -322,6 +329,14 @@ const styles = StyleSheet.create({
   headerTitle: { color: C.text, fontSize: 20, fontWeight: "900" },
   orderCount: { color: C.textSub, fontSize: 12, fontWeight: "600", marginTop: 2 },
   markAllText: { color: C.primary, fontSize: 13, fontWeight: "700" },
+  settingsBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: C.bgSoft,
+  },
 
   centerContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
 
