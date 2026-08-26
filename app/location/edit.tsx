@@ -118,7 +118,7 @@ export default function EditLocationScreen() {
 
     try {
       const json = await reverseGeocodeApi(lat, lng);
-      if (json.status === "OK") {
+      if (json.status === "OK" && json.results?.[0]) {
         setFormattedAddress(json.results[0].formatted_address);
       }
     } finally {
@@ -141,7 +141,7 @@ export default function EditLocationScreen() {
 
     try {
       const json = await geocodeAddress(address);
-      if (json.status === "OK") {
+      if (json.status === "OK" && json.results?.[0]) {
         const { lat, lng } = json.results[0].geometry.location;
         setCoords({ latitude: lat, longitude: lng });
         setRegion((r) => ({ ...r, latitude: lat, longitude: lng }));
