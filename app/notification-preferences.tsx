@@ -1,18 +1,14 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { router } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import {
-    ActivityIndicator,
     Alert,
     Platform,
     StyleSheet,
     Switch,
     Text,
-    TouchableOpacity,
     View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 
+import { Card, IconWrap, Screen, ScreenHeader, Skeleton } from "../components/ui";
 import { C } from "../constants/colors";
 import { useAuth } from "../context/AuthContext";
 import { apiFetch } from "../lib/apiClient";
@@ -73,28 +69,32 @@ export default function NotificationPreferencesScreen() {
   }, [userId, orderUpdates, saving]);
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => (router.canGoBack() ? router.back() : router.replace("/notifications"))}
-          activeOpacity={0.7}
-        >
-          <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Notification Preferences</Text>
-        <View style={{ width: 38 }} />
-      </View>
+    <Screen>
+      <ScreenHeader
+        size="lg"
+        title="Notification Preferences"
+        titleStyle={styles.headerTitle}
+        backFallbackHref="/notifications"
+      />
 
       {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={C.primary} />
+        <View style={styles.body}>
+          <Card padded={false}>
+            <View style={styles.prefRow}>
+              <Skeleton width={34} height={34} radius={10} />
+              <View style={styles.skeletonText}>
+                <Skeleton width="45%" height={12} />
+                <Skeleton width="85%" height={10} />
+              </View>
+              <Skeleton width={51} height={31} radius={16} />
+            </View>
+          </Card>
         </View>
       ) : (
         <View style={styles.body}>
-          <View style={styles.card}>
+          <Card padded={false}>
             <View style={styles.prefRow}>
-              <MaterialCommunityIcons name="truck-fast-outline" size={20} color={C.primary} />
+              <IconWrap size={34} icon="truck-fast-outline" />
               <View style={{ flex: 1 }}>
                 <Text style={styles.prefTitle}>Order updates</Text>
                 <Text style={styles.prefSubtitle}>
@@ -105,56 +105,34 @@ export default function NotificationPreferencesScreen() {
                 value={orderUpdates}
                 onValueChange={toggle}
                 disabled={saving}
+                accessibilityLabel="Order updates"
+                ios_backgroundColor={C.border}
                 trackColor={{ false: C.border, true: C.primaryLight }}
                 thumbColor={orderUpdates ? C.primary : Platform.OS === "android" ? C.card : undefined}
+                style={saving ? styles.switchSaving : undefined}
               />
             </View>
-          </View>
+          </Card>
         </View>
       )}
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingTop: 16,
-    paddingBottom: 14,
-    backgroundColor: C.card,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  backBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: C.bgSoft,
-  },
-  headerTitle: { flex: 1, color: C.text, fontSize: 18, fontWeight: "900" },
-
-  center: { flex: 1, justifyContent: "center", alignItems: "center" },
+  headerTitle: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 18 },
 
   body: { padding: 16 },
 
-  card: {
-    backgroundColor: C.card,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: C.border,
-  },
   prefRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    padding: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
   },
-  prefTitle: { color: C.text, fontSize: 14, fontWeight: "700" },
-  prefSubtitle: { color: C.textSub, fontSize: 12, marginTop: 3, lineHeight: 16 },
+  skeletonText: { flex: 1, gap: 8 },
+  switchSaving: { opacity: 0.6 },
+  prefTitle: { color: C.text, fontSize: 14, fontFamily: "PlusJakartaSans_700Bold" },
+  prefSubtitle: { fontFamily: "PlusJakartaSans_700Bold", color: C.textSub, fontSize: 12, marginTop: 4, lineHeight: 18 },
 });

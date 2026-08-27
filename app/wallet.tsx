@@ -1,7 +1,6 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRazorpay } from "@codearcade/expo-razorpay";
 import { LinearGradient } from "expo-linear-gradient";
-import { router } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
@@ -13,8 +12,8 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 
+import { Card, IconWrap, Screen, ScreenHeader, Skeleton } from "../components/ui";
 import { useAuth } from "../context/AuthContext";
 import {
     createWalletTopupOrder,
@@ -209,20 +208,15 @@ export default function WalletScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top"]}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => router.back()}
-          activeOpacity={0.7}
-          hitSlop={8}
-        >
-          <MaterialCommunityIcons name="chevron-left" size={28} color={T.bark} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>My Wallet</Text>
-        <View style={{ width: 40 }} />
-      </View>
+    <Screen edges={["top"]} bg={T.bg}>
+      {/* Header — T-palette variant: transparent 40px chevron back, bark title */}
+      <ScreenHeader
+        title="My Wallet"
+        titleStyle={styles.headerTitle}
+        backProps={{ size: 40, bg: "transparent", icon: "chevron-left", iconSize: 28, color: T.bark }}
+        right={<View style={styles.headerSpacer} />}
+        style={styles.header}
+      />
 
       <ScrollView
         contentContainerStyle={styles.scroll}
@@ -251,9 +245,11 @@ export default function WalletScreen() {
         </LinearGradient>
 
         {/* Add money section */}
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Add Money</Text>
-          <Text style={styles.cardSubtitle}>Choose a quick amount or enter custom</Text>
+        <Card size="lg" bg={T.white} borderColor={T.cardBorder} style={styles.card}>
+          <View style={styles.cardHead}>
+            <Text style={styles.cardTitle}>Add Money</Text>
+            <Text style={styles.cardSubtitle}>Choose a quick amount or enter custom</Text>
+          </View>
 
           {/* Quick amounts */}
           <View style={styles.quickGrid}>
@@ -269,6 +265,8 @@ export default function WalletScreen() {
                   setCustom("");
                 }}
                 activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityState={{ selected: selected === amt && custom === "" }}
               >
                 <Text
                   style={[
@@ -283,32 +281,38 @@ export default function WalletScreen() {
           </View>
 
           {/* Custom amount */}
-          <View style={styles.inputWrap}>
-            <Text style={styles.inputPrefix}>₹</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter amount"
-              placeholderTextColor={T.barkLight}
-              keyboardType="number-pad"
-              value={custom}
-              onChangeText={(v) => {
-                setCustom(v.replace(/[^0-9]/g, ""));
-                if (v) setSelected(null);
-              }}
-              maxLength={6}
-            />
+          <View style={styles.inputGroup}>
+            <View style={styles.inputWrap}>
+              <Text style={styles.inputPrefix}>₹</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Enter amount"
+                placeholderTextColor={T.barkLight}
+                selectionColor={T.green}
+                keyboardType="number-pad"
+                returnKeyType="done"
+                value={custom}
+                onChangeText={(v) => {
+                  setCustom(v.replace(/[^0-9]/g, ""));
+                  if (v) setSelected(null);
+                }}
+                maxLength={6}
+              />
+            </View>
+            {customOutOfRange && (
+              <Text style={styles.rangeError}>
+                Amount must be between ₹{MIN_TOPUP} and ₹{MAX_TOPUP.toLocaleString("en-IN")}
+              </Text>
+            )}
           </View>
-          {customOutOfRange && (
-            <Text style={styles.rangeError}>
-              Amount must be between ₹{MIN_TOPUP} and ₹{MAX_TOPUP.toLocaleString("en-IN")}
-            </Text>
-          )}
 
           <TouchableOpacity
             style={[styles.addBtn, (!isValid || phase !== "idle") && styles.addBtnDisabled]}
             onPress={handleAddMoney}
             activeOpacity={isValid && phase === "idle" ? 0.85 : 1}
             disabled={!isValid || phase !== "idle"}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !isValid || phase !== "idle", busy: phase !== "idle" }}
           >
             {phase !== "idle" ? (
               <ActivityIndicator size="small" color={T.barkLight} />
@@ -323,28 +327,50 @@ export default function WalletScreen() {
               {phase !== "idle" ? PHASE_LABEL[phase] : isValid ? `Add ₹${finalAmount}` : "Add Money"}
             </Text>
           </TouchableOpacity>
-        </View>
+        </Card>
 
         {/* Transaction history */}
-        <View style={styles.card}>
+        <Card size="lg" bg={T.white} borderColor={T.cardBorder} style={styles.card}>
           <Text style={styles.cardTitle}>Transaction History</Text>
           {txLoading ? (
-            <ActivityIndicator color={T.green} style={{ marginVertical: 12 }} />
+            <TransactionsSkeleton />
           ) : txError ? (
-            <View style={{ alignItems: "center", paddingVertical: 12 }}>
+            <View style={styles.txState}>
               <Text style={styles.emptyText}>Couldn&apos;t load transaction history.</Text>
-              <TouchableOpacity onPress={fetchTransactions} style={{ marginTop: 8 }}>
+              <TouchableOpacity
+                onPress={fetchTransactions}
+                style={styles.retryBtn}
+                activeOpacity={0.7}
+                hitSlop={8}
+                accessibilityRole="button"
+              >
                 <Text style={styles.retryText}>Try again</Text>
               </TouchableOpacity>
             </View>
           ) : transactions.length === 0 ? (
-            <Text style={styles.emptyText}>No transactions yet.</Text>
+            <View style={styles.txEmpty}>
+              <IconWrap
+                size={56}
+                circle
+                bg={T.greenXLight}
+                icon="receipt-text-outline"
+                iconSize={26}
+                iconColor={T.barkLight}
+              />
+              <Text style={styles.txEmptyTitle}>No transactions yet.</Text>
+              <Text style={styles.txEmptySub}>Top-ups and payments will show here</Text>
+            </View>
           ) : (
-            transactions.map((tx) => (
-              <View key={tx.id} style={styles.txRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.txReason}>{TX_REASON_LABEL[tx.reason] || tx.reason}</Text>
-                  <Text style={styles.txDate}>
+            transactions.map((tx, i) => (
+              <View
+                key={tx.id}
+                style={[styles.txRow, i === transactions.length - 1 && styles.txRowLast]}
+              >
+                <View style={styles.txText}>
+                  <Text style={styles.txReason} numberOfLines={1}>
+                    {TX_REASON_LABEL[tx.reason] || tx.reason}
+                  </Text>
+                  <Text style={styles.txDate} numberOfLines={1}>
                     {new Date(tx.created_at).toLocaleDateString("en-IN", {
                       year: "numeric",
                       month: "short",
@@ -364,7 +390,9 @@ export default function WalletScreen() {
             <TouchableOpacity
               onPress={loadMoreTransactions}
               disabled={loadingMore}
-              style={{ alignItems: "center", paddingVertical: 12 }}
+              style={styles.loadMoreBtn}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: loadingMore, busy: loadingMore }}
             >
               {loadingMore ? (
                 <ActivityIndicator color={T.green} />
@@ -373,10 +401,10 @@ export default function WalletScreen() {
               )}
             </TouchableOpacity>
           )}
-        </View>
+        </Card>
 
         {/* How it works */}
-        <View style={styles.card}>
+        <Card size="lg" bg={T.white} borderColor={T.cardBorder} style={styles.card}>
           <Text style={styles.cardTitle}>How it works</Text>
           {[
             { icon: "wallet-plus-outline" as const, text: "Add money to your wallet anytime" },
@@ -384,38 +412,42 @@ export default function WalletScreen() {
             { icon: "cash-refund" as const, text: "Refunds are credited back to wallet automatically" },
           ].map(({ icon, text }) => (
             <View key={text} style={styles.howRow}>
-              <View style={styles.howIconWrap}>
-                <MaterialCommunityIcons name={icon} size={18} color={T.green} />
-              </View>
+              <IconWrap size={34} bg={T.greenXLight} icon={icon} iconSize={18} iconColor={T.green} />
               <Text style={styles.howText}>{text}</Text>
             </View>
           ))}
-        </View>
+        </Card>
       </ScrollView>
       {RazorpayUI}
-    </SafeAreaView>
+    </Screen>
+  );
+}
+
+/**
+ * Static placeholder rows mirroring txRow (reason + date left, amount right)
+ * while the first page of transactions loads. Kept static (no pulse) to match
+ * the payment-options skeleton.
+ */
+function TransactionsSkeleton() {
+  return (
+    <View style={styles.txSkeleton}>
+      {[0, 1, 2].map((i) => (
+        <View key={i} style={[styles.txRow, i === 2 && styles.txRowLast]}>
+          <View style={styles.txSkeletonLines}>
+            <Skeleton width="45%" height={14} color={T.cardBorder} animated={false} />
+            <Skeleton width="30%" height={12} color={T.cardBorder} animated={false} />
+          </View>
+          <Skeleton width={56} height={14} color={T.cardBorder} animated={false} />
+        </View>
+      ))}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: T.bg },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: T.white,
-    borderBottomWidth: 1,
-    borderBottomColor: T.cardBorder,
-  },
-  backBtn: {
-    width: 40,
-    height: 40,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerTitle: { fontSize: 18, fontWeight: "800", color: T.bark, letterSpacing: -0.2 },
+  header: { borderBottomColor: T.cardBorder },
+  headerSpacer: { width: 40 },
+  headerTitle: { color: T.bark, letterSpacing: -0.2 },
   scroll: { padding: 16, gap: 16, paddingBottom: 60 },
 
   balanceCard: {
@@ -425,9 +457,9 @@ const styles = StyleSheet.create({
     gap: 6,
     shadowColor: T.green,
     shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.3,
-    shadowRadius: 14,
-    elevation: 10,
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 4,
   },
   balanceIconWrap: {
     width: 56,
@@ -438,16 +470,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginBottom: 8,
   },
-  balanceLabel: { fontSize: 13, color: "rgba(255,255,255,0.8)", fontWeight: "600", letterSpacing: 0.3 },
-  balanceAmount: { fontSize: 40, color: T.white, fontWeight: "900", letterSpacing: -1 },
-  balanceSub: { fontSize: 12, color: "rgba(255,255,255,0.65)", fontWeight: "600", marginTop: 2 },
+  balanceLabel: { fontSize: 13, color: "rgba(255,255,255,0.8)", fontFamily: "PlusJakartaSans_600SemiBold", letterSpacing: 0.3 },
+  balanceAmount: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 40, color: T.white, letterSpacing: -1 },
+  balanceSub: { fontFamily: "PlusJakartaSans_600SemiBold", fontSize: 12, color: "rgba(255,255,255,0.65)", marginTop: 2 },
 
   card: {
-    backgroundColor: T.white,
-    borderRadius: 18,
     padding: 20,
-    borderWidth: 1,
-    borderColor: T.cardBorder,
     gap: 14,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
@@ -455,17 +483,20 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 2,
   },
-  cardTitle: { fontSize: 16, fontWeight: "800", color: T.bark, letterSpacing: -0.2 },
-  cardSubtitle: { fontSize: 13, color: T.barkLight, fontWeight: "500", marginTop: -8 },
+  cardHead: { gap: 4 },
+  cardTitle: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 16, color: T.bark, letterSpacing: -0.2 },
+  cardSubtitle: { fontFamily: "PlusJakartaSans_500Medium", fontSize: 13, color: T.barkLight },
 
   quickGrid: { flexDirection: "row", gap: 10, flexWrap: "wrap" },
   quickBtn: {
     flex: 1,
     minWidth: "20%",
-    paddingVertical: 12,
+    minHeight: 44,
+    paddingVertical: 13,
     borderRadius: 12,
     backgroundColor: T.bg,
     alignItems: "center",
+    justifyContent: "center",
     borderWidth: 1.5,
     borderColor: T.cardBorder,
   },
@@ -473,9 +504,10 @@ const styles = StyleSheet.create({
     backgroundColor: T.greenXLight,
     borderColor: T.green,
   },
-  quickBtnText: { fontSize: 14, fontWeight: "800", color: T.barkMid },
+  quickBtnText: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 14, color: T.barkMid },
   quickBtnTextActive: { color: T.green },
 
+  inputGroup: { gap: 6 },
   inputWrap: {
     flexDirection: "row",
     alignItems: "center",
@@ -487,34 +519,43 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     gap: 6,
   },
-  inputPrefix: { fontSize: 18, fontWeight: "800", color: T.bark },
-  input: { flex: 1, fontSize: 18, fontWeight: "700", color: T.bark },
-  rangeError: { fontSize: 12, color: "#dc2626", marginTop: -6 },
+  inputPrefix: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 18, color: T.bark },
+  input: { fontFamily: "PlusJakartaSans_700Bold", flex: 1, fontSize: 18, color: T.bark },
+  rangeError: { fontFamily: "PlusJakartaSans_400Regular", fontSize: 12, color: "#dc2626" },
 
   addBtn: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
+    minHeight: 48,
     backgroundColor: T.green,
     borderRadius: 14,
-    paddingVertical: 15,
+    paddingVertical: 14,
     shadowColor: T.green,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 3,
   },
   addBtnDisabled: {
     backgroundColor: "#E5E7EB",
     shadowOpacity: 0,
     elevation: 0,
   },
-  addBtnText: { fontSize: 15, fontWeight: "800", color: T.white, letterSpacing: 0.2 },
+  addBtnText: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 15, color: T.white, letterSpacing: 0.2 },
   addBtnTextDisabled: { color: T.barkLight },
 
-  emptyText: { fontSize: 13, color: T.barkLight, textAlign: "center", paddingVertical: 4 },
-  retryText: { fontSize: 13, fontWeight: "700", color: T.green },
+  txState: { alignItems: "center", paddingVertical: 12 },
+  emptyText: { fontFamily: "PlusJakartaSans_500Medium", fontSize: 13, color: T.barkLight, textAlign: "center", paddingVertical: 4 },
+  retryBtn: { paddingVertical: 12, paddingHorizontal: 16 },
+  retryText: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 13, color: T.green },
+  loadMoreBtn: { alignItems: "center", justifyContent: "center", minHeight: 44, paddingVertical: 12 },
+
+  txEmpty: { alignItems: "center", paddingVertical: 20, gap: 8 },
+  txEmptyTitle: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 14, color: T.bark },
+  txEmptySub: { fontFamily: "PlusJakartaSans_400Regular", fontSize: 12, color: T.barkLight, textAlign: "center" },
+
   txRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -523,18 +564,14 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: T.cardBorder,
   },
-  txReason: { fontSize: 14, fontWeight: "700", color: T.bark },
-  txDate: { fontSize: 12, color: T.barkLight, marginTop: 2 },
-  txAmount: { fontSize: 14, fontWeight: "800" },
+  txRowLast: { borderBottomWidth: 0 },
+  txText: { flex: 1, flexShrink: 1 },
+  txReason: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 14, color: T.bark },
+  txDate: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 12, color: T.barkLight, marginTop: 2 },
+  txAmount: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 14, marginLeft: 12 },
+  txSkeleton: { gap: 14 },
+  txSkeletonLines: { flex: 1, gap: 6 },
 
-  howRow: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
-  howIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: T.greenXLight,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  howText: { flex: 1, fontSize: 13, color: T.barkMid, lineHeight: 20, fontWeight: "500", paddingTop: 8 },
+  howRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  howText: { fontFamily: "PlusJakartaSans_500Medium", flex: 1, fontSize: 13, color: T.barkMid, lineHeight: 20 },
 });

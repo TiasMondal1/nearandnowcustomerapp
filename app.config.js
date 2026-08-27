@@ -50,7 +50,7 @@ module.exports = {
   expo: {
     name: "Near & Now",
     slug: "near-and-now-customer",
-    version: "1.0.0",
+    version: "1.0.1",
     orientation: "default",
     icon: "./assets/images/icon.png",
     scheme: "nearandnow",
@@ -80,7 +80,7 @@ module.exports = {
       // hooks/usePushNotifications.dev.ts) even though everything else looks configured.
       // Only set once the file actually exists — see guard comment above.
       ...(hasGoogleServicesFile ? { googleServicesFile: "./google-services.json" } : {}),
-      versionCode: 1,
+      versionCode: 3,
       permissions: [
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",

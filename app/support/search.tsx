@@ -2,7 +2,6 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
-    ActivityIndicator,
     FlatList,
     StyleSheet,
     Text,
@@ -11,7 +10,6 @@ import {
     View,
 } from "react-native";
 import { Image } from "expo-image";
-import { SafeAreaView } from "react-native-safe-area-context";
 
 import { C } from "../../constants/colors";
 import { useCartItemMap, useCart } from "../../context/CartContext";
@@ -20,6 +18,10 @@ import { cdnImage } from "../../lib/imageUrl";
 import { searchProducts, type Product } from "../../lib/productService";
 import { getAllActiveProductIds, getNearbyProductFilter } from "../../lib/storeService";
 import StarRating from "../../components/StarRating";
+import { BackButton, Badge, EmptyState, PrimaryButton, Screen, Skeleton } from "../../components/ui";
+
+// Placeholder rows shown while a search is in flight — same card shape as a result.
+const SKELETON_ROWS = [0, 1, 2, 3, 4, 5];
 
 export default function SearchScreen() {
   const { location } = useLocation();
@@ -116,11 +118,9 @@ export default function SearchScreen() {
   const retrySearch = () => setRetryNonce((n) => n + 1);
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <Screen>
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
-        </TouchableOpacity>
+        <BackButton onPress={() => router.back()} />
 
         <View style={styles.inputWrap}>
           <MaterialCommunityIcons name="magnify" size={18} color={C.textLight} />
@@ -136,7 +136,13 @@ export default function SearchScreen() {
             onSubmitEditing={doSearch}
           />
           {query.length > 0 && (
-            <TouchableOpacity onPress={() => setQuery("")}>
+            <TouchableOpacity
+              onPress={() => setQuery("")}
+              hitSlop={10}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Clear search"
+            >
               <MaterialCommunityIcons name="close-circle" size={18} color={C.textLight} />
             </TouchableOpacity>
           )}
@@ -144,30 +150,41 @@ export default function SearchScreen() {
       </View>
 
       {loading ? (
-        <View style={styles.centerState}>
-          <ActivityIndicator size="large" color={C.primary} />
+        <View style={styles.list}>
+          {SKELETON_ROWS.map((i) => (
+            <View key={i} style={styles.resultCard}>
+              <Skeleton width={64} height={64} radius={10} />
+              <View style={styles.info}>
+                <Skeleton width="80%" height={14} />
+                <Skeleton width="40%" height={12} style={styles.skeletonGap} />
+                <Skeleton width="30%" height={10} style={styles.skeletonGap} />
+              </View>
+              <Skeleton width={60} height={32} radius={10} />
+            </View>
+          ))}
         </View>
       ) : !searched && query.length < 2 ? (
-        <View style={styles.centerState}>
-          <MaterialCommunityIcons name="magnify" size={52} color={C.textLight} />
-          <Text style={styles.hintTitle}>Search products</Text>
-          <Text style={styles.hintText}>Type at least 2 characters to search</Text>
-        </View>
+        <EmptyState
+          icon="magnify"
+          iconSize={48}
+          title="Search products"
+          text="Type at least 2 characters to search"
+        />
       ) : searchError ? (
-        <View style={styles.centerState}>
-          <MaterialCommunityIcons name="alert-circle-outline" size={52} color={C.textLight} />
-          <Text style={styles.hintTitle}>Couldn&apos;t load results</Text>
-          <Text style={styles.hintText}>Something went wrong — try again</Text>
-          <TouchableOpacity onPress={retrySearch} style={styles.retryBtn}>
-            <Text style={styles.retryBtnText}>Try again</Text>
-          </TouchableOpacity>
-        </View>
+        <EmptyState
+          icon="alert-circle-outline"
+          iconSize={48}
+          title="Couldn't load results"
+          text="Something went wrong — try again"
+          action={{ label: "Try again", onPress: retrySearch }}
+        />
       ) : results.length === 0 ? (
-        <View style={styles.centerState}>
-          <MaterialCommunityIcons name="emoticon-sad-outline" size={52} color={C.textLight} />
-          <Text style={styles.hintTitle}>No results for &quot;{query}&quot;</Text>
-          <Text style={styles.hintText}>Try a different keyword or browse categories</Text>
-        </View>
+        <EmptyState
+          icon="emoticon-sad-outline"
+          iconSize={48}
+          title={`No results for "${query}"`}
+          text="Try a different keyword or browse categories"
+        />
       ) : (
         <FlatList
           data={results}
@@ -175,6 +192,7 @@ export default function SearchScreen() {
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
           renderItem={({ item }) => {
             const cartItem = cartItemsByProductId.get(item.id);
             const hasDiscount = item.original_price != null && item.original_price > item.price;
@@ -200,14 +218,14 @@ export default function SearchScreen() {
                   </View>
                 )}
 
-                <View style={{ flex: 1 }}>
+                <View style={styles.info}>
                   <Text style={styles.name} numberOfLines={2}>{item.name}</Text>
                   <View style={styles.priceRow}>
                     <Text style={styles.price}>₹{item.price}</Text>
                     {hasDiscount && (
                       <Text style={styles.originalPrice}>₹{item.original_price}</Text>
                     )}
-                    <Text style={styles.unit}>{item.unit}</Text>
+                    <Text style={styles.unit} numberOfLines={1}>{item.unit}</Text>
                   </View>
 
                   <View style={styles.ratingWrap}>
@@ -218,17 +236,25 @@ export default function SearchScreen() {
                     />
                   </View>
 
-                  <Text style={styles.category}>{item.category}</Text>
+                  <Text style={styles.category} numberOfLines={1}>{item.category}</Text>
                 </View>
 
                 {!item.in_stock ? (
-                  <View style={styles.soldOutTag}>
-                    <Text style={styles.soldOutTagText}>Out of Stock</Text>
-                  </View>
+                  <Badge
+                    label="Out of Stock"
+                    bordered
+                    borderColor={C.border}
+                    style={styles.soldOutTag}
+                    textStyle={styles.soldOutTagText}
+                  />
                 ) : cartItem ? (
                   <View style={styles.qtyRow}>
                     <TouchableOpacity
                       style={styles.qtyBtnWrap}
+                      hitSlop={6}
+                      activeOpacity={0.7}
+                      accessibilityRole="button"
+                      accessibilityLabel="Decrease quantity"
                       onPress={() => incrementQty(item.id, -1)}
                     >
                       <Text style={styles.qtyBtnText}>−</Text>
@@ -236,14 +262,22 @@ export default function SearchScreen() {
                     <Text style={styles.qtyValue}>{cartItem.quantity}</Text>
                     <TouchableOpacity
                       style={styles.qtyBtnWrap}
+                      hitSlop={6}
+                      activeOpacity={0.7}
+                      accessibilityRole="button"
+                      accessibilityLabel="Increase quantity"
                       onPress={() => incrementQty(item.id, 1)}
                     >
                       <Text style={styles.qtyBtnText}>+</Text>
                     </TouchableOpacity>
                   </View>
                 ) : (
-                  <TouchableOpacity
+                  <PrimaryButton
+                    size="xs"
+                    shadow={false}
+                    label="ADD"
                     style={styles.addBtn}
+                    textStyle={styles.addText}
                     onPress={() =>
                       addItem({
                         product_id: item.id,
@@ -254,39 +288,27 @@ export default function SearchScreen() {
                         isLoose: item.isLoose,
                       })
                     }
-                  >
-                    <Text style={styles.addText}>ADD</Text>
-                  </TouchableOpacity>
+                  />
                 )}
               </TouchableOpacity>
             );
           }}
         />
       )}
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
-
   header: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    gap: 12,
     paddingHorizontal: 16,
     paddingVertical: 12,
     backgroundColor: C.card,
     borderBottomWidth: 1,
     borderBottomColor: C.border,
-  },
-  backBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: C.bgSoft,
-    alignItems: "center",
-    justifyContent: "center",
   },
   inputWrap: {
     flex: 1,
@@ -300,32 +322,17 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: C.border,
   },
-  input: {
+  input: { fontFamily: "PlusJakartaSans_500Medium",
     flex: 1,
     fontSize: 15,
     color: C.text,
     padding: 0,
+    includeFontPadding: false,
+    textAlignVertical: "center",
   },
 
-  list: { padding: 16, gap: 10 },
-
-  centerState: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-    padding: 32,
-  },
-  hintTitle: { color: C.text, fontSize: 16, fontWeight: "700" },
-  hintText: { color: C.textSub, fontSize: 14, textAlign: "center" },
-  retryBtn: {
-    marginTop: 8,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 10,
-    backgroundColor: C.primary,
-  },
-  retryBtnText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+  // paddingBottom 40 so the last row clears the home indicator once the keyboard is down.
+  list: { padding: 16, paddingBottom: 40, gap: 12 },
 
   resultCard: {
     flexDirection: "row",
@@ -353,31 +360,21 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 
-  name: { color: C.text, fontSize: 14, fontWeight: "600", marginBottom: 3 },
-  priceRow: { flexDirection: "row", alignItems: "center", gap: 5 },
-  price: { color: C.primary, fontSize: 15, fontWeight: "800" },
-  originalPrice: { color: C.textLight, fontSize: 12, textDecorationLine: "line-through" },
-  unit: { color: C.textSub, fontSize: 12 },
+  info: { flex: 1 },
+  skeletonGap: { marginTop: 8 },
+  name: { color: C.text, fontSize: 14, fontFamily: "PlusJakartaSans_600SemiBold", marginBottom: 4 },
+  priceRow: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" },
+  price: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.primary, fontSize: 15 },
+  originalPrice: { fontFamily: "PlusJakartaSans_500Medium", color: C.textLight, fontSize: 12, textDecorationLine: "line-through" },
+  unit: { fontFamily: "PlusJakartaSans_500Medium", color: C.textSub, fontSize: 12, flexShrink: 1 },
   ratingWrap: { marginTop: 6 },
-  category: { color: C.textLight, fontSize: 11, marginTop: 3 },
+  category: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.textLight, fontSize: 11, marginTop: 4 },
 
-  soldOutTag: {
-    backgroundColor: C.bgSoft,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: C.border,
-  },
-  soldOutTagText: { color: C.textSub, fontSize: 11, fontWeight: "600" },
+  soldOutTag: { paddingVertical: 6, alignSelf: "center" },
+  soldOutTagText: { fontFamily: "PlusJakartaSans_600SemiBold", fontSize: 11 },
 
-  addBtn: {
-    backgroundColor: C.primary,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 10,
-  },
-  addText: { color: "#fff", fontSize: 13, fontWeight: "800" },
+  addBtn: { paddingVertical: 8, minHeight: 36 },
+  addText: { fontFamily: "PlusJakartaSans_800ExtraBold" },
 
   qtyRow: {
     flexDirection: "row",
@@ -391,13 +388,13 @@ const styles = StyleSheet.create({
     borderColor: C.primaryLight,
   },
   qtyBtnWrap: {
-    width: 26,
-    height: 26,
+    width: 30,
+    height: 30,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 6,
+    borderRadius: 8,
     backgroundColor: C.primary,
   },
-  qtyBtnText: { color: "#fff", fontSize: 15, fontWeight: "800" },
-  qtyValue: { color: C.text, fontSize: 14, fontWeight: "700", minWidth: 18, textAlign: "center" },
+  qtyBtnText: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.card, fontSize: 16 },
+  qtyValue: { fontFamily: "PlusJakartaSans_700Bold", color: C.text, fontSize: 14, minWidth: 18, textAlign: "center" },
 });

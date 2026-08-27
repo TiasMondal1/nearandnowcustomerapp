@@ -1,17 +1,17 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import {
-    Alert,
-    FlatList,
-    RefreshControl,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { Alert, FlatList, RefreshControl, StyleSheet, View } from "react-native";
 
+import {
+  Card,
+  EmptyState,
+  IconButton,
+  PrimaryButton,
+  Screen,
+  ScreenHeader,
+  Skeleton,
+  SkeletonText,
+} from "../../components/ui";
 import { C } from "../../constants/colors";
 import { useAuth } from "../../context/AuthContext";
 import { useLocation } from "../../context/LocationContext";
@@ -101,35 +101,42 @@ export default function LocationIndex() {
 
   const emptyComponent = useMemo(
     () => (
-      <View style={styles.emptyWrap}>
-        <Text style={styles.emptyTitle}>No addresses yet</Text>
-        <Text style={styles.emptySub}>Add one to start ordering</Text>
-
-        <TouchableOpacity
-          style={styles.emptyBtn}
+      <EmptyState
+        fill
+        icon="map-marker-plus-outline"
+        title="No addresses yet"
+        text="Add one to start ordering"
+        style={styles.emptyWrap}
+        titleStyle={styles.emptyTitle}
+        textStyle={styles.emptySub}
+      >
+        <PrimaryButton
+          label="Add Address"
+          fullWidth={false}
           onPress={() => router.push("/location/add")}
-        >
-          <Text style={styles.emptyBtnText}>Add Address</Text>
-        </TouchableOpacity>
-      </View>
+          style={styles.emptyBtn}
+        />
+      </EmptyState>
     ),
     [],
   );
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Delivery Addresses</Text>
-        <TouchableOpacity
-          style={styles.addIconBtn}
-          onPress={() => router.push("/location/add")}
-        >
-          <MaterialCommunityIcons name="plus" size={22} color="#fff" />
-        </TouchableOpacity>
-      </View>
+    <Screen>
+      <ScreenHeader
+        title="Delivery Addresses"
+        onBack={() => router.back()}
+        right={
+          <IconButton
+            icon="plus"
+            bg={C.primary}
+            color={C.card}
+            shadow="primarySm"
+            accessibilityLabel="Add new address"
+            onPress={() => router.push("/location/add")}
+          />
+        }
+      />
 
       <FlatList
         data={locations}
@@ -161,25 +168,38 @@ export default function LocationIndex() {
       />
 
       {!!locations.length && (
-        <TouchableOpacity
-          style={styles.addBtn}
+        <PrimaryButton
+          size="lg"
+          icon="plus"
+          label="Add new address"
+          shadow
           onPress={() => router.push("/location/add")}
-        >
-          <MaterialCommunityIcons name="plus" size={18} color="#fff" />
-          <Text style={styles.addText}>Add new address</Text>
-        </TouchableOpacity>
+          style={styles.addBtn}
+        />
       )}
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 /* ---------------- Skeleton ---------------- */
 
+function SkeletonCard() {
+  return (
+    <Card style={styles.skeletonCard}>
+      <View style={styles.skeletonRow}>
+        <Skeleton width={34} height={34} radius={10} />
+        <Skeleton width={80} height={12} />
+      </View>
+      <SkeletonText lines={2} lineHeight={11} lastLineWidth="70%" />
+    </Card>
+  );
+}
+
 function SkeletonList() {
   return (
     <>
       {[1, 2, 3].map((i) => (
-        <View key={i} style={styles.skeleton} />
+        <SkeletonCard key={i} />
       ))}
     </>
   );
@@ -188,124 +208,25 @@ function SkeletonList() {
 /* ---------------- Styles ---------------- */
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
+  listContent: { padding: 16, paddingBottom: 120 },
 
-  header: {
+  skeletonCard: { marginBottom: 10 },
+  skeletonRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: C.card,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-    shadowColor: C.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 2,
-  },
-  backBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: C.bgSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerTitle: {
-    flex: 1,
-    textAlign: "center",
-    color: C.text,
-    fontSize: 20,
-    fontWeight: "900",
-    letterSpacing: -0.3,
-  },
-  addIconBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: C.primary,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: C.primary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 3,
+    gap: 10,
+    marginBottom: 8,
   },
 
-  listContent: { padding: 20, paddingBottom: 120 },
-
-  skeleton: {
-    height: 88,
-    borderRadius: 14,
-    backgroundColor: C.bgSoft,
-    marginBottom: 10,
-    marginHorizontal: 16,
-    marginTop: 8,
-  },
-
-  emptyWrap: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingBottom: 80,
-    gap: 12,
-  },
-  emptyTitle: {
-    color: C.text,
-    fontSize: 20,
-    fontWeight: "900",
-    marginTop: 8,
-  },
-  emptySub: {
-    color: C.textSub,
-    fontSize: 15,
-    textAlign: "center",
-    lineHeight: 22,
-  },
-  emptyBtn: {
-    marginTop: 16,
-    backgroundColor: C.primary,
-    borderRadius: 16,
-    paddingHorizontal: 32,
-    paddingVertical: 16,
-    shadowColor: C.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
-  },
-  emptyBtnText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "800",
-    letterSpacing: 0.3,
-  },
+  emptyWrap: { paddingBottom: 80 },
+  emptyTitle: { fontFamily: "PlusJakartaSans_400Regular", fontSize: 18 },
+  emptySub: { fontFamily: "PlusJakartaSans_400Regular", fontSize: 15, lineHeight: 22, maxWidth: 260 },
+  emptyBtn: { marginTop: 6, paddingHorizontal: 32 },
 
   addBtn: {
     position: "absolute",
     bottom: 28,
-    left: 20,
-    right: 20,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-    backgroundColor: C.primary,
-    borderRadius: 16,
-    paddingVertical: 18,
-    shadowColor: C.primary,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35,
-    shadowRadius: 10,
-    elevation: 8,
-  },
-  addText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "900",
-    letterSpacing: 0.3,
+    left: 16,
+    right: 16,
   },
 });

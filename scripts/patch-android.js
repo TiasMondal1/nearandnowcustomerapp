@@ -70,6 +70,9 @@ ensureProp("android.enableMinifyInReleaseBuilds", "true", "Enable R8 full-mode m
 ensureProp("android.enableBundleCompression", "true", "Compress the JS bundle inside the APK");
 ensureProp("reactNativeArchitectures", "armeabi-v7a,arm64-v8a,x86_64", "Build every ABI we split on (must match splits.abi.include in app/build.gradle)");
 ensureProp("buildUniversalApk", "true", "Emit a universal (all-ABI) APK alongside the per-ABI split APKs");
+// Expo default (-Xmx2048m -XX:MaxMetaspaceSize=512m) makes the daemon die with OutOfMemoryError: Metaspace
+// during :app:minifyReleaseWithR8 on a cold build (seen 2026-08-26) — the build then hangs forever.
+ensureProp("org.gradle.jvmargs", "-Xmx4096m -XX:MaxMetaspaceSize=1024m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8", "Gradle daemon JVM — enough heap/metaspace for R8 on a cold build");
 
 fs.writeFileSync(gpPath, gp, "utf8");
 

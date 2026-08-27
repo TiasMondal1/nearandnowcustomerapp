@@ -8,11 +8,10 @@ import {
     StyleSheet,
     Text,
     TextInput,
-    TouchableOpacity,
     View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 
+import { PrimaryButton, Screen } from "../components/ui";
 import { C } from "../constants/colors";
 import { sendOTP } from "../lib/authService";
 
@@ -25,6 +24,8 @@ export default function PhoneScreen() {
   const [phone, setPhone] = useState(prefillPhone);
   const [email, setEmail] = useState("");
   const [loadingOtp, setLoadingOtp] = useState(false);
+  // Visual only — drives the focused border on whichever field is active.
+  const [focus, setFocus] = useState<"phone" | "email" | null>(null);
 
   const onlyDigits = (value: string) => value.replace(/[^0-9]/g, "");
 
@@ -60,7 +61,7 @@ export default function PhoneScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <Screen bg={C.card}>
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -78,10 +79,10 @@ export default function PhoneScreen() {
 
           {/* Input */}
           <View style={styles.inputBlock}>
-            <Text style={styles.title}>Let&apos;s get you in</Text>
+            <Text style={styles.title} accessibilityRole="header">Let&apos;s get you in</Text>
             <Text style={styles.subtitle}>Enter your phone number to continue</Text>
 
-            <View style={styles.phoneRow}>
+            <View style={[styles.phoneRow, focus === "phone" && styles.inputFocused]}>
               <View style={styles.countryCodeContainer}>
                 <Text style={styles.countryCodeText}>+91</Text>
               </View>
@@ -90,9 +91,12 @@ export default function PhoneScreen() {
                 value={phone}
                 onChangeText={handleChange}
                 placeholder="XXXXXXXXXX"
-                placeholderTextColor="#9ca3af"
+                placeholderTextColor={C.textLight}
                 keyboardType="number-pad"
                 maxLength={10}
+                accessibilityLabel="Phone number"
+                onFocus={() => setFocus("phone")}
+                onBlur={() => setFocus(null)}
               />
             </View>
             <Text style={styles.helperText}>
@@ -100,14 +104,18 @@ export default function PhoneScreen() {
             </Text>
 
             <TextInput
-              style={styles.emailInput}
+              style={[styles.emailInput, focus === "email" && styles.inputFocused]}
               value={email}
               onChangeText={setEmail}
               placeholder="Email address"
-              placeholderTextColor="#9ca3af"
+              placeholderTextColor={C.textLight}
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
+              returnKeyType="done"
+              accessibilityLabel="Email address"
+              onFocus={() => setFocus("email")}
+              onBlur={() => setFocus(null)}
             />
             <Text style={styles.helperText}>
               Used for order receipts. You can verify it after logging in.
@@ -116,27 +124,30 @@ export default function PhoneScreen() {
 
           {/* Bottom */}
           <View style={styles.bottomSection}>
-            <TouchableOpacity
-              activeOpacity={isValid && !loadingOtp ? 0.85 : 1}
+            <PrimaryButton
+              label={loadingOtp ? "Sending…" : "Continue with OTP"}
               onPress={handleContinueWithOtp}
-              style={[
-                styles.primaryButton,
-                (!isValid || loadingOtp) && styles.buttonDisabled,
-              ]}
               disabled={!isValid || loadingOtp}
-            >
-              <Text style={styles.primaryButtonText}>
-                {loadingOtp ? "Sending…" : "Continue with OTP"}
-              </Text>
-            </TouchableOpacity>
+              shadow
+              style={(!isValid || loadingOtp) && styles.ctaDisabled}
+              textStyle={styles.ctaText}
+            />
 
             <Text style={styles.termsText}>
               By continuing, you agree to our{" "}
-              <Text style={styles.termsLink} onPress={() => router.push("/settings/terms")}>
+              <Text
+                style={styles.termsLink}
+                accessibilityRole="link"
+                onPress={() => router.push("/settings/terms")}
+              >
                 Terms
               </Text>{" "}
               &amp;{" "}
-              <Text style={styles.termsLink} onPress={() => router.push("/settings/terms")}>
+              <Text
+                style={styles.termsLink}
+                accessibilityRole="link"
+                onPress={() => router.push("/settings/terms")}
+              >
                 Privacy Policy
               </Text>
               .
@@ -144,100 +155,91 @@ export default function PhoneScreen() {
           </View>
         </View>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: "#FFFFFF" },
   flex: { flex: 1 },
   container: {
     flex: 1,
-    paddingHorizontal: 28,
+    paddingHorizontal: 24,
     paddingTop: 16,
-    paddingBottom: 36,
+    paddingBottom: 32,
     justifyContent: "space-between",
   },
 
   logoSection: {
     alignItems: "center",
-    paddingTop: 16,
+    paddingTop: 4,
   },
   logo: {
-    width: 200,
-    height: 180,
+    width: 160,
+    height: 145,
   },
 
-  inputBlock: { gap: 10 },
+  inputBlock: { gap: 8 },
   title: {
     fontSize: 28,
-    fontWeight: "800",
-    color: "#1f2937",
+    fontFamily: "PlusJakartaSans_800ExtraBold",
+    color: C.text,
     letterSpacing: -0.3,
-    marginBottom: 2,
+    marginBottom: 4,
   },
-  subtitle: { fontSize: 14, color: "#6b7280" },
+  subtitle: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 14, color: C.textSub },
   phoneRow: {
     flexDirection: "row",
     alignItems: "center",
     borderRadius: 14,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: C.card,
     borderWidth: 2,
-    borderColor: "#e5e7eb",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    borderColor: C.border,
+    paddingHorizontal: 16,
+    paddingVertical: 4,
+    minHeight: 52,
     marginTop: 8,
   },
+  inputFocused: { borderColor: C.primary },
   countryCodeContainer: {
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderRadius: 8,
-    backgroundColor: "#f3f4f6",
+    backgroundColor: C.bgSoft,
     borderWidth: 1,
     borderColor: "#d1d5db",
     marginRight: 8,
   },
-  countryCodeText: { color: "#1f2937", fontSize: 14, fontWeight: "600" },
-  phoneInput: {
+  countryCodeText: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.text, fontSize: 16 },
+  phoneInput: { fontFamily: "PlusJakartaSans_500Medium",
     flex: 1,
     paddingVertical: 10,
     fontSize: 16,
-    color: "#1f2937",
+    color: C.text,
     letterSpacing: 1,
   },
-  helperText: { fontSize: 12, color: "#6b7280" },
-  emailInput: {
+  helperText: { fontFamily: "PlusJakartaSans_400Regular", fontSize: 12, color: C.textSub },
+  emailInput: { fontFamily: "PlusJakartaSans_400Regular",
     borderRadius: 14,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: C.card,
     borderWidth: 2,
-    borderColor: "#e5e7eb",
+    borderColor: C.border,
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 14,
+    minHeight: 52,
     fontSize: 15,
-    color: "#1f2937",
+    color: C.text,
     marginTop: 12,
   },
 
-  bottomSection: { gap: 14 },
-  primaryButton: {
-    borderRadius: 14,
-    paddingVertical: 15,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: C.primary,
-    shadowColor: C.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.28,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  primaryButtonText: { fontSize: 16, fontWeight: "700", color: "#FFFFFF" },
-  buttonDisabled: { opacity: 0.45, shadowOpacity: 0, elevation: 0 },
-  termsText: {
-    fontSize: 11,
-    color: "#9ca3af",
+  bottomSection: { gap: 16 },
+  ctaDisabled: { shadowOpacity: 0, elevation: 0 },
+  ctaText: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 16 },
+  termsText: { fontFamily: "PlusJakartaSans_600SemiBold",
+    fontSize: 12,
+    color: C.textLight,
     textAlign: "center",
-    lineHeight: 16,
+    lineHeight: 18,
+    paddingVertical: 4,
   },
-  termsLink: { color: C.primary, fontWeight: "600" },
+  termsLink: { color: C.primary },
 });

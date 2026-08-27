@@ -3,8 +3,9 @@ import * as ExpoLocation from "expo-location";
 import { router } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, StyleSheet, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 
+import { IconWrap, Screen } from "../components/ui";
+import { C } from "../constants/colors";
 import { useAuth } from "../context/AuthContext";
 import { useLocation } from "../context/LocationContext";
 
@@ -13,7 +14,6 @@ const T = {
   greenXLight: "#EAF6EE",
   bark: "#3C2F1E",
   barkLight: "#A89282",
-  white: "#FFFFFF",
   cardBorder: "rgba(60,47,30,0.08)",
 };
 
@@ -71,9 +71,9 @@ export default function SplashScreen() {
   const isNewUser = isHydrated && !location;
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <Screen bg={C.card}>
       <View style={styles.container}>
-        {/* ── Logo ─── */}
+        {/* ── Logo — sized to land where the native splash (imageWidth 240) drew it ─── */}
         <View style={styles.logoSection}>
           <Image
             source={require("../assets/near_now_image.png")}
@@ -84,20 +84,22 @@ export default function SplashScreen() {
 
         {/* ── Location card ─── */}
         <View style={styles.locationCard}>
-          <View style={styles.locationIconCircle}>
-            <MaterialCommunityIcons
-              name={getLocationIcon(displayLabel)}
-              size={26}
-              color={T.green}
-            />
-          </View>
+          <IconWrap
+            size={56}
+            circle
+            bg={T.greenXLight}
+            icon={getLocationIcon(displayLabel)}
+            iconSize={26}
+            iconColor={T.green}
+            style={styles.locationIconCircle}
+          />
 
           {displayLabel ? (
-            <Text style={styles.locationLabel}>{displayLabel}</Text>
+            <Text style={styles.locationLabel} numberOfLines={1}>{displayLabel}</Text>
           ) : isNewUser && !gpsAddress ? (
-            <Text style={styles.locationLabel}>Detecting location…</Text>
+            <Text style={styles.locationLabel} numberOfLines={1}>Detecting location…</Text>
           ) : (
-            <Text style={styles.locationLabel}>Your location</Text>
+            <Text style={styles.locationLabel} numberOfLines={1}>Your location</Text>
           )}
 
           {displayAddress ? (
@@ -105,75 +107,66 @@ export default function SplashScreen() {
               {displayAddress}
             </Text>
           ) : isNewUser && !gpsAddress ? (
-            <ActivityIndicator size="small" color={T.green} style={{ marginTop: 4 }} />
+            <ActivityIndicator size="small" color={T.green} style={styles.cardSpinner} accessibilityLabel="Loading" />
           ) : null}
 
           {!isHydrated && (
-            <ActivityIndicator size="small" color={T.green} style={{ marginTop: 4 }} />
+            <ActivityIndicator size="small" color={T.green} style={styles.cardSpinner} accessibilityLabel="Loading" />
           )}
         </View>
 
-        <ActivityIndicator size="small" color={T.green} style={styles.spinner} />
+        <ActivityIndicator size="small" color={T.green} style={styles.spinner} accessibilityLabel="Loading" />
       </View>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: T.white },
   container: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 32,
-    gap: 28,
+    gap: 32,
   },
   logoSection: {
     alignItems: "center",
   },
   logoImage: {
-    width: 220,
-    height: 200,
+    width: 240,
+    height: 218,
   },
   locationCard: {
     width: "100%",
-    backgroundColor: T.white,
-    borderRadius: 20,
+    backgroundColor: C.card,
+    borderRadius: 16,
     paddingVertical: 24,
     paddingHorizontal: 24,
     alignItems: "center",
-    gap: 6,
+    gap: 8,
     borderWidth: 1.5,
     borderColor: T.cardBorder,
-    shadowColor: "#000",
+    shadowColor: C.shadow,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.06,
     shadowRadius: 12,
     elevation: 4,
   },
-  locationIconCircle: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: T.greenXLight,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 6,
-  },
+  locationIconCircle: { marginBottom: 8 },
   locationLabel: {
     fontSize: 18,
-    fontWeight: "800",
+    fontFamily: "PlusJakartaSans_800ExtraBold",
     color: T.bark,
     letterSpacing: -0.3,
     textAlign: "center",
   },
-  locationAddress: {
+  locationAddress: { fontFamily: "PlusJakartaSans_500Medium",
     fontSize: 13,
     color: T.barkLight,
     textAlign: "center",
     lineHeight: 19,
-    fontWeight: "500",
-    marginTop: 2,
+    marginTop: 4,
   },
+  cardSpinner: { marginTop: 4 },
   spinner: { marginTop: 12 },
 });

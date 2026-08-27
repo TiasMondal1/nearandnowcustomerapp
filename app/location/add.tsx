@@ -4,6 +4,7 @@ import * as Location from "expo-location";
 import { router } from "expo-router";
 import React, { useCallback, useRef, useState } from "react";
 import {
+    ActivityIndicator,
     Alert,
     KeyboardAvoidingView,
     Platform,
@@ -15,9 +16,17 @@ import {
     View,
 } from "react-native";
 import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
-import { SafeAreaView } from "react-native-safe-area-context";
 
+import {
+  Card,
+  IconButton,
+  PrimaryButton,
+  Screen,
+  ScreenHeader,
+  SectionLabel,
+} from "../../components/ui";
 import { C } from "../../constants/colors";
+import { text } from "../../constants/ui";
 import { useAuth } from "../../context/AuthContext";
 import { useLocation } from "../../context/LocationContext";
 import { createAddress } from "../../lib/addressService";
@@ -275,13 +284,16 @@ export default function AddLocationScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <Screen>
+      <ScreenHeader title="Add new address" />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={{ flex: 1 }}
       >
-        <ScrollView contentContainerStyle={styles.container}>
-          <Text style={styles.title}>Add new address</Text>
+        <ScrollView
+          contentContainerStyle={styles.container}
+          showsVerticalScrollIndicator={false}
+        >
           <Text style={styles.subtitle}>
             Move the pin to your exact delivery location
           </Text>
@@ -292,11 +304,15 @@ export default function AddLocationScreen() {
               provider={PROVIDER_GOOGLE}
               style={StyleSheet.absoluteFill}
               region={region}
+              loadingEnabled
+              loadingIndicatorColor={C.primary}
+              loadingBackgroundColor={C.bgSoft}
             >
               <Marker
                 coordinate={coords}
                 draggable
                 onDragEnd={handleMarkerDragEnd}
+                anchor={{ x: 0.5, y: 1 }}
               >
                 <MaterialCommunityIcons
                   name="map-marker"
@@ -306,19 +322,20 @@ export default function AddLocationScreen() {
               </Marker>
             </MapView>
 
-            <TouchableOpacity
-              style={styles.locateBtn}
+            <IconButton
+              icon="crosshairs-gps"
+              iconSize={20}
+              size={44}
+              bg={C.primary}
+              color={C.card}
+              shadow="primarySm"
+              accessibilityLabel="Use my current location"
               onPress={goToCurrentLocation}
-            >
-              <MaterialCommunityIcons
-                name="crosshairs-gps"
-                size={20}
-                color="#fff"
-              />
-            </TouchableOpacity>
+              style={styles.locateBtn}
+            />
           </View>
 
-          <View style={styles.addressBox}>
+          <Card style={styles.addressBox}>
             <TextInput
               style={styles.addressInput}
               placeholder="Enter or edit address"
@@ -333,22 +350,30 @@ export default function AddLocationScreen() {
               }}
             />
 
-            {reverseLoading && (
-              <Text style={styles.updatingText}>Updating location…</Text>
-            )}
-          </View>
+            <View style={styles.updatingRow}>
+              {reverseLoading && (
+                <>
+                  <ActivityIndicator size="small" color={C.primary} />
+                  <Text style={styles.updatingText}>Updating location…</Text>
+                </>
+              )}
+            </View>
+          </Card>
 
           <View style={styles.labelRow}>
             {LABELS.map((l) => (
               <TouchableOpacity
                 key={l}
                 onPress={() => setLabel(l)}
-                style={[styles.labelChip, label === l && styles.labelActive]}
+                style={[styles.chip, label === l && styles.chipActive]}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityState={{ selected: label === l }}
               >
                 <Text
                   style={[
-                    styles.labelText,
-                    label === l && styles.labelTextActive,
+                    styles.chipText,
+                    label === l && styles.chipTextActive,
                   ]}
                 >
                   {l}
@@ -359,7 +384,7 @@ export default function AddLocationScreen() {
 
           {label === "Other" && (
             <TextInput
-              style={styles.input}
+              style={[styles.input, styles.customLabelInput]}
               placeholder="Custom label (e.g. Mom's house)"
               placeholderTextColor={C.textLight}
               value={customLabel}
@@ -368,20 +393,23 @@ export default function AddLocationScreen() {
           )}
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Delivering for</Text>
+            <SectionLabel>Delivering for</SectionLabel>
 
             <View style={styles.toggleRow}>
               <TouchableOpacity
                 style={[
-                  styles.toggleChip,
-                  deliveryFor === "me" && styles.toggleActive,
+                  styles.chip,
+                  deliveryFor === "me" && styles.chipActive,
                 ]}
                 onPress={() => setDeliveryFor("me")}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityState={{ selected: deliveryFor === "me" }}
               >
                 <Text
                   style={[
-                    styles.toggleText,
-                    deliveryFor === "me" && styles.toggleTextActive,
+                    styles.chipText,
+                    deliveryFor === "me" && styles.chipTextActive,
                   ]}
                 >
                   Me
@@ -390,15 +418,18 @@ export default function AddLocationScreen() {
 
               <TouchableOpacity
                 style={[
-                  styles.toggleChip,
-                  deliveryFor === "other" && styles.toggleActive,
+                  styles.chip,
+                  deliveryFor === "other" && styles.chipActive,
                 ]}
                 onPress={() => setDeliveryFor("other")}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityState={{ selected: deliveryFor === "other" }}
               >
                 <Text
                   style={[
-                    styles.toggleText,
-                    deliveryFor === "other" && styles.toggleTextActive,
+                    styles.chipText,
+                    deliveryFor === "other" && styles.chipTextActive,
                   ]}
                 >
                   Someone else
@@ -412,6 +443,8 @@ export default function AddLocationScreen() {
               <TouchableOpacity
                 style={styles.contactBtn}
                 onPress={pickFromContacts}
+                activeOpacity={0.8}
+                accessibilityRole="button"
               >
                 <MaterialCommunityIcons
                   name="account-box"
@@ -453,119 +486,67 @@ export default function AddLocationScreen() {
           )}
 
           {/* Save */}
-          <TouchableOpacity
-            style={[styles.saveBtn, saving && { opacity: 0.6 }]}
+          <PrimaryButton
+            size="lg"
+            shadow
+            label={saving ? "Saving…" : "Save address"}
             onPress={handleSave}
             disabled={saving}
-          >
-            <Text style={styles.saveText}>
-              {saving ? "Saving…" : "Save address"}
-            </Text>
-          </TouchableOpacity>
+            style={styles.saveBtn}
+          />
         </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
-  container: { padding: 20, paddingBottom: 40 },
+  container: { padding: 16, paddingBottom: 40 },
 
-  title: { fontSize: 24, fontWeight: "900", color: C.text, letterSpacing: -0.5 },
-  subtitle: { fontSize: 14, color: C.textSub, marginTop: 6, marginBottom: 18, lineHeight: 20 },
+  subtitle: { ...text.body, marginBottom: 16 },
 
   mapWrap: {
     height: 240,
-    borderRadius: 20,
+    borderRadius: 16,
     overflow: "hidden",
-    borderWidth: 2,
+    borderWidth: 1,
     borderColor: C.border,
-    shadowColor: C.shadow,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 5,
   },
   locateBtn: {
     position: "absolute",
     bottom: 16,
     right: 16,
-    width: 50,
-    height: 50,
-    borderRadius: 16,
-    backgroundColor: C.primary,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: C.primary,
-    shadowOpacity: 0.5,
-    shadowRadius: 8,
-    elevation: 6,
   },
 
-  addressBox: {
-    marginTop: 18,
-    padding: 16,
-    backgroundColor: C.card,
-    borderRadius: 16,
-    borderWidth: 1.5,
-    borderColor: C.border,
-    shadowColor: C.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 3,
-  },
+  addressBox: { marginTop: 16 },
 
   labelRow: { flexDirection: "row", gap: 12, marginTop: 20 },
-  labelChip: {
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    backgroundColor: C.bgSoft,
-    borderWidth: 1.5,
-    borderColor: C.border,
-  },
-  labelActive: {
-    backgroundColor: C.primary,
-    borderColor: C.primary,
-    shadowColor: C.primary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  labelText: { fontSize: 14, color: C.textSub, fontWeight: "600" },
-  labelTextActive: { color: "#fff", fontWeight: "800" },
+  customLabelInput: { marginTop: 12 },
 
-  section: { marginTop: 24 },
-  sectionTitle: { fontSize: 14, color: C.text, fontWeight: "800", marginBottom: 10, letterSpacing: 0.3 },
-
-  toggleRow: { flexDirection: "row", gap: 12 },
-  toggleChip: {
+  chip: {
     flex: 1,
+    minHeight: 44,
     paddingVertical: 12,
     borderRadius: 12,
     backgroundColor: C.bgSoft,
     borderWidth: 1.5,
     borderColor: C.border,
     alignItems: "center",
+    justifyContent: "center",
   },
-  toggleActive: {
+  chipActive: {
     backgroundColor: C.primary,
     borderColor: C.primary,
-    shadowColor: C.primary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 3,
   },
-  toggleText: { color: C.textSub, fontSize: 14, fontWeight: "600" },
-  toggleTextActive: { color: "#fff", fontWeight: "800" },
+  chipText: { fontSize: 14, color: C.textSub, fontFamily: "PlusJakartaSans_600SemiBold" },
+  chipTextActive: { color: C.card },
+
+  section: { marginTop: 24 },
+  toggleRow: { flexDirection: "row", gap: 12 },
 
   receiverBox: { marginTop: 16, gap: 12 },
 
-  input: {
+  input: { fontFamily: "PlusJakartaSans_500Medium",
     borderRadius: 14,
     backgroundColor: C.card,
     borderWidth: 1.5,
@@ -574,22 +555,9 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     color: C.text,
     fontSize: 15,
-    fontWeight: "500",
   },
 
-  saveBtn: {
-    marginTop: 32,
-    backgroundColor: C.primary,
-    borderRadius: 16,
-    paddingVertical: 18,
-    alignItems: "center",
-    shadowColor: C.primary,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    elevation: 8,
-  },
-  saveText: { color: "#fff", fontSize: 17, fontWeight: "900", letterSpacing: 0.5 },
+  saveBtn: { marginTop: 32 },
 
   contactBtn: {
     flexDirection: "row",
@@ -603,16 +571,22 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: C.primaryXLight,
   },
-  contactBtnText: { fontSize: 14, color: C.primary, fontWeight: "700" },
+  contactBtnText: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 14, color: C.primary },
 
-  addressInput: {
+  addressInput: { fontFamily: "PlusJakartaSans_500Medium",
     fontSize: 14,
     color: C.text,
     lineHeight: 22,
     minHeight: 50,
     maxHeight: 80,
-    fontWeight: "500",
   },
 
-  updatingText: { marginTop: 8, fontSize: 12, color: C.primary, fontWeight: "600" },
+  updatingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    minHeight: 20,
+    marginTop: 8,
+  },
+  updatingText: { fontFamily: "PlusJakartaSans_600SemiBold", fontSize: 12, color: C.primary },
 });

@@ -3,7 +3,6 @@ import { Image } from "expo-image";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-    ActivityIndicator,
     Pressable,
     RefreshControl,
     ScrollView,
@@ -11,14 +10,15 @@ import {
     Text,
     View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 
+import { Screen, Skeleton } from "../../components/ui";
 import {
     CATEGORY_GROUPS,
     DEFAULT_GROUP,
     getGroupForCategoryName,
     type CategoryGroupDef,
 } from "../../constants/categoryGroups";
+import { opacity } from "../../constants/ui";
 import { useLocation } from "../../context/LocationContext";
 import { getAllCategories, type Category } from "../../lib/categoryService";
 import { cdnImage } from "../../lib/imageUrl";
@@ -32,15 +32,16 @@ import { getAllActiveProductIds } from "../../lib/storeService";
 const T = {
   green: "#2D7A4F",
   greenXLight: "#EAF6EE",
+  greenBorder: "rgba(45,122,79,0.15)",
   cream: "#FAFAF7",
   bark: "#3C2F1E",
-  barkMid: "#6B5744",
   barkLight: "#A89282",
   white: "#FFFFFF",
-  card: "#FFFFFF",
   cardBorder: "rgba(60,47,30,0.08)",
   shadow: "rgba(0,0,0,0.08)",
 };
+
+const SKELETON_TILES = [0, 1, 2, 3, 4, 5, 6, 7];
 
 const CAT_TINTS = [
   "#E8F5E9", "#FFF8E1", "#E3F2FD", "#FCE4EC",
@@ -67,10 +68,8 @@ const CategoryTile = React.memo(function CategoryTile({
   return (
     <Pressable
       onPress={handlePress}
-      style={({ pressed }) => [
-        styles.tile,
-        pressed && { transform: [{ scale: 0.96 }], opacity: 0.88 },
-      ]}
+      accessibilityRole="button"
+      style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
     >
       <View style={[styles.tileImageWrap, { backgroundColor: item.tint }]}>
         {item.image_url ? (
@@ -86,7 +85,7 @@ const CategoryTile = React.memo(function CategoryTile({
         ) : (
           <MaterialCommunityIcons
             name={item.iconName as any}
-            size={32}
+            size={28}
             color={T.green}
           />
         )}
@@ -95,6 +94,15 @@ const CategoryTile = React.memo(function CategoryTile({
         {item.name}
       </Text>
     </Pressable>
+  );
+});
+
+const Header = React.memo(function Header() {
+  return (
+    <View style={styles.header}>
+      <Text style={styles.title} accessibilityRole="header">Categories</Text>
+      <Text style={styles.subtitle}>Browse everything we carry</Text>
+    </View>
   );
 });
 
@@ -219,31 +227,39 @@ export default function CategoriesScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safe} edges={["top"]}>
-        <View style={styles.header}>
-          <View style={styles.headerAccent} />
-          <View>
-            <Text style={styles.title}>Categories</Text>
-            <Text style={styles.subtitle}>Browse everything we carry</Text>
-          </View>
+      <Screen bg={T.cream} edges={["top"]}>
+        <Header />
+        <View
+          style={styles.skeletonWrap}
+          accessible
+          accessibilityRole="progressbar"
+          accessibilityLabel="Loading categories…"
+        >
+          {[0, 1].map((s) => (
+            <View key={s} style={styles.sectionWrap}>
+              <View style={styles.sectionTitleRow}>
+                <Skeleton width={s === 0 ? 150 : 120} height={16} color={T.cardBorder} />
+              </View>
+              <View style={styles.grid}>
+                {SKELETON_TILES.map((i) => (
+                  <View key={i} style={styles.tile}>
+                    <View style={styles.skeletonSquare}>
+                      <Skeleton width="100%" height="100%" radius={14} color={T.cardBorder} />
+                    </View>
+                    <Skeleton width="60%" height={10} color={T.cardBorder} />
+                  </View>
+                ))}
+              </View>
+            </View>
+          ))}
         </View>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={T.green} />
-          <Text style={styles.loadingText}>Loading categories…</Text>
-        </View>
-      </SafeAreaView>
+      </Screen>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top"]}>
-      <View style={styles.header}>
-        <View style={styles.headerAccent} />
-        <View>
-          <Text style={styles.title}>Categories</Text>
-          <Text style={styles.subtitle}>Browse everything we carry</Text>
-        </View>
-      </View>
+    <Screen bg={T.cream} edges={["top"]}>
+      <Header />
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}
@@ -270,8 +286,7 @@ export default function CategoriesScreen() {
           sections.map(({ group, items }) => (
             <View key={group.id} style={styles.sectionWrap}>
               <View style={styles.sectionTitleRow}>
-                <View style={styles.sectionTitleAccent} />
-                <Text style={styles.sectionTitle}>{group.title}</Text>
+                <Text style={styles.sectionTitle} accessibilityRole="header">{group.title}</Text>
               </View>
               <View style={styles.grid}>
                 {items.map((it) => (
@@ -282,53 +297,42 @@ export default function CategoriesScreen() {
           ))
         )}
       </ScrollView>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: T.cream },
-
+  // Header (shared tab-header spec with order-again.tsx)
   header: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingHorizontal: 18,
+    paddingHorizontal: 16,
     paddingTop: 14,
     paddingBottom: 12,
     backgroundColor: T.white,
     borderBottomWidth: 1,
     borderBottomColor: T.cardBorder,
   },
-  headerAccent: {
-    width: 4,
-    height: 26,
-    borderRadius: 2,
-    backgroundColor: T.green,
-  },
   title: {
     fontSize: 22,
-    fontWeight: "900",
+    fontFamily: "PlusJakartaSans_800ExtraBold",
     color: T.bark,
     letterSpacing: -0.4,
   },
-  subtitle: {
+  subtitle: { fontFamily: "PlusJakartaSans_500Medium",
     fontSize: 12,
     color: T.barkLight,
-    fontWeight: "500",
     marginTop: 2,
   },
 
-  loadingContainer: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12 },
-  loadingText: { color: T.barkLight, fontSize: 14, fontWeight: "500" },
+  // Loading skeleton — mirrors the 4-column tile grid below
+  skeletonWrap: { flex: 1, overflow: "hidden" },
+  skeletonSquare: { width: "100%", aspectRatio: 1 },
 
-  scrollContent: { paddingBottom: 130, paddingTop: 4 },
+  scrollContent: { paddingBottom: 130 },
 
   emptyContainer: {
-    flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingTop: 80,
+    minHeight: 360,
     gap: 12,
   },
   emptyIconWrap: {
@@ -339,33 +343,23 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1.5,
-    borderColor: "rgba(45,122,79,0.15)",
+    borderColor: T.greenBorder,
   },
-  emptyTitle: { fontSize: 17, fontWeight: "800", color: T.bark },
-  emptyText: { fontSize: 14, color: T.barkLight, fontWeight: "500" },
+  emptyTitle: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 17, color: T.bark },
+  emptyText: { fontFamily: "PlusJakartaSans_500Medium", fontSize: 14, color: T.barkLight },
 
   sectionWrap: {
-    paddingHorizontal: 14,
-    paddingTop: 20,
-    paddingBottom: 4,
+    paddingHorizontal: 10,
+    paddingTop: 24,
+    paddingBottom: 8,
   },
   sectionTitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
     marginBottom: 12,
-    paddingHorizontal: 4,
+    paddingHorizontal: 6,
   },
-  sectionTitleAccent: {
-    width: 4,
-    height: 18,
-    borderRadius: 2,
-    backgroundColor: T.green,
-  },
-  sectionTitle: {
+  sectionTitle: { fontFamily: "PlusJakartaSans_800ExtraBold",
     fontSize: 17,
     color: T.bark,
-    fontWeight: "900",
     letterSpacing: -0.3,
   },
 
@@ -373,15 +367,16 @@ const styles = StyleSheet.create({
 
   tile: {
     width: "25%",
-    paddingHorizontal: 5,
-    paddingVertical: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 8,
     alignItems: "center",
-    gap: 6,
+    gap: 8,
   },
+  tilePressed: { transform: [{ scale: 0.97 }], opacity: opacity.pressCard },
   tileImageWrap: {
     width: "100%",
     aspectRatio: 1,
-    borderRadius: 18,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
@@ -392,11 +387,11 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   tileImage: { width: "100%", height: "100%" },
-  tileLabel: {
-    fontSize: 11.5,
+  tileLabel: { fontFamily: "PlusJakartaSans_700Bold",
+    fontSize: 12,
     color: T.bark,
-    fontWeight: "700",
     textAlign: "center",
-    lineHeight: 14,
+    lineHeight: 16,
+    minHeight: 32,
   },
 });

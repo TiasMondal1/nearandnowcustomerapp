@@ -1,10 +1,11 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Location from "expo-location";
 import { router } from "expo-router";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
+    Animated,
     FlatList,
     Keyboard,
     StyleSheet,
@@ -14,8 +15,15 @@ import {
     View,
 } from "react-native";
 import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import {
+  PrimaryButton,
+  Screen,
+  ScreenHeader,
+  Skeleton,
+  SkeletonText,
+} from "../../components/ui";
 import {
   reverseGeocode as reverseGeocodeApi,
   autocomplete as autocompleteApi,
@@ -26,9 +34,6 @@ import { logSilentFailure } from "../../lib/logSilentFailure";
 
 const T = {
   green: "#2D7A4F",
-  greenLight: "#3DA668",
-  greenXLight: "#EAF6EE",
-  cream: "#FAFAF7",
   sand: "#F3F1EB",
   bark: "#3C2F1E",
   barkMid: "#6B5744",
@@ -36,7 +41,6 @@ const T = {
   white: "#FFFFFF",
   pink: "#E91E63",
   cardBorder: "rgba(60,47,30,0.08)",
-  shadow: "rgba(45,122,79,0.12)",
 };
 
 // Single Places Autocomplete session token keeps pricing correct across
@@ -104,6 +108,25 @@ export default function SelectMapLocationScreen() {
   const [locationName, setLocationName] = useState("");
   const [locationAddress, setLocationAddress] = useState("");
   const [reverseLoading, setReverseLoading] = useState(false);
+
+  const insets = useSafeAreaInsets();
+
+  // Presentational only: fade the predictions dropdown in when it opens.
+  // (LayoutAnimation is avoided here — it flickers over MapView on Android.)
+  const panelFade = useMemo(() => new Animated.Value(0), []);
+  useEffect(() => {
+    if (!predictionsOpen) {
+      panelFade.setValue(0);
+      return;
+    }
+    const anim = Animated.timing(panelFade, {
+      toValue: 1,
+      duration: 120,
+      useNativeDriver: true,
+    });
+    anim.start();
+    return () => anim.stop();
+  }, [predictionsOpen, panelFade]);
 
   // Android's react-native-maps rasterises the custom marker view once and
   // caches that snapshot. If the icon font hasn't finished loading at that
@@ -406,24 +429,20 @@ export default function SelectMapLocationScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top"]}>
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => {
-            if (router.canGoBack()) {
-              router.back();
-            } else {
-              router.replace("/(tabs)/home");
-            }
-          }}
-          activeOpacity={0.7}
-        >
-          <MaterialCommunityIcons name="chevron-left" size={28} color={T.bark} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Select Your Location</Text>
-        <View style={{ width: 40 }} />
-      </View>
+    <Screen bg={T.white} edges={["top"]}>
+      <ScreenHeader
+        title="Select Your Location"
+        onBack={() => {
+          if (router.canGoBack()) {
+            router.back();
+          } else {
+            router.replace("/(tabs)/home");
+          }
+        }}
+        backProps={{ bg: T.sand, color: T.bark }}
+        titleStyle={styles.headerTitle}
+        style={styles.header}
+      />
 
       <View style={styles.searchContainer}>
         <View style={styles.searchBar}>
@@ -447,7 +466,10 @@ export default function SelectMapLocationScreen() {
                 setPredictions([]);
                 setPredictionsOpen(false);
               }}
-              hitSlop={8}
+              hitSlop={12}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Clear search"
             >
               <MaterialCommunityIcons
                 name="close-circle"
@@ -459,9 +481,16 @@ export default function SelectMapLocationScreen() {
         </View>
 
         {predictionsOpen && (
-          <View style={styles.predictionsPanel}>
+          <Animated.View
+            style={[styles.predictionsPanel, { opacity: panelFade }]}
+          >
             {predictions.length === 0 ? (
               <View style={styles.predictionEmpty}>
+                <MaterialCommunityIcons
+                  name="map-search-outline"
+                  size={18}
+                  color={T.barkLight}
+                />
                 <Text style={styles.predictionEmptyText}>
                   No matching places. Try another search.
                 </Text>
@@ -479,6 +508,7 @@ export default function SelectMapLocationScreen() {
                     style={styles.predictionRow}
                     onPress={() => handleSelectPrediction(item)}
                     activeOpacity={0.7}
+                    accessibilityRole="button"
                   >
                     <MaterialCommunityIcons
                       name="map-marker-outline"
@@ -502,7 +532,7 @@ export default function SelectMapLocationScreen() {
                 )}
               />
             )}
-          </View>
+          </Animated.View>
         )}
       </View>
 
@@ -550,7 +580,8 @@ export default function SelectMapLocationScreen() {
         <TouchableOpacity
           style={styles.myLocationBtn}
           onPress={handleMyLocation}
-          activeOpacity={0.8}
+          activeOpacity={0.7}
+          accessibilityRole="button"
           accessibilityLabel="Use my current location"
         >
           <MaterialCommunityIcons
@@ -561,7 +592,12 @@ export default function SelectMapLocationScreen() {
         </TouchableOpacity>
       </View>
 
-      <View style={styles.bottomSheet}>
+      <View
+        style={[
+          styles.bottomSheet,
+          { paddingBottom: Math.max(insets.bottom, 16) + 8 },
+        ]}
+      >
         <View style={styles.locationInfo}>
           <MaterialCommunityIcons
             name="map-marker"
@@ -569,57 +605,54 @@ export default function SelectMapLocationScreen() {
             color={T.green}
           />
           <View style={styles.locationTextContainer}>
-            <Text style={styles.locationName}>
-              {reverseLoading ? "Loading…" : locationName || "Selected Location"}
-            </Text>
-            <Text style={styles.locationAddress} numberOfLines={2}>
-              {reverseLoading
-                ? "Fetching address…"
-                : locationAddress || "Pick a place from search or tap on the map"}
-            </Text>
+            {reverseLoading ? (
+              <View accessible accessibilityLabel="Fetching address…">
+                <Skeleton
+                  width="55%"
+                  height={18}
+                  color={T.sand}
+                  style={styles.skeletonName}
+                />
+                <SkeletonText
+                  lines={2}
+                  lineHeight={12}
+                  gap={8}
+                  width="92%"
+                  lastLineWidth="70%"
+                  color={T.sand}
+                />
+              </View>
+            ) : (
+              <>
+                <Text style={styles.locationName} numberOfLines={1}>
+                  {locationName || "Selected Location"}
+                </Text>
+                <Text style={styles.locationAddress} numberOfLines={2}>
+                  {locationAddress || "Pick a place from search or tap on the map"}
+                </Text>
+              </>
+            )}
           </View>
         </View>
 
-        <TouchableOpacity
-          style={[
-            styles.confirmBtn,
-            (!locationAddress || reverseLoading) && { opacity: 0.6 },
-          ]}
+        <PrimaryButton
+          size="lg"
+          shadow
+          label="Confirm Location"
           onPress={handleConfirmLocation}
           disabled={!locationAddress || reverseLoading}
-          activeOpacity={0.85}
-        >
-          <Text style={styles.confirmBtnText}>Confirm Location</Text>
-        </TouchableOpacity>
+          style={styles.confirmBtn}
+        />
       </View>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: T.white,
-  },
   header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: T.white,
-    borderBottomWidth: 1,
     borderBottomColor: T.cardBorder,
   },
-  backBtn: {
-    width: 40,
-    height: 40,
-    alignItems: "center",
-    justifyContent: "center",
-  },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: "700",
     color: T.bark,
   },
   searchContainer: {
@@ -635,17 +668,21 @@ const styles = StyleSheet.create({
   searchBar: {
     flexDirection: "row",
     alignItems: "center",
+    // Fixed height keeps the bar identical on iOS/Android so the absolutely
+    // positioned predictions panel (top: 62 = 12 + 44 + 6) always lines up.
+    height: 44,
     backgroundColor: T.sand,
     borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    gap: 10,
+    paddingHorizontal: 16,
+    gap: 12,
   },
   searchInput: {
     flex: 1,
+    height: "100%",
+    paddingVertical: 0,
     fontSize: 15,
     color: T.bark,
-    fontWeight: "500",
+    fontFamily: "PlusJakartaSans_500Medium",
   },
   predictionsPanel: {
     position: "absolute",
@@ -659,7 +696,7 @@ const styles = StyleSheet.create({
     borderColor: T.cardBorder,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.12,
+    shadowOpacity: 0.08,
     shadowRadius: 10,
     elevation: 12,
     overflow: "hidden",
@@ -667,16 +704,15 @@ const styles = StyleSheet.create({
   predictionRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     paddingVertical: 12,
-    gap: 10,
+    gap: 12,
   },
-  predictionMain: {
+  predictionMain: { fontFamily: "PlusJakartaSans_700Bold",
     fontSize: 14,
-    fontWeight: "700",
     color: T.bark,
   },
-  predictionSecondary: {
+  predictionSecondary: { fontFamily: "PlusJakartaSans_400Regular",
     fontSize: 12,
     color: T.barkMid,
     marginTop: 2,
@@ -684,15 +720,20 @@ const styles = StyleSheet.create({
   predictionDivider: {
     height: 1,
     backgroundColor: T.cardBorder,
-    marginLeft: 44,
+    // = predictionRow paddingHorizontal 16 + icon 20 + gap 12
+    marginLeft: 48,
   },
   predictionEmpty: {
-    paddingHorizontal: 14,
-    paddingVertical: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 20,
   },
-  predictionEmptyText: {
+  predictionEmptyText: { fontFamily: "PlusJakartaSans_400Regular",
     fontSize: 13,
-    color: T.barkLight,
+    color: T.barkMid,
   },
   mapContainer: {
     flex: 1,
@@ -743,8 +784,8 @@ const styles = StyleSheet.create({
   tooltipContainer: {
     position: "absolute",
     top: 20,
-    left: 20,
-    right: 20,
+    left: 16,
+    right: 16,
     alignItems: "center",
   },
   tooltip: {
@@ -754,16 +795,14 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     maxWidth: "90%",
   },
-  tooltipTitle: {
+  tooltipTitle: { fontFamily: "PlusJakartaSans_700Bold",
     fontSize: 15,
-    fontWeight: "700",
     color: T.white,
     textAlign: "center",
     marginBottom: 2,
   },
-  tooltipSubtitle: {
+  tooltipSubtitle: { fontFamily: "PlusJakartaSans_500Medium",
     fontSize: 13,
-    fontWeight: "500",
     color: "rgba(255, 255, 255, 0.8)",
     textAlign: "center",
   },
@@ -771,7 +810,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     // Sit just above the bottom sheet, bottom-right.
     bottom: 16,
-    right: 20,
+    right: 16,
     width: 52,
     height: 52,
     borderRadius: 26,
@@ -780,16 +819,17 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
+    shadowOpacity: 0.18,
+    shadowRadius: 6,
     elevation: 8,
   },
   bottomSheet: {
     backgroundColor: T.white,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    paddingHorizontal: 20,
-    paddingTop: 20,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    // Fallback; the inline style adds the bottom safe-area inset on top.
     paddingBottom: 24,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: -4 },
@@ -806,32 +846,24 @@ const styles = StyleSheet.create({
   locationTextContainer: {
     flex: 1,
   },
-  locationName: {
+  locationName: { fontFamily: "PlusJakartaSans_700Bold",
     fontSize: 18,
-    fontWeight: "700",
     color: T.bark,
     marginBottom: 4,
   },
-  locationAddress: {
+  locationAddress: { fontFamily: "PlusJakartaSans_500Medium",
     fontSize: 14,
     color: T.barkMid,
     lineHeight: 20,
   },
-  confirmBtn: {
-    backgroundColor: T.pink,
-    borderRadius: 16,
-    paddingVertical: 16,
-    alignItems: "center",
-    shadowColor: T.pink,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
+  skeletonName: {
+    marginBottom: 8,
   },
-  confirmBtnText: {
-    fontSize: 17,
-    fontWeight: "800",
-    color: T.white,
-    letterSpacing: 0.3,
+  confirmBtn: {
+    // Screen accent stays pink; the primitive supplies geometry/type/shadow.
+    backgroundColor: T.pink,
+    borderRadius: 14,
+    shadowColor: T.pink,
+    shadowOpacity: 0.18,
   },
 });

@@ -1,21 +1,22 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import {
+    Animated,
     Image,
     StyleSheet,
     Text,
     View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 
+import { IconWrap, Screen } from "../components/ui";
+import { C } from "../constants/colors";
 import { useAuth } from "../context/AuthContext";
 import { useLocation } from "../context/LocationContext";
 
 const T = {
   green: "#2D7A4F",
   greenXLight: "#EAF6EE",
-  white: "#FFFFFF",
   bark: "#3C2F1E",
   barkLight: "#A89282",
 };
@@ -28,6 +29,12 @@ function getLocationIcon(label: string | null): keyof typeof MaterialCommunityIc
   if (l.includes("hotel")) return "bed-outline";
   return "map-marker-outline";
 }
+
+/** Fade in + 12px rise, driven by a 0→1 Animated.Value. */
+const rise = (v: Animated.Value) => ({
+  opacity: v,
+  transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }],
+});
 
 export default function WelcomeScreen() {
   const { user } = useAuth();
@@ -44,8 +51,21 @@ export default function WelcomeScreen() {
     return () => clearTimeout(timer);
   }, []);
 
+  // Entrance motion for the greeting and location bands (staggered). Purely
+  // visual and independent of the auto-advance timer above.
+  const [greetAnim] = useState(() => new Animated.Value(0));
+  const [locationAnim] = useState(() => new Animated.Value(0));
+  useEffect(() => {
+    const entrance = Animated.stagger(120, [
+      Animated.timing(greetAnim, { toValue: 1, duration: 350, useNativeDriver: true }),
+      Animated.timing(locationAnim, { toValue: 1, duration: 350, useNativeDriver: true }),
+    ]);
+    entrance.start();
+    return () => entrance.stop();
+  }, [greetAnim, locationAnim]);
+
   return (
-    <SafeAreaView style={styles.safe}>
+    <Screen bg={C.card}>
       <View style={styles.container}>
         {/* Logo */}
         <View style={styles.logoSection}>
@@ -57,21 +77,25 @@ export default function WelcomeScreen() {
         </View>
 
         {/* Greeting */}
-        <View style={styles.greetSection}>
-          <Text style={styles.greetTitle}>Welcome{user ? `, ${firstName}` : ""}!</Text>
+        <Animated.View style={[styles.greetSection, rise(greetAnim)]}>
+          <Text style={styles.greetTitle} accessibilityRole="header">
+            Welcome{user ? `, ${firstName}` : ""}!
+          </Text>
           <Text style={styles.greetSub}>You&apos;re all set to start shopping.</Text>
-        </View>
+        </Animated.View>
 
         {/* Location */}
-        <View style={styles.locationSection}>
-          <View style={styles.locationIconCircle}>
-            <MaterialCommunityIcons
-              name={getLocationIcon(displayLabel)}
-              size={26}
-              color={T.green}
-            />
-          </View>
-          <Text style={styles.locationLabel}>
+        <Animated.View style={[styles.locationSection, rise(locationAnim)]}>
+          <IconWrap
+            size={56}
+            circle
+            bg={T.greenXLight}
+            icon={getLocationIcon(displayLabel)}
+            iconSize={26}
+            iconColor={T.green}
+            style={styles.locationIconCircle}
+          />
+          <Text style={styles.locationLabel} numberOfLines={1}>
             {displayLabel ?? "Your location"}
           </Text>
           {displayAddress ? (
@@ -79,14 +103,13 @@ export default function WelcomeScreen() {
               {displayAddress}
             </Text>
           ) : null}
-        </View>
+        </Animated.View>
       </View>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: T.white },
   container: {
     flex: 1,
     alignItems: "center",
@@ -96,35 +119,31 @@ const styles = StyleSheet.create({
   },
 
   logoSection: { alignItems: "center" },
-  logo: { width: 210, height: 190 },
+  logo: { width: 160, height: 145 },
 
-  greetSection: { alignItems: "center", gap: 6 },
-  greetTitle: { fontSize: 26, fontWeight: "900", color: T.bark, letterSpacing: -0.4 },
-  greetSub: { fontSize: 14, color: T.barkLight, fontWeight: "500" },
-
-  locationSection: { alignItems: "center", gap: 8, width: "100%" },
-  locationIconCircle: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: T.greenXLight,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 2,
-  },
-  locationLabel: {
-    fontSize: 17,
-    fontWeight: "800",
+  greetSection: { alignItems: "center", gap: 8 },
+  greetTitle: {
+    fontSize: 28,
+    fontFamily: "PlusJakartaSans_800ExtraBold",
     color: T.bark,
-    letterSpacing: -0.2,
+    letterSpacing: -0.3,
     textAlign: "center",
   },
-  locationAddress: {
+  greetSub: { fontFamily: "PlusJakartaSans_500Medium", fontSize: 14, color: T.barkLight, textAlign: "center" },
+
+  locationSection: { alignItems: "center", gap: 8, width: "100%" },
+  locationIconCircle: { marginBottom: 4 },
+  locationLabel: { fontFamily: "PlusJakartaSans_800ExtraBold",
+    fontSize: 18,
+    color: T.bark,
+    letterSpacing: -0.3,
+    textAlign: "center",
+  },
+  locationAddress: { fontFamily: "PlusJakartaSans_500Medium",
     fontSize: 13,
     color: T.barkLight,
     textAlign: "center",
     lineHeight: 19,
-    fontWeight: "500",
     paddingHorizontal: 16,
   },
 });

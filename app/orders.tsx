@@ -12,11 +12,20 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 
 import { PaymentProcessingOverlay } from "../components/PaymentProcessingOverlay";
+import {
+    Badge,
+    Card,
+    EmptyState,
+    PrimaryButton,
+    Screen,
+    ScreenHeader,
+    Skeleton,
+} from "../components/ui";
 import { C } from "../constants/colors";
 import { CANCELLED_STATUSES, getStatusMeta } from "../constants/orderStatus";
+import { text } from "../constants/ui";
 import { useAuth } from "../context/AuthContext";
 import { usePaymentFlow } from "../hooks/usePaymentFlow";
 import {
@@ -59,20 +68,32 @@ const OrderCard = React.memo(function OrderCard({
   const totalLabel = item.payment_status === "paid" ? "Total paid" : "Total payable";
 
   return (
-    <View style={styles.card}>
+    <Card shadow="card" style={styles.card}>
       <View style={styles.cardHeader}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.orderNum}>#{item.order_number || item.id.slice(0, 8).toUpperCase()}</Text>
+        <View style={styles.headerText}>
+          <Text style={styles.orderNum} numberOfLines={1}>
+            #{item.order_number || item.id.slice(0, 8).toUpperCase()}
+          </Text>
           <Text style={styles.orderDate}>{formatDate(item.created_at)}</Text>
         </View>
-        <View style={{ alignItems: "flex-end", gap: 6 }}>
-          <View style={[styles.statusBadge, { backgroundColor: meta.bg }]}>
-            <Text style={[styles.statusText, { color: meta.color }]}>{meta.label}</Text>
-          </View>
+        <View style={styles.badgeCol}>
+          <Badge
+            label={meta.label}
+            bg={meta.bg}
+            color={meta.color}
+            pill
+            style={styles.statusBadge}
+            textStyle={styles.statusText}
+          />
           {needsPayment && (
-            <View style={[styles.statusBadge, { backgroundColor: C.warningLight }]}>
-              <Text style={[styles.statusText, { color: C.warning }]}>Payment pending</Text>
-            </View>
+            <Badge
+              label="Payment pending"
+              bg={C.warningLight}
+              color={C.warning}
+              pill
+              style={styles.statusBadge}
+              textStyle={styles.statusText}
+            />
           )}
         </View>
       </View>
@@ -89,60 +110,105 @@ const OrderCard = React.memo(function OrderCard({
       </View>
 
       <View style={styles.cardFooter}>
-        <View>
+        <View style={styles.totalCol}>
           <Text style={styles.totalLabel}>{totalLabel}</Text>
-          <Text style={styles.total}>₹{Number(item.order_total).toFixed(2)}</Text>
+          <Text style={styles.total} numberOfLines={1}>
+            ₹{Number(item.order_total).toFixed(2)}
+          </Text>
         </View>
         {needsPayment ? (
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            <TouchableOpacity
-              style={[styles.trackBtn, styles.secondaryBtn]}
+          <View style={styles.actionRow}>
+            <PrimaryButton
+              size="xs"
+              variant="secondary"
+              label="Details"
               onPress={() => router.push(`/order/${item.id}` as any)}
-            >
-              <Text style={[styles.trackText, { color: C.text }]}>Details</Text>
-            </TouchableOpacity>
+              style={styles.actionBtn}
+            />
             <TouchableOpacity
-              style={[styles.trackBtn, styles.payNowBtn, walletPayingOrderId === item.id && { opacity: 0.6 }]}
+              style={[
+                styles.actionBtn,
+                styles.actionBtnShadow,
+                styles.payNowBtn,
+                (paymentPhase !== "idle" || walletPayingOrderId === item.id) && styles.btnDisabled,
+              ]}
               onPress={() => onRetryPayment(item)}
               disabled={paymentPhase !== "idle" || walletPayingOrderId === item.id}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityState={{
+                disabled: paymentPhase !== "idle" || walletPayingOrderId === item.id,
+                busy: walletPayingOrderId === item.id,
+              }}
             >
               {walletPayingOrderId === item.id ? (
-                <ActivityIndicator size="small" color="#fff" />
+                <ActivityIndicator size="small" color={C.card} />
               ) : (
-                <MaterialCommunityIcons name="credit-card-fast-outline" size={14} color="#fff" />
+                <MaterialCommunityIcons name="credit-card-fast-outline" size={16} color={C.card} />
               )}
-              <Text style={styles.trackText}>{walletPayingOrderId === item.id ? "Paying…" : "Pay now"}</Text>
+              <Text style={styles.payNowText}>{walletPayingOrderId === item.id ? "Paying…" : "Pay now"}</Text>
             </TouchableOpacity>
           </View>
         ) : isDelivered ? (
-          <TouchableOpacity
-            style={[styles.trackBtn, styles.invoiceBtn]}
+          <PrimaryButton
+            size="xs"
+            variant="success"
+            icon="file-document-outline"
+            iconSize={16}
+            label="View Invoice"
             onPress={() => router.push(`/order/invoice/${item.id}` as any)}
-          >
-            <MaterialCommunityIcons name="file-document-outline" size={14} color="#fff" />
-            <Text style={styles.trackText}>View Invoice</Text>
-          </TouchableOpacity>
+            style={[styles.actionBtn, styles.actionBtnShadow]}
+          />
         ) : isCancelled ? (
-          <TouchableOpacity
-            style={[styles.trackBtn, styles.detailsBtn]}
+          <PrimaryButton
+            size="xs"
+            icon="information-outline"
+            iconSize={16}
+            label="View Details"
             onPress={() => router.push(`/order/${item.id}` as any)}
-          >
-            <MaterialCommunityIcons name="information-outline" size={14} color="#fff" />
-            <Text style={styles.trackText}>View Details</Text>
-          </TouchableOpacity>
+            style={[styles.actionBtn, styles.actionBtnShadow, styles.detailsBtn]}
+          />
         ) : (
-          <TouchableOpacity
-            style={styles.trackBtn}
+          <PrimaryButton
+            size="xs"
+            icon="map-marker-path"
+            iconSize={16}
+            label="Track Order"
             onPress={() => router.push(`/order/track/${item.id}` as any)}
-          >
-            <MaterialCommunityIcons name="map-marker-path" size={14} color="#fff" />
-            <Text style={styles.trackText}>Track Order</Text>
-          </TouchableOpacity>
+            style={[styles.actionBtn, styles.actionBtnShadow]}
+          />
         )}
       </View>
-    </View>
+    </Card>
   );
 });
+
+/** Placeholder with the exact OrderCard geometry, shown while the first fetch is in flight. */
+function SkeletonOrderCard() {
+  return (
+    <Card shadow="card" style={styles.card}>
+      <View style={styles.cardHeader}>
+        <View style={styles.headerText}>
+          <Skeleton width={110} height={14} />
+          <Skeleton width={150} height={10} style={styles.skelGap} />
+        </View>
+        <Skeleton width={84} height={22} radius={999} />
+      </View>
+      <View style={styles.itemsWrap}>
+        <Skeleton width="70%" height={13} />
+        <Skeleton width="55%" height={13} />
+        <Skeleton width="62%" height={13} />
+      </View>
+      <View style={styles.cardFooter}>
+        <View>
+          <Skeleton width={56} height={10} />
+          <Skeleton width={88} height={18} style={styles.skelGap} />
+        </View>
+        <Skeleton width={110} height={44} radius={12} />
+      </View>
+    </Card>
+  );
+}
 
 export default function OrdersScreen() {
   const { userId, user, customer } = useAuth();
@@ -267,56 +333,46 @@ export default function OrdersScreen() {
   ), [paymentPhase, walletPayingId, handleRetryPayment]);
 
   const Header = (
-    <View style={styles.header}>
-      <TouchableOpacity
-        style={styles.backBtn}
-        onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)/home"))}
-        activeOpacity={0.7}
-      >
-        <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
-      </TouchableOpacity>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.headerTitle}>Previous Orders</Text>
-        {orders.length > 0 && (
-          <Text style={styles.orderCount}>
-            {orders.length} order{orders.length !== 1 ? "s" : ""}
-          </Text>
-        )}
-      </View>
-    </View>
+    <ScreenHeader
+      title="Previous Orders"
+      subtitle={orders.length > 0 ? `${orders.length} order${orders.length !== 1 ? "s" : ""}` : undefined}
+      align="left"
+      onBack={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)/home"))}
+    />
   );
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safe}>
+      <Screen>
         {Header}
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color={C.primary} />
-          <Text style={styles.loadingText}>Loading your orders...</Text>
+        <View style={styles.list} accessible accessibilityLabel="Loading your orders">
+          <SkeletonOrderCard />
+          <SkeletonOrderCard />
+          <SkeletonOrderCard />
         </View>
-      </SafeAreaView>
+      </Screen>
     );
   }
 
   if (error && orders.length === 0) {
     return (
-      <SafeAreaView style={styles.safe}>
+      <Screen>
         {Header}
-        <View style={styles.centerContainer}>
-          <MaterialCommunityIcons name="alert-circle-outline" size={64} color={C.danger} />
-          <Text style={styles.errorTitle}>Connection Error</Text>
-          <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity style={styles.retryBtn} onPress={() => fetchOrders()}>
-            <MaterialCommunityIcons name="refresh" size={18} color="#fff" />
-            <Text style={styles.retryText}>Retry</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
+        <EmptyState
+          fill
+          icon="alert-circle-outline"
+          iconSize={64}
+          iconColor={C.danger}
+          title="Connection Error"
+          text={error}
+          action={{ label: "Retry", icon: "refresh", onPress: () => fetchOrders() }}
+        />
+      </Screen>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <Screen>
       {Header}
 
       <FlashList
@@ -333,104 +389,27 @@ export default function OrdersScreen() {
           />
         }
         ListEmptyComponent={
-          <View style={styles.empty}>
-            <MaterialCommunityIcons name="package-variant-closed" size={56} color={C.textLight} />
-            <Text style={styles.emptyTitle}>No orders yet</Text>
-            <Text style={styles.emptyText}>Your order history will appear here</Text>
-          </View>
+          <EmptyState
+            icon="package-variant-closed"
+            title="No orders yet"
+            text="Your order history will appear here"
+          />
         }
         renderItem={renderOrder}
       />
       {RazorpayUI}
       <PaymentProcessingOverlay phase={paymentPhase} />
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
-
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingTop: 16,
-    paddingBottom: 14,
-    backgroundColor: C.card,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  backBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: C.bgSoft,
-  },
-  headerTitle: { color: C.text, fontSize: 20, fontWeight: "900" },
-  orderCount: { color: C.textSub, fontSize: 12, fontWeight: "600", marginTop: 2 },
-
-  centerContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    gap: 12,
-    paddingHorizontal: 32,
-  },
-
-  loadingText: {
-    color: C.textSub,
-    fontSize: 14,
-  },
-
-  errorTitle: {
-    color: C.text,
-    fontSize: 17,
-    fontWeight: "800",
-    marginTop: 12,
-  },
-
-  errorText: {
-    color: C.textSub,
-    fontSize: 14,
-    textAlign: "center",
-    lineHeight: 20,
-  },
-
-  retryBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginTop: 16,
-    backgroundColor: C.primary,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 12,
-  },
-
-  retryText: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 14,
-  },
-
-  list: { paddingTop: 14, paddingBottom: 40 },
+  list: { paddingTop: 16, paddingBottom: 40 },
 
   card: {
-    backgroundColor: C.card,
     marginHorizontal: 16,
     marginBottom: 12,
-    borderRadius: 16,
     padding: 16,
-    borderWidth: 1,
-    borderColor: C.border,
-    shadowColor: C.shadow,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    elevation: 4,
   },
   cardHeader: {
     flexDirection: "row",
@@ -439,18 +418,16 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     gap: 10,
   },
-  orderNum: { color: C.text, fontWeight: "800", fontSize: 15 },
-  orderDate: { color: C.textSub, fontSize: 12, marginTop: 3 },
-  statusBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
-  },
-  statusText: { fontSize: 12, fontWeight: "700" },
+  headerText: { flex: 1 },
+  orderNum: { color: C.text, fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 16 },
+  orderDate: { fontFamily: "PlusJakartaSans_700Bold", color: C.textSub, fontSize: 12, marginTop: 4 },
+  badgeCol: { alignItems: "flex-end", gap: 6, flexShrink: 1, maxWidth: "55%" },
+  statusBadge: { alignSelf: "flex-end", paddingVertical: 4 },
+  statusText: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 11 },
 
-  itemsWrap: { gap: 4, marginBottom: 14 },
-  itemLine: { color: C.textSub, fontSize: 13 },
-  moreItems: { color: C.textLight, fontSize: 12, fontStyle: "italic" },
+  itemsWrap: { gap: 4, marginBottom: 12 },
+  itemLine: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.textSub, fontSize: 13 },
+  moreItems: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.textLight, fontSize: 12 },
 
   cardFooter: {
     flexDirection: "row",
@@ -460,42 +437,34 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: C.border,
   },
-  totalLabel: { color: C.textSub, fontSize: 11, fontWeight: "600", marginBottom: 2 },
-  total: { color: C.text, fontSize: 18, fontWeight: "900" },
-  trackBtn: {
+  totalCol: { flexShrink: 1, marginRight: 12 },
+  totalLabel: { fontFamily: "PlusJakartaSans_600SemiBold",
+    color: C.textSub,
+    fontSize: 11,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginBottom: 2,
+  },
+  total: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 18 },
+  actionRow: { flexDirection: "row", gap: 8, flexShrink: 0 },
+  // Overrides on PrimaryButton size="xs" (r10 pv10) so every footer action clears a 44pt target.
+  actionBtn: { paddingVertical: 12, minHeight: 44, borderRadius: 12 },
+  actionBtnShadow: { shadowOpacity: 0.15, shadowRadius: 4, elevation: 2 },
+  detailsBtn: { backgroundColor: C.textSub },
+  // Pay now stays a local touchable: it swaps the icon for a spinner while keeping the
+  // "Paying…" label visible, which PrimaryButton's `loading` mode does not do.
+  payNowBtn: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     gap: 6,
-    backgroundColor: C.primary,
     paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 10,
-    shadowColor: C.primary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  invoiceBtn: {
-    backgroundColor: C.success,
-  },
-  detailsBtn: {
-    backgroundColor: C.textSub,
-  },
-  payNowBtn: {
     backgroundColor: C.warning,
     shadowColor: C.warning,
+    shadowOffset: { width: 0, height: 2 },
   },
-  secondaryBtn: {
-    backgroundColor: C.bgSoft,
-    shadowOpacity: 0,
-    elevation: 0,
-    borderWidth: 1,
-    borderColor: C.border,
-  },
-  trackText: { color: "#fff", fontSize: 13, fontWeight: "700" },
+  payNowText: { ...text.buttonXs },
+  btnDisabled: { opacity: 0.6 },
 
-  empty: { marginTop: 80, alignItems: "center", gap: 10, padding: 32 },
-  emptyTitle: { color: C.text, fontSize: 16, fontWeight: "800" },
-  emptyText: { color: C.textSub, fontSize: 14, textAlign: "center" },
+  skelGap: { marginTop: 6 },
 });

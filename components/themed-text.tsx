@@ -35,24 +35,24 @@ export function ThemedText({
 
 const styles = StyleSheet.create({
   default: {
-    fontSize: 16,
+    fontFamily: "PlusJakartaSans_400Regular", fontSize: 16,
     lineHeight: 24,
   },
-  defaultSemiBold: {
+  defaultSemiBold: { fontFamily: "PlusJakartaSans_600SemiBold",
     fontSize: 16,
     lineHeight: 24,
     fontWeight: '600',
   },
-  title: {
+  title: { fontFamily: "PlusJakartaSans_700Bold",
     fontSize: 32,
     fontWeight: 'bold',
     lineHeight: 32,
   },
-  subtitle: {
+  subtitle: { fontFamily: "PlusJakartaSans_700Bold",
     fontSize: 20,
     fontWeight: 'bold',
   },
-  link: {
+  link: { fontFamily: "PlusJakartaSans_700Bold",
     lineHeight: 30,
     fontSize: 16,
     color: '#0a7ea4',

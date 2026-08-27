@@ -10,22 +10,17 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 
+import { Badge, ListRow, PrimaryButton, Screen, ScreenHeader, Section, type IconName } from "../../components/ui";
 import { C } from "../../constants/colors";
+import { layout } from "../../constants/ui";
 
 const SUPPORT_PHONE_E164 = (process.env.EXPO_PUBLIC_SUPPORT_PHONE || "").trim();
 
 export default function SupportScreen() {
   return (
-    <SafeAreaView style={styles.safe}>
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Support</Text>
-        <View style={{ width: 38 }} />
-      </View>
+    <Screen>
+      <ScreenHeader title="Support" onBack={() => router.back()} />
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
         <Section title="Quick Help">
@@ -81,64 +76,46 @@ export default function SupportScreen() {
           <InfoRow label="Privacy Policy" onPress={() => router.push("/settings/terms")} isLast />
         </Section>
 
-        <TouchableOpacity
+        <PrimaryButton
+          variant="danger"
+          icon="alert-octagon-outline"
+          label="Escalate an Issue"
           style={styles.escalate}
           onPress={() => Linking.openURL("mailto:support@nearandnow.app?subject=Urgent Issue")}
-        >
-          <MaterialCommunityIcons name="alert-octagon-outline" size={20} color={C.danger} />
-          <Text style={styles.escalateText}>Escalate an Issue</Text>
-        </TouchableOpacity>
+        />
       </ScrollView>
-    </SafeAreaView>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      <View style={styles.sectionCard}>{children}</View>
-    </View>
+    </Screen>
   );
 }
 
 function SupportAction({
   icon, title, subtitle, badge, onPress, isLast,
 }: {
-  icon: any; title: string; subtitle: string;
+  icon: IconName; title: string; subtitle: string;
   badge?: string; onPress?: () => void; isLast?: boolean;
 }) {
   return (
-    <TouchableOpacity
-      activeOpacity={0.75}
-      style={[styles.action, !isLast && styles.actionBorder]}
+    <ListRow
+      icon={icon}
+      title={title}
+      titleLines={1}
+      subtitle={subtitle}
       onPress={onPress}
-    >
-      <View style={styles.iconWrap}>
-        <MaterialCommunityIcons name={icon} size={18} color={C.primary} />
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.actionTitle}>{title}</Text>
-        <Text style={styles.actionSub}>{subtitle}</Text>
-      </View>
-      {badge ? (
-        <View style={styles.badge}>
-          <Text style={styles.badgeText}>{badge}</Text>
-        </View>
-      ) : (
-        <MaterialCommunityIcons name="chevron-right" size={18} color={C.textLight} />
-      )}
-    </TouchableOpacity>
+      divider={!isLast}
+      right={badge ? <Badge size="sm" pill bordered tone="warning" label={badge} /> : undefined}
+    />
   );
 }
 
 function FAQ({ q, a, isLast }: { q: string; a: string; isLast?: boolean }) {
   const [open, setOpen] = useState(false);
   return (
-    <View style={!isLast && styles.actionBorder}>
+    <View style={!isLast && styles.rowBorder}>
       <TouchableOpacity
         onPress={() => { LayoutAnimation.easeInEaseOut(); setOpen(!open); }}
         style={styles.faqQ}
+        activeOpacity={0.7}
+        accessibilityRole="button"
       >
         <Text style={styles.faqQText}>{q}</Text>
         <MaterialCommunityIcons name={open ? "chevron-up" : "chevron-down"} size={18} color={C.textLight} />
@@ -150,79 +127,33 @@ function FAQ({ q, a, isLast }: { q: string; a: string; isLast?: boolean }) {
 
 function InfoRow({ label, value, onPress, isLast }: { label: string; value?: string; onPress?: () => void; isLast?: boolean }) {
   return (
-    <TouchableOpacity
-      style={[styles.action, !isLast && styles.actionBorder]}
+    <ListRow
+      title={label}
+      titleLines={1}
+      titleStyle={styles.infoTitle}
+      value={value}
       onPress={onPress}
-      activeOpacity={onPress ? 0.7 : 1}
-    >
-      <Text style={styles.infoLabel}>{label}</Text>
-      {value
-        ? <Text style={styles.infoValue}>{value}</Text>
-        : onPress && <MaterialCommunityIcons name="chevron-right" size={18} color={C.textLight} />}
-    </TouchableOpacity>
+      divider={!isLast}
+    />
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
+  scrollContent: { padding: layout.gutter, paddingBottom: layout.scrollBottom },
 
-  header: {
+  rowBorder: { borderBottomWidth: 1, borderBottomColor: C.border },
+
+  faqQ: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: C.card,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
+    gap: 10,
+    padding: 14,
   },
-  backBtn: {
-    width: 38, height: 38, borderRadius: 12,
-    backgroundColor: C.bgSoft, alignItems: "center", justifyContent: "center",
-  },
-  headerTitle: { flex: 1, textAlign: "center", color: C.text, fontSize: 18, fontWeight: "800" },
+  faqQText: { color: C.text, fontFamily: "PlusJakartaSans_600SemiBold", fontSize: 14, flex: 1 },
+  faqA: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.textSub, fontSize: 13, paddingHorizontal: 14, paddingBottom: 14, lineHeight: 20 },
 
-  scrollContent: { padding: 16, paddingBottom: 40 },
+  infoTitle: { fontFamily: "PlusJakartaSans_400Regular" },
 
-  section: { marginBottom: 20 },
-  sectionTitle: {
-    color: C.textSub, fontSize: 11, fontWeight: "700",
-    marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.7, paddingHorizontal: 2,
-  },
-  sectionCard: {
-    backgroundColor: C.card, borderRadius: 14,
-    borderWidth: 1, borderColor: C.border, overflow: "hidden",
-  },
-
-  action: {
-    flexDirection: "row", alignItems: "center",
-    paddingHorizontal: 14, paddingVertical: 13, gap: 12,
-  },
-  actionBorder: { borderBottomWidth: 1, borderBottomColor: C.border },
-  iconWrap: {
-    width: 34, height: 34, borderRadius: 10,
-    backgroundColor: C.primaryXLight, alignItems: "center", justifyContent: "center",
-  },
-  actionTitle: { color: C.text, fontSize: 14, fontWeight: "700" },
-  actionSub: { color: C.textSub, fontSize: 12, marginTop: 1 },
-
-  badge: {
-    backgroundColor: C.warningLight, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999,
-    borderWidth: 1, borderColor: C.warning,
-  },
-  badgeText: { fontSize: 10, fontWeight: "800", color: C.warning },
-
-  faqQ: { flexDirection: "row", justifyContent: "space-between", padding: 14 },
-  faqQText: { color: C.text, fontWeight: "600", fontSize: 13, flex: 1, paddingRight: 10 },
-  faqA: { color: C.textSub, fontSize: 13, paddingHorizontal: 14, paddingBottom: 14, lineHeight: 20 },
-
-  infoLabel: { color: C.text, fontSize: 14, flex: 1 },
-  infoValue: { color: C.textSub, fontSize: 13 },
-
-  escalate: {
-    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10,
-    marginTop: 4, paddingVertical: 14, borderRadius: 14,
-    backgroundColor: C.dangerLight, borderWidth: 1, borderColor: "#fca5a5",
-  },
-  escalateText: { color: C.danger, fontWeight: "800", fontSize: 14 },
+  escalate: { marginTop: 4 },
 });

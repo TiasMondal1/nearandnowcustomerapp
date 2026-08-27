@@ -1,29 +1,23 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React from "react";
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { Card, Divider, Screen, ScreenHeader } from "../../components/ui";
 import { C } from "../../constants/colors";
+import { layout } from "../../constants/ui";
 
 
 export default function TermsAndPrivacyScreen() {
   return (
-    <SafeAreaView style={styles.safe}>
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Terms &amp; Privacy</Text>
-        <View style={{ width: 38 }} />
-      </View>
+    <Screen>
+      <ScreenHeader title="Terms & Privacy" onBack={() => router.back()} />
       <ScrollView
         contentContainerStyle={styles.container}
         showsVerticalScrollIndicator={false}
       >
         <Text style={styles.pageSubtitle}>Near&amp;Now — User Agreement &amp; Data Protection Policy</Text>
 
-        <View style={styles.card}>
+        <Card style={styles.card}>
           <PolicySection title="1. Introduction">
             <Paragraph>
               Near&Now is a digital platform that enables users to discover
@@ -32,7 +26,7 @@ export default function TermsAndPrivacyScreen() {
             </Paragraph>
           </PolicySection>
 
-          <Divider />
+          <Divider style={styles.sectionDivider} />
 
           <PolicySection title="2. Ownership & Responsibility">
             <Paragraph>
@@ -48,7 +42,7 @@ export default function TermsAndPrivacyScreen() {
             </Paragraph>
           </PolicySection>
 
-          <Divider />
+          <Divider style={styles.sectionDivider} />
 
           <PolicySection title="3. Terms of Use">
             <Bullet>
@@ -67,7 +61,7 @@ export default function TermsAndPrivacyScreen() {
             </Bullet>
           </PolicySection>
 
-          <Divider />
+          <Divider style={styles.sectionDivider} />
 
           <PolicySection title="4. Payments & Transactions">
             <Paragraph>
@@ -82,7 +76,7 @@ export default function TermsAndPrivacyScreen() {
             </Paragraph>
           </PolicySection>
 
-          <Divider />
+          <Divider style={styles.sectionDivider} />
 
           <PolicySection title="5. Privacy Policy">
             <Paragraph>
@@ -106,7 +100,7 @@ export default function TermsAndPrivacyScreen() {
             </Bullet>
           </PolicySection>
 
-          <Divider />
+          <Divider style={styles.sectionDivider} />
 
           <PolicySection title="6. Data Security">
             <Paragraph>
@@ -120,7 +114,7 @@ export default function TermsAndPrivacyScreen() {
             </Paragraph>
           </PolicySection>
 
-          <Divider />
+          <Divider style={styles.sectionDivider} />
 
           <PolicySection title="7. Limitation of Liability">
             <Paragraph>
@@ -130,7 +124,7 @@ export default function TermsAndPrivacyScreen() {
             </Paragraph>
           </PolicySection>
 
-          <Divider />
+          <Divider style={styles.sectionDivider} />
 
           <PolicySection title="8. Updates & Amendments">
             <Paragraph>
@@ -143,14 +137,14 @@ export default function TermsAndPrivacyScreen() {
             By continuing to use Near&Now, you acknowledge that you have read,
             understood, and agreed to these Terms and Privacy Policy.
           </Text>
-        </View>
+        </Card>
 
         <View style={styles.footer}>
           <Text style={styles.footerBrand}>Near & Now</Text>
           <Text style={styles.footerTagline}>Digital Dukaan, local dil se</Text>
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
@@ -162,15 +156,11 @@ function PolicySection({
   children: React.ReactNode;
 }) {
   return (
-    <View style={styles.section}>
+    <View>
       <Text style={styles.sectionTitle}>{title}</Text>
       {children}
     </View>
   );
-}
-
-function Divider() {
-  return <View style={styles.divider} />;
 }
 
 function Paragraph({ children }: { children: React.ReactNode }) {
@@ -178,55 +168,28 @@ function Paragraph({ children }: { children: React.ReactNode }) {
 }
 
 function Bullet({ children }: { children: React.ReactNode }) {
-  return <Text style={styles.bullet}>• {children}</Text>;
-}
-
-function Bold({ children }: { children: React.ReactNode }) {
-  return <Text style={styles.bold}>{children}</Text>;
+  return (
+    <View style={styles.bulletRow}>
+      <Text style={styles.bulletGlyph}>•</Text>
+      <Text style={styles.bullet}>{children}</Text>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
+  container: { padding: layout.gutter, paddingBottom: layout.scrollBottom },
+  pageSubtitle: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 13, color: C.textSub, marginBottom: 16, lineHeight: 19 },
 
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: C.card,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  backBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: C.bgSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerTitle: { flex: 1, textAlign: "center", color: C.text, fontSize: 18, fontWeight: "800" },
+  card: { padding: layout.cardPaddingLg },
+  sectionTitle: { fontSize: 14, fontFamily: "PlusJakartaSans_800ExtraBold", color: C.primary, marginBottom: 8 },
+  paragraph: { fontFamily: "PlusJakartaSans_400Regular", fontSize: 13, color: C.textSub, lineHeight: 21, marginBottom: 10 },
+  bulletRow: { flexDirection: "row", gap: 8, marginBottom: 6 },
+  bulletGlyph: { fontFamily: "PlusJakartaSans_400Regular", color: C.textSub, fontSize: 13, lineHeight: 21, width: 10 },
+  bullet: { fontFamily: "PlusJakartaSans_800ExtraBold", flex: 1, fontSize: 13, color: C.textSub, lineHeight: 21 },
+  sectionDivider: { marginTop: 6, marginBottom: 16 },
 
-  container: { padding: 16, paddingBottom: 90 },
-  pageSubtitle: { fontSize: 13, color: C.textSub, marginBottom: 16, lineHeight: 19 },
-
-  card: {
-    backgroundColor: C.card,
-    borderRadius: 16,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: C.border,
-  },
-  section: { marginBottom: 6 },
-  sectionTitle: { fontSize: 14, fontWeight: "800", color: C.primary, marginBottom: 8 },
-  paragraph: { fontSize: 13, color: C.textSub, lineHeight: 21, marginBottom: 10 },
-  bullet: { fontSize: 13, color: C.textSub, lineHeight: 21, marginBottom: 6, paddingLeft: 4 },
-  divider: { height: 1, backgroundColor: C.border, marginVertical: 14 },
-
-  footerNote: { fontSize: 12, color: C.textLight, marginTop: 18, textAlign: "center", lineHeight: 18 },
+  footerNote: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 12, color: C.textLight, marginTop: 16, textAlign: "center", lineHeight: 18 },
   footer: { marginTop: 28, alignItems: "center" },
-  footerBrand: { fontSize: 16, fontWeight: "800", color: C.primary },
-  footerTagline: { fontSize: 12, color: C.textSub, marginTop: 4 },
-  bold: { fontWeight: "700", color: C.text },
+  footerBrand: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 16, color: C.primary },
+  footerTagline: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 12, color: C.textSub, marginTop: 4 },
 });

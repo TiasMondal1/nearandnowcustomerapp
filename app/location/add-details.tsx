@@ -13,8 +13,9 @@ import {
   View,
 } from "react-native";
 import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { PrimaryButton, Screen, ScreenHeader } from "../../components/ui";
 import { useAuth } from "../../context/AuthContext";
 import { useLocation } from "../../context/LocationContext";
 import { createAddress } from "../../lib/addressService";
@@ -60,6 +61,7 @@ export default function AddAddressDetailsScreen() {
 
   const { userId, user } = useAuth();
   const { setLocation } = useLocation();
+  const insets = useSafeAreaInsets();
 
   // Address label — maps to customer_saved_addresses.label (Home/Work/Other).
   const [label, setLabel] = useState<(typeof LABELS)[number]>("Home");
@@ -240,31 +242,32 @@ export default function AddAddressDetailsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top"]}>
+    <Screen bg={T.white} edges={["top"]}>
+      <ScreenHeader
+        title="Add Address Details"
+        onBack={() => {
+          if (router.canGoBack()) router.back();
+          else router.replace("/(tabs)/home");
+        }}
+        backProps={{
+          size: 40,
+          bg: "transparent",
+          icon: "chevron-left",
+          iconSize: 28,
+          color: T.bark,
+        }}
+        right={<View style={styles.headerSpacer} />}
+        style={styles.header}
+        titleStyle={styles.headerTitle}
+      />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={{ flex: 1 }}
       >
-        <ScrollView contentContainerStyle={styles.container}>
-          <View style={styles.header}>
-            <TouchableOpacity
-              style={styles.backBtn}
-              onPress={() => {
-                if (router.canGoBack()) router.back();
-                else router.replace("/(tabs)/home");
-              }}
-              activeOpacity={0.7}
-            >
-              <MaterialCommunityIcons
-                name="chevron-left"
-                size={28}
-                color={T.bark}
-              />
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>Add Address Details</Text>
-            <View style={{ width: 40 }} />
-          </View>
-
+        <ScrollView
+          contentContainerStyle={{ paddingBottom: 24 + insets.bottom }}
+          showsVerticalScrollIndicator={false}
+        >
           <View style={styles.mapPreview}>
             <MapView
               provider={PROVIDER_GOOGLE}
@@ -274,6 +277,9 @@ export default function AddAddressDetailsScreen() {
               zoomEnabled={false}
               pitchEnabled={false}
               rotateEnabled={false}
+              loadingEnabled
+              loadingIndicatorColor={T.green}
+              loadingBackgroundColor={T.sand}
             >
               <Marker
                 coordinate={coords}
@@ -293,7 +299,7 @@ export default function AddAddressDetailsScreen() {
           <View style={styles.locationCard}>
             <View style={styles.locationHeader}>
               <View style={styles.locationTextContainer}>
-                <Text style={styles.locationName}>
+                <Text style={styles.locationName} numberOfLines={1}>
                   {placeName || "Selected Location"}
                 </Text>
                 <Text style={styles.locationAddress} numberOfLines={2}>
@@ -304,6 +310,8 @@ export default function AddAddressDetailsScreen() {
                 style={styles.changeBtn}
                 onPress={handleChangeLocation}
                 activeOpacity={0.8}
+                accessibilityRole="button"
+                hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
               >
                 <Text style={styles.changeBtnText}>Change</Text>
               </TouchableOpacity>
@@ -366,6 +374,9 @@ export default function AddAddressDetailsScreen() {
                   key={l}
                   onPress={() => setLabel(l)}
                   style={[styles.labelChip, label === l && styles.labelActive]}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: label === l }}
                 >
                   <Text
                     style={[
@@ -420,6 +431,9 @@ export default function AddAddressDetailsScreen() {
               onPress={() => setIsDefault((v) => !v)}
               style={styles.defaultRow}
               activeOpacity={0.7}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: isDefault }}
+              hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
             >
               <MaterialCommunityIcons
                 name={isDefault ? "checkbox-marked" : "checkbox-blank-outline"}
@@ -430,50 +444,36 @@ export default function AddAddressDetailsScreen() {
             </TouchableOpacity>
           </View>
 
-          <TouchableOpacity
-            style={[styles.saveBtn, saving && { opacity: 0.6 }]}
+          <PrimaryButton
+            size="lg"
+            shadow
+            label={saving ? "Saving…" : "SAVE ADDRESS"}
             onPress={handleSave}
             disabled={saving}
-          >
-            <Text style={styles.saveText}>
-              {saving ? "Saving..." : "SAVE ADDRESS"}
-            </Text>
-          </TouchableOpacity>
+            style={styles.saveBtn}
+          />
         </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: T.white },
-  container: { paddingBottom: 40 },
-
   header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: T.white,
-    borderBottomWidth: 1,
     borderBottomColor: T.cardBorder,
   },
-  backBtn: {
-    width: 40,
-    height: 40,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  headerSpacer: { width: 40 },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: "700",
+    fontFamily: "PlusJakartaSans_700Bold",
     color: T.bark,
   },
 
   mapPreview: {
     height: 200,
     backgroundColor: T.sand,
+    borderBottomWidth: 1,
+    borderBottomColor: T.cardBorder,
   },
   map: {
     flex: 1,
@@ -535,27 +535,25 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 12,
   },
-  locationName: {
+  locationName: { fontFamily: "PlusJakartaSans_700Bold",
     fontSize: 16,
-    fontWeight: "700",
     color: T.bark,
     marginBottom: 4,
   },
-  locationAddress: {
+  locationAddress: { fontFamily: "PlusJakartaSans_500Medium",
     fontSize: 13,
     color: T.barkMid,
     lineHeight: 18,
   },
   changeBtn: {
     paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderRadius: 8,
     borderWidth: 1.5,
     borderColor: T.green,
   },
-  changeBtnText: {
+  changeBtnText: { fontFamily: "PlusJakartaSans_700Bold",
     fontSize: 14,
-    fontWeight: "700",
     color: T.green,
   },
 
@@ -563,14 +561,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 24,
   },
-  sectionTitle: {
+  sectionTitle: { fontFamily: "PlusJakartaSans_700Bold",
     fontSize: 15,
-    fontWeight: "700",
     color: T.bark,
     marginBottom: 12,
   },
 
-  input: {
+  input: { fontFamily: "PlusJakartaSans_500Medium",
     backgroundColor: T.sand,
     borderRadius: 12,
     paddingHorizontal: 16,
@@ -578,11 +575,10 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: T.bark,
     marginBottom: 12,
-    fontWeight: "500",
   },
   row2: {
     flexDirection: "row",
-    gap: 10,
+    gap: 12,
   },
   flex1: { flex: 1 },
 
@@ -592,25 +588,25 @@ const styles = StyleSheet.create({
   },
   labelChip: {
     flex: 1,
+    minHeight: 44,
     paddingVertical: 12,
     borderRadius: 12,
     backgroundColor: T.sand,
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: T.sand,
     alignItems: "center",
+    justifyContent: "center",
   },
   labelActive: {
     backgroundColor: T.white,
     borderColor: T.bark,
   },
-  labelText: {
+  labelText: { fontFamily: "PlusJakartaSans_600SemiBold",
     fontSize: 14,
     color: T.barkMid,
-    fontWeight: "600",
   },
   labelTextActive: {
     color: T.bark,
-    fontWeight: "700",
   },
 
   phoneInputContainer: {
@@ -619,31 +615,29 @@ const styles = StyleSheet.create({
     backgroundColor: T.sand,
     borderRadius: 12,
     paddingLeft: 16,
+    paddingRight: 16,
     marginBottom: 12,
   },
-  phonePrefix: {
+  phonePrefix: { fontFamily: "PlusJakartaSans_600SemiBold",
     fontSize: 15,
-    fontWeight: "600",
     color: T.bark,
     marginRight: 8,
   },
-  phoneInput: {
+  phoneInput: { fontFamily: "PlusJakartaSans_500Medium",
     flex: 1,
     paddingVertical: 14,
     fontSize: 15,
     color: T.bark,
-    fontWeight: "500",
   },
 
   defaultRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    paddingVertical: 4,
+    paddingVertical: 10,
   },
-  defaultText: {
+  defaultText: { fontFamily: "PlusJakartaSans_600SemiBold",
     fontSize: 14,
-    fontWeight: "600",
     color: T.bark,
   },
 
@@ -651,19 +645,6 @@ const styles = StyleSheet.create({
     marginHorizontal: 20,
     marginTop: 32,
     backgroundColor: T.pink,
-    borderRadius: 16,
-    paddingVertical: 16,
-    alignItems: "center",
     shadowColor: T.pink,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  saveText: {
-    color: T.white,
-    fontSize: 16,
-    fontWeight: "800",
-    letterSpacing: 0.5,
   },
 });

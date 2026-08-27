@@ -4,6 +4,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+    ActivityIndicator,
     Alert,
     LayoutAnimation,
     ScrollView,
@@ -16,6 +17,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { PaymentProcessingOverlay } from "../../components/PaymentProcessingOverlay";
+import { BackButton, BottomDock, Divider, SectionLabel, Skeleton } from "../../components/ui";
 import { C } from "../../constants/colors";
 import { calcOrderTotal } from "../../constants/fees";
 import { useAuth } from "../../context/AuthContext";
@@ -49,6 +51,17 @@ import { getAllActiveProductIds } from "../../lib/storeService";
 // persisted and printed on the customer's own tax invoice with no format
 // check at all — a typo'd GSTIN would silently ship on a real invoice.
 const GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+
+// Off-palette screen ground (no C token equals it — flagged in the UI audit).
+// Kept byte-identical; hoisted so the screen and the pay dock can't drift apart.
+const SCREEN_BG = "#f0f0f5";
+
+// hitSlop insets for the small controls on this screen (visual sizes unchanged;
+// these only grow the touch target towards the 44px guideline).
+const QTY_HIT_SLOP = { top: 8, bottom: 8, left: 6, right: 6 };
+const ROW_HIT_SLOP = { top: 8, bottom: 8 };
+const TEXT_BTN_HIT_SLOP = { top: 10, bottom: 10, left: 12, right: 12 };
+const LINK_HIT_SLOP = { top: 8, bottom: 8, left: 0, right: 12 };
 
 export default function CheckoutScreen() {
   const { items, isHydrated, appliedCoupon, removeCoupon, discount, isCouponEligible, clearCart, addItem, incrementQty } = useCart();
@@ -602,25 +615,21 @@ export default function CheckoutScreen() {
           there's no visual jump when navigating between tabs. ─── */}
       <View style={styles.addressBarBg}>
         <LinearGradient
-          colors={["#ecfdf5", "#ffffff"]}
+          colors={[C.primaryXLight, C.card]}
           start={{ x: 0, y: 0 }}
           end={{ x: 0, y: 1 }}
           style={StyleSheet.absoluteFillObject}
           pointerEvents="none"
         />
         <View style={styles.appBar}>
-          <TouchableOpacity
-            style={styles.backBtn}
-            onPress={() => router.back()}
-            activeOpacity={0.7}
-          >
-            <MaterialCommunityIcons name="arrow-left" size={20} color={C.text} />
-          </TouchableOpacity>
+          <BackButton onPress={() => router.back()} />
 
           <TouchableOpacity
             style={{ flex: 1 }}
             activeOpacity={0.7}
             onPress={() => router.push("/select-location")}
+            accessibilityRole="button"
+            accessibilityLabel="Change delivery address"
           >
             <View style={styles.deliveryLabelRow}>
               <MaterialCommunityIcons
@@ -652,9 +661,16 @@ export default function CheckoutScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets
       >
         {/* ─── Items Card ─── */}
         <View style={styles.card}>
+          <View style={styles.cardHeaderRow}>
+            <SectionLabel style={styles.sectionLabelInline}>Your items</SectionLabel>
+            <Text style={styles.cardHeaderMeta}>
+              {items.length} {items.length === 1 ? "item" : "items"}
+            </Text>
+          </View>
           {items.map((item, idx) => (
             <View key={item.product_id}>
               <View style={styles.itemRow}>
@@ -673,21 +689,27 @@ export default function CheckoutScreen() {
                 )}
                 <View style={styles.itemDetails}>
                   <Text style={styles.itemName} numberOfLines={2}>{item.name}</Text>
-                  <Text style={styles.itemUnit}>{item.unit}</Text>
+                  <Text style={styles.itemUnit} numberOfLines={1}>{item.unit}</Text>
                 </View>
                 <View style={styles.quantityControls}>
                   <TouchableOpacity
                     style={styles.quantityBtn}
                     onPress={() => incrementQty(item.product_id, -1)}
                     activeOpacity={0.7}
+                    hitSlop={QTY_HIT_SLOP}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Decrease quantity of ${item.name}`}
                   >
                     <MaterialCommunityIcons name="minus" size={14} color={C.primary} />
                   </TouchableOpacity>
-                  <Text style={styles.quantityText}>{formatQuantityDisplay(item.quantity, item.isLoose)}</Text>
+                  <Text style={styles.quantityText} numberOfLines={1}>{formatQuantityDisplay(item.quantity, item.isLoose)}</Text>
                   <TouchableOpacity
                     style={styles.quantityBtn}
                     onPress={() => incrementQty(item.product_id, 1)}
                     activeOpacity={0.7}
+                    hitSlop={QTY_HIT_SLOP}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Increase quantity of ${item.name}`}
                   >
                     <MaterialCommunityIcons name="plus" size={14} color={C.primary} />
                   </TouchableOpacity>
@@ -696,7 +718,7 @@ export default function CheckoutScreen() {
                   <Text style={styles.itemTotal}>₹{(item.price * item.quantity).toFixed(0)}</Text>
                 </View>
               </View>
-              {idx < items.length - 1 && <View style={styles.itemDivider} />}
+              {idx < items.length - 1 && <Divider spacing={2} />}
             </View>
           ))}
 
@@ -705,6 +727,8 @@ export default function CheckoutScreen() {
             style={styles.addMoreRow}
             onPress={() => router.back()}
             activeOpacity={0.7}
+            hitSlop={ROW_HIT_SLOP}
+            accessibilityRole="button"
           >
             <MaterialCommunityIcons name="plus-circle-outline" size={16} color={C.primary} />
             <Text style={styles.addMoreText}>Add more items</Text>
@@ -715,12 +739,13 @@ export default function CheckoutScreen() {
         <View style={styles.card}>
           <View style={styles.savingsHeader}>
             <MaterialCommunityIcons name="tag-outline" size={15} color={C.primary} />
-            <Text style={styles.savingsTitle}>SAVINGS CORNER</Text>
+            <SectionLabel style={styles.sectionLabelInline}>SAVINGS CORNER</SectionLabel>
           </View>
           <TouchableOpacity
             style={styles.savingsRow}
-            activeOpacity={0.85}
+            activeOpacity={0.8}
             onPress={() => router.push("../product/coupons")}
+            accessibilityRole="button"
           >
             <View style={styles.savingsLeft}>
               <MaterialCommunityIcons
@@ -753,11 +778,14 @@ export default function CheckoutScreen() {
               </View>
               <View style={{ flex: 1, marginLeft: 10 }}>
                 <Text style={styles.gstinTitle}>Add GSTIN</Text>
-                <Text style={styles.gstinSub}>Get a GST-compliant invoice for input tax credit claims</Text>
+                <Text style={styles.gstinSub} numberOfLines={2}>Get a GST-compliant invoice for input tax credit claims</Text>
               </View>
             </View>
             <TouchableOpacity
+              style={styles.gstinToggle}
               activeOpacity={0.8}
+              hitSlop={TEXT_BTN_HIT_SLOP}
+              accessibilityRole="button"
               onPress={() => {
                 LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
                 setGstinClaim((v) => !v);
@@ -801,19 +829,32 @@ export default function CheckoutScreen() {
         {/* ─── Did you forget? (Recommended) ─── */}
         {recommended.length > 0 && (
           <View style={styles.card}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.recoTabsScroll}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.recoTabsScroll}
+              contentContainerStyle={styles.recoScrollContent}
+            >
               {["Did you forget?", "Chips & Muchies", "Hungry? Grab"].map((tab, i) => (
                 <View key={i} style={[styles.recoTab, i === 0 && styles.recoTabActive]}>
                   <Text style={[styles.recoTabText, i === 0 && styles.recoTabTextActive]}>{tab}</Text>
                 </View>
               ))}
             </ScrollView>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.recoScroll}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.recoScroll}
+              contentContainerStyle={styles.recoScrollContent}
+            >
               {recommended.map((p) => (
                 <View key={p.id} style={styles.recoCard}>
                   <TouchableOpacity
                     style={styles.recoBookmark}
-                    hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+                    hitSlop={10}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel="Save for later"
                     onPress={() => Alert.alert("Coming soon", "Saving items for later isn't available yet.")}
                   >
                     <MaterialCommunityIcons name="bookmark-outline" size={14} color={C.textSub} />
@@ -834,7 +875,7 @@ export default function CheckoutScreen() {
                   )}
                   <Text style={styles.recoDelivery}>6 MINS</Text>
                   <Text style={styles.recoName} numberOfLines={2}>{p.name}</Text>
-                  <Text style={styles.recoWeight}>{p.unit}</Text>
+                  <Text style={styles.recoWeight} numberOfLines={1}>{p.unit}</Text>
                   {p.original_price && p.original_price > p.price && (
                     <Text style={styles.recoDiscount}>{Math.round(((p.original_price - p.price) / p.original_price) * 100)}% OFF</Text>
                   )}
@@ -846,7 +887,10 @@ export default function CheckoutScreen() {
                   </View>
                   <TouchableOpacity
                     style={styles.recoAddBtn}
-                    activeOpacity={0.85}
+                    activeOpacity={0.8}
+                    hitSlop={6}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Add ${p.name} to cart`}
                     onPress={() =>
                       addItem({
                         product_id: p.id,
@@ -869,21 +913,26 @@ export default function CheckoutScreen() {
         {/* ─── Delivery Tip ─── */}
         <View style={styles.card}>
           <View style={styles.tipHeaderRow}>
-            <Text style={styles.tipTitle}>DELIVERY TIP</Text>
-            <MaterialCommunityIcons name="information-outline" size={14} color={C.textSub} />
+            <SectionLabel style={styles.sectionLabelInline}>DELIVERY TIP</SectionLabel>
+            <MaterialCommunityIcons
+              name="information-outline"
+              size={14}
+              color={C.textSub}
+              importantForAccessibility="no"
+              accessibilityElementsHidden
+            />
           </View>
           <Text style={styles.tipSubtitle}>
-            A small tip, a big gesture! Tip your delivery{"\n"}partner to show your appreciation for{"\n"}their hard work.
+            A small tip, a big gesture! Tip your delivery partner to show your appreciation for their hard work.
           </Text>
-          <View style={styles.tipDeliveryImage}>
-            {/* Decorative delivery icon area */}
-          </View>
           <View style={styles.tipChipsRow}>
             {([10, 20, 30] as const).map((val) => (
               <TouchableOpacity
                 key={val}
                 style={[styles.tipChip, tipPreset === val && styles.tipChipActive]}
                 activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityState={{ selected: tipPreset === val }}
                 onPress={() => {
                   LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
                   setTipPreset(tipPreset === val ? null : val);
@@ -898,6 +947,8 @@ export default function CheckoutScreen() {
             <TouchableOpacity
               style={[styles.tipChip, tipPreset === "custom" && styles.tipChipActive]}
               activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityState={{ selected: tipPreset === "custom" }}
               onPress={() => {
                 LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
                 setTipPreset("custom");
@@ -922,37 +973,37 @@ export default function CheckoutScreen() {
 
         {/* ─── Bill Details ─── */}
         <View style={styles.card}>
-          <Text style={styles.billSectionTitle}>BILL DETAILS</Text>
-          <BillRow label="Item Total" value={subtotal} strikeValue={subtotal + (discount > 0 ? discount : 0)} showStrike={false} />
-          {discount > 0 && <BillRow label="Coupon Discount" value={-discount} highlight />}
-          <BillRow
-            label="Platform Fee"
-            value={platformFee}
-            onInfoPress={() =>
-              Alert.alert(
-                "Platform Fee",
-                "A small fee that keeps our app running smoothly so we can keep bringing fresh picks to your door. Thank you for supporting us!",
-              )
-            }
-          />
-          <BillRow
-            label="Handling Charges"
-            value={handlingFee}
-            onInfoPress={() =>
-              Alert.alert(
-                "Handling Charges",
-                "This goes towards carefully packing and handling your order so it reaches you just right. Thanks for being part of our journey!",
-              )
-            }
-          />
-          <BillRow label="Delivery Fee" value={deliveryFee} />
-          {tipAmount > 0 && <BillRow label="Delivery Partner Tip" value={tipAmount} />}
-          <View style={styles.billDivider} />
+          <SectionLabel style={styles.sectionLabel}>BILL DETAILS</SectionLabel>
+          <View style={styles.billRows}>
+            <BillRow label="Item Total" value={subtotal} strikeValue={subtotal + (discount > 0 ? discount : 0)} showStrike={false} />
+            {discount > 0 && <BillRow label="Coupon Discount" value={-discount} highlight />}
+            <BillRow
+              label="Platform Fee"
+              value={platformFee}
+              onInfoPress={() =>
+                Alert.alert(
+                  "Platform Fee",
+                  "A small fee that keeps our app running smoothly so we can keep bringing fresh picks to your door. Thank you for supporting us!",
+                )
+              }
+            />
+            <BillRow
+              label="Handling Charges"
+              value={handlingFee}
+              onInfoPress={() =>
+                Alert.alert(
+                  "Handling Charges",
+                  "This goes towards carefully packing and handling your order so it reaches you just right. Thanks for being part of our journey!",
+                )
+              }
+            />
+            <BillRow label="Delivery Fee" value={deliveryFee} loading={loadingDistance} />
+            {tipAmount > 0 && <BillRow label="Delivery Partner Tip" value={tipAmount} />}
+          </View>
+          <Divider />
           <View style={styles.totalRow}>
             <Text style={styles.totalLabel}>To Pay</Text>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <Text style={styles.totalValue}>₹{Math.round(finalPayable)}</Text>
-            </View>
+            <Text style={styles.totalValue}>₹{Math.round(finalPayable)}</Text>
           </View>
         </View>
 
@@ -962,14 +1013,20 @@ export default function CheckoutScreen() {
             <Text style={styles.noteBold}>NOTE: </Text>
             Orders cannot be cancelled and are non-refundable once packed for delivery.{" "}
           </Text>
-          <TouchableOpacity onPress={() => router.push("/settings/support")}>
+          <TouchableOpacity
+            style={styles.noteLinkBtn}
+            onPress={() => router.push("/settings/support")}
+            activeOpacity={0.7}
+            hitSlop={LINK_HIT_SLOP}
+            accessibilityRole="link"
+          >
             <Text style={styles.noteLink}>Read cancellation policy</Text>
           </TouchableOpacity>
         </View>
 
         {/* ─── Who is this order for? ─── */}
         <View style={styles.card}>
-          <Text style={styles.billSectionTitle}>WHO IS THIS ORDER FOR?</Text>
+          <SectionLabel style={styles.sectionLabel}>WHO IS THIS ORDER FOR?</SectionLabel>
           <View style={styles.orderForRow}>
             <TouchableOpacity
               style={[
@@ -978,6 +1035,8 @@ export default function CheckoutScreen() {
               ]}
               activeOpacity={0.8}
               onPress={() => setOrderFor("self")}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: orderFor === "self" }}
             >
               <MaterialCommunityIcons
                 name={orderFor === "self" ? "radiobox-marked" : "radiobox-blank"}
@@ -1000,6 +1059,8 @@ export default function CheckoutScreen() {
               ]}
               activeOpacity={0.8}
               onPress={() => setOrderFor("others")}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: orderFor === "others" }}
             >
               <MaterialCommunityIcons
                 name={orderFor === "others" ? "radiobox-marked" : "radiobox-blank"}
@@ -1050,7 +1111,7 @@ export default function CheckoutScreen() {
 
         {/* ─── Delivery Instructions ─── */}
         <View style={styles.card}>
-          <Text style={styles.billSectionTitle}>DELIVERY INSTRUCTIONS</Text>
+          <SectionLabel style={styles.sectionLabel}>DELIVERY INSTRUCTIONS</SectionLabel>
           <TextInput
             placeholder="e.g. Don't ring the bell, call on arrival, gate code…"
             placeholderTextColor={C.textLight}
@@ -1066,7 +1127,7 @@ export default function CheckoutScreen() {
       </ScrollView>
 
       {/* ─── Pay Dock (Blinkit-style: method left, Place Order right) ─── */}
-      <View style={styles.payDock}>
+      <BottomDock bg={SCREEN_BG} style={styles.payDock}>
         <View style={styles.payDockRow}>
           <PayMethodSelector tipAmount={tipAmount} />
 
@@ -1075,16 +1136,18 @@ export default function CheckoutScreen() {
             onPress={placeOrder}
             disabled={placing}
             activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: placing, busy: placing }}
           >
             {placing ? (
               <View style={styles.payButtonPlacingInner}>
-                <MaterialCommunityIcons name="loading" size={18} color="#fff" />
+                <ActivityIndicator size="small" color={C.card} />
                 <Text style={styles.payButtonCtaText}>Placing…</Text>
               </View>
             ) : (
               <>
                 <View style={styles.payButtonAmount}>
-                  <Text style={styles.payButtonAmountValue}>
+                  <Text style={styles.payButtonAmountValue} numberOfLines={1}>
                     ₹{finalPayable.toFixed(0)}
                   </Text>
                   <Text style={styles.payButtonAmountLabel}>TOTAL</Text>
@@ -1094,7 +1157,7 @@ export default function CheckoutScreen() {
             )}
           </TouchableOpacity>
         </View>
-      </View>
+      </BottomDock>
 
       {RazorpayUI}
 
@@ -1113,6 +1176,7 @@ function BillRow({
   showStrike,
   note,
   onInfoPress,
+  loading,
 }: {
   label: string;
   value: number;
@@ -1121,6 +1185,8 @@ function BillRow({
   showStrike?: boolean;
   note?: string;
   onInfoPress?: () => void;
+  /** Presentational only: swaps the value for a small skeleton while it resolves. */
+  loading?: boolean;
 }) {
   // Only integer-valued fees collapse cleanly; preserve decimals (9.5, 0.75 …)
   // so the breakdown stays faithful. The final "To Pay" row is the one place
@@ -1131,14 +1197,15 @@ function BillRow({
     return hasDecimals ? abs.toFixed(2) : String(Math.round(abs));
   };
   return (
-    <View style={{ marginBottom: 10 }}>
+    <View>
       <View style={styles.billRow}>
         <View style={{ flexDirection: "row", alignItems: "center", flexShrink: 1, gap: 4 }}>
           <Text style={[styles.billLabel, highlight && { color: C.success }]}>{label}</Text>
           {onInfoPress && (
             <TouchableOpacity
               onPress={onInfoPress}
-              hitSlop={10}
+              hitSlop={14}
+              activeOpacity={0.7}
               accessibilityRole="button"
               accessibilityLabel={`More info about ${label}`}
             >
@@ -1154,9 +1221,13 @@ function BillRow({
           {showStrike && strikeValue !== undefined && (
             <Text style={styles.billStrike}>₹{formatAmount(strikeValue)}</Text>
           )}
-          <Text style={[styles.billValue, highlight && { color: C.success, fontWeight: "700" }]}>
-            {value < 0 ? `−₹${formatAmount(value)}` : `₹${formatAmount(value)}`}
-          </Text>
+          {loading ? (
+            <Skeleton width={40} height={12} radius={6} />
+          ) : (
+            <Text style={[styles.billValue, highlight && { color: C.success, fontFamily: "PlusJakartaSans_700Bold" }]}>
+              {value < 0 ? `−₹${formatAmount(value)}` : `₹${formatAmount(value)}`}
+            </Text>
+          )}
         </View>
       </View>
       {note && <Text style={styles.billNote}>{note}</Text>}
@@ -1190,6 +1261,8 @@ function PayMethodSelector({ tipAmount }: { tipAmount: number }) {
     <TouchableOpacity
       style={styles.payMethodSelector}
       activeOpacity={0.8}
+      accessibilityRole="button"
+      accessibilityLabel={`Pay using ${sel.label}. Change payment method`}
       onPress={() =>
         router.push({
           pathname: "/support/payment-options",
@@ -1227,7 +1300,7 @@ function PayButtonLabel() {
   return (
     <View style={styles.payButtonCta}>
       <Text style={styles.payButtonCtaText}>{cta}</Text>
-      <MaterialCommunityIcons name="play" size={12} color="#fff" />
+      <MaterialCommunityIcons name="arrow-right" size={16} color={C.card} />
     </View>
   );
 }
@@ -1235,19 +1308,8 @@ function PayButtonLabel() {
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#f0f0f5" },
+  safe: { flex: 1, backgroundColor: SCREEN_BG },
   scrollContent: { paddingBottom: 120 },
-
-  backBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: C.bgSoft,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: C.border,
-  },
 
   // "Delivery to" address bar — kept visually in sync with the one on the
   // home screen so navigating checkout ↔ home never feels like two apps.
@@ -1259,29 +1321,28 @@ const styles = StyleSheet.create({
   appBar: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 14,
-    paddingTop: 10,
+    paddingHorizontal: 16,
+    paddingTop: 12,
     paddingBottom: 12,
     gap: 12,
   },
   deliveryLabelRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
-    marginBottom: 3,
+    gap: 6,
+    marginBottom: 2,
   },
   deliveryLabelText: {
-    fontSize: 12,
+    fontSize: 11,
     color: C.primary,
-    fontWeight: "700",
-    letterSpacing: 0.4,
+    fontFamily: "PlusJakartaSans_800ExtraBold",
+    letterSpacing: 0.5,
     textTransform: "uppercase",
   },
-  deliveryAddressText: {
-    fontSize: 16,
-    fontWeight: "800",
+  deliveryAddressText: { fontFamily: "PlusJakartaSans_800ExtraBold",
+    fontSize: 15,
     color: C.text,
-    letterSpacing: -0.3,
+    letterSpacing: -0.2,
     flex: 1,
   },
   locationInlineRow: {
@@ -1298,11 +1359,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
   },
+  // Eyebrow overrides on top of SectionLabel (defaults: marginBottom 8, paddingHorizontal 2)
+  sectionLabel: { marginBottom: 12, paddingHorizontal: 0 },
+  sectionLabelInline: { marginBottom: 0, paddingHorizontal: 0 },
+  cardHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 4,
+  },
+  cardHeaderMeta: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.textSub, fontSize: 12 },
 
   // Items
   itemRow: { flexDirection: "row", alignItems: "center", paddingVertical: 10, gap: 10 },
-  itemDivider: { height: 1, backgroundColor: C.border, marginVertical: 2 },
-  itemImage: { width: 52, height: 52, borderRadius: 8 },
+  itemImage: { width: 52, height: 52, borderRadius: 8, backgroundColor: C.bgSoft },
   imagePlaceholder: {
     width: 52,
     height: 52,
@@ -1312,11 +1382,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   itemDetails: { flex: 1 },
-  itemName: { color: C.text, fontSize: 13, fontWeight: "600", lineHeight: 18 },
-  itemUnit: { color: C.textSub, fontSize: 11, marginTop: 2 },
+  itemName: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.text, fontSize: 13, lineHeight: 18 },
+  itemUnit: { fontFamily: "PlusJakartaSans_700Bold", color: C.textSub, fontSize: 11, marginTop: 2 },
   itemPriceCol: { alignItems: "flex-end", minWidth: 48 },
-  itemTotal: { color: C.text, fontWeight: "700", fontSize: 13 },
-  itemMrp: { color: C.textLight, fontSize: 11, textDecorationLine: "line-through", marginTop: 2 },
+  itemTotal: { fontFamily: "PlusJakartaSans_700Bold", color: C.text, fontSize: 13 },
 
   // Quantity Controls
   quantityControls: {
@@ -1334,9 +1403,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: C.primaryXLight,
   },
-  quantityText: {
+  quantityText: { fontFamily: "PlusJakartaSans_700Bold",
     fontSize: 13,
-    fontWeight: "700",
     color: C.primary,
     minWidth: 24,
     textAlign: "center",
@@ -1348,25 +1416,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
     paddingTop: 12,
-    marginTop: 6,
+    marginTop: 8,
     borderTopWidth: 1,
     borderTopColor: C.border,
   },
-  addMoreText: { color: C.primary, fontSize: 13, fontWeight: "700" },
+  addMoreText: { fontFamily: "PlusJakartaSans_700Bold", color: C.primary, fontSize: 13 },
 
   // Savings corner
   savingsHeader: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    marginBottom: 10,
-  },
-  savingsTitle: {
-    color: C.textSub,
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 0.5,
-    textTransform: "uppercase",
+    marginBottom: 12,
   },
   savingsRow: {
     flexDirection: "row",
@@ -1374,7 +1435,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   savingsLeft: { flexDirection: "row", alignItems: "center", flex: 1 },
-  savingsText: { color: C.text, fontSize: 13, fontWeight: "600" },
+  savingsText: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.text, fontSize: 13 },
 
   // GSTIN
   gstinRow: {
@@ -1384,37 +1445,41 @@ const styles = StyleSheet.create({
   },
   gstinLeft: { flexDirection: "row", alignItems: "center", flex: 1 },
   gstinIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
+    width: 34,
+    height: 34,
+    borderRadius: 10,
     backgroundColor: "#e8f0fe",
     alignItems: "center",
     justifyContent: "center",
   },
-  gstinIconText: { color: "#2563eb", fontSize: 9, fontWeight: "900", letterSpacing: 0.3 },
-  gstinTitle: { color: C.text, fontSize: 13, fontWeight: "700" },
-  gstinSub: { color: C.textSub, fontSize: 11, marginTop: 1 },
-  gstinAddBtn: { color: C.primary, fontSize: 14, fontWeight: "800" },
+  gstinIconText: { fontFamily: "PlusJakartaSans_800ExtraBold", color: "#2563eb", fontSize: 10, letterSpacing: 0.3 },
+  gstinTitle: { fontFamily: "PlusJakartaSans_700Bold", color: C.text, fontSize: 13 },
+  gstinSub: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.textSub, fontSize: 11, marginTop: 1 },
+  gstinToggle: { paddingVertical: 8, paddingHorizontal: 4, minHeight: 36, justifyContent: "center" },
+  gstinAddBtn: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.primary, fontSize: 14 },
   gstinExpanded: { marginTop: 12 },
-  gstinErrorText: { color: C.danger, fontSize: 11, marginTop: 4, marginLeft: 2 },
+  gstinErrorText: { fontFamily: "PlusJakartaSans_300Light", color: C.danger, fontSize: 11, marginTop: 4, marginLeft: 2 },
 
-  // Reco tabs
-  recoTabsScroll: { marginBottom: 12, marginHorizontal: -16, paddingHorizontal: 16 },
+  // Reco tabs — the -16 bleed is coupled to card paddingHorizontal 16; the
+  // trailing 16px lives in contentContainerStyle so the last chip/card can
+  // scroll fully into view.
+  recoTabsScroll: { marginBottom: 12, marginHorizontal: -16 },
+  recoScrollContent: { paddingHorizontal: 16 },
   recoTab: {
     paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 20,
+    paddingVertical: 8,
+    borderRadius: 999,
     borderWidth: 1,
     borderColor: C.border,
     marginRight: 8,
     backgroundColor: C.card,
   },
   recoTabActive: { borderColor: C.primary, backgroundColor: C.primaryXLight },
-  recoTabText: { color: C.textSub, fontSize: 12, fontWeight: "600" },
+  recoTabText: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.textSub, fontSize: 12 },
   recoTabTextActive: { color: C.primary },
 
   // Reco cards
-  recoScroll: { marginHorizontal: -16, paddingHorizontal: 16 },
+  recoScroll: { marginHorizontal: -16 },
   recoCard: {
     width: 110,
     backgroundColor: C.card,
@@ -1426,7 +1491,7 @@ const styles = StyleSheet.create({
     position: "relative",
   },
   recoBookmark: { position: "absolute", top: 6, left: 6, zIndex: 1 },
-  recoImage: { width: "100%", height: 70, borderRadius: 8, marginBottom: 6 },
+  recoImage: { width: "100%", height: 70, borderRadius: 8, marginBottom: 6, backgroundColor: C.bgSoft },
   recoPlaceholder: {
     width: "100%",
     height: 70,
@@ -1436,34 +1501,27 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  recoDelivery: { color: C.textLight, fontSize: 9, fontWeight: "700", letterSpacing: 0.3 },
-  recoName: { color: C.text, fontSize: 11, fontWeight: "600", lineHeight: 15, minHeight: 30, marginTop: 2 },
-  recoWeight: { color: C.textSub, fontSize: 10, marginTop: 1 },
-  recoDiscount: { color: C.success, fontSize: 10, fontWeight: "800", marginTop: 2 },
+  recoDelivery: { fontFamily: "PlusJakartaSans_700Bold", color: C.textLight, fontSize: 10, letterSpacing: 0.3 },
+  recoName: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.text, fontSize: 11, lineHeight: 15, minHeight: 30, marginTop: 2 },
+  recoWeight: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.textSub, fontSize: 10, marginTop: 1 },
+  recoDiscount: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.success, fontSize: 10, marginTop: 2 },
   recoPriceRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 },
-  recoPrice: { color: C.text, fontSize: 12, fontWeight: "800" },
-  recoMrp: { color: C.textLight, fontSize: 10, textDecorationLine: "line-through" },
+  recoPrice: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 12 },
+  recoMrp: { fontFamily: "PlusJakartaSans_300Light", color: C.textLight, fontSize: 10, textDecorationLine: "line-through" },
   recoAddBtn: {
-    marginTop: 7,
+    marginTop: 8,
     borderWidth: 1.5,
     borderColor: C.primary,
-    borderRadius: 6,
-    paddingVertical: 4,
+    borderRadius: 8,
+    paddingVertical: 6,
+    minHeight: 32,
     alignItems: "center",
     justifyContent: "center",
   },
 
   // Tip
-  tipHeaderRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 },
-  tipTitle: {
-    color: C.textSub,
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 0.5,
-    textTransform: "uppercase",
-  },
-  tipSubtitle: { color: C.textSub, fontSize: 12, lineHeight: 17, marginBottom: 14 },
-  tipDeliveryImage: { height: 0 },
+  tipHeaderRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 8 },
+  tipSubtitle: { fontFamily: "PlusJakartaSans_500Medium", color: C.textSub, fontSize: 12, lineHeight: 17, marginBottom: 16 },
   tipChipsRow: { flexDirection: "row", gap: 8 },
   tipChip: {
     flex: 1,
@@ -1478,53 +1536,30 @@ const styles = StyleSheet.create({
     paddingTop: 14,
   },
   tipChipActive: { borderColor: C.primary, backgroundColor: C.primaryXLight },
-  tipChipText: { fontSize: 13, color: C.text, fontWeight: "700" },
+  tipChipText: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 13, color: C.text },
   tipChipTextActive: { color: C.primary },
-  tipMostTipped: {
+  tipMostTipped: { fontFamily: "PlusJakartaSans_800ExtraBold",
     position: "absolute",
-    top: -9,
+    top: -10,
     alignSelf: "center",
     backgroundColor: C.primary,
-    color: "#fff",
-    fontSize: 8,
-    fontWeight: "800",
-    paddingHorizontal: 5,
+    color: C.card,
+    fontSize: 9,
+    paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
   },
 
   // Bill Details
-  billSectionTitle: {
-    color: C.textSub,
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 0.5,
-    textTransform: "uppercase",
-    marginBottom: 14,
-  },
+  billRows: { gap: 10 },
   billRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  billLabel: { color: C.text, fontSize: 13 },
-  billValue: { color: C.text, fontSize: 13, fontWeight: "500" },
-  billStrike: { color: C.textLight, fontSize: 12, textDecorationLine: "line-through" },
-  billNote: { color: C.textSub, fontSize: 11, marginTop: 3 },
-  deliveryFeeRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 10,
-  },
-  freeDeliveryNote: { color: C.textSub, fontSize: 11, marginBottom: 10, marginTop: -4 },
-  billGstRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 10,
-  },
-  billDivider: { height: 1, backgroundColor: C.border, marginVertical: 12 },
+  billLabel: { fontFamily: "PlusJakartaSans_500Medium", color: C.text, fontSize: 13 },
+  billValue: { fontFamily: "PlusJakartaSans_500Medium", color: C.text, fontSize: 13 },
+  billStrike: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.textLight, fontSize: 12, textDecorationLine: "line-through" },
+  billNote: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.textSub, fontSize: 11, marginTop: 4 },
   totalRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  totalLabel: { color: C.text, fontSize: 16, fontWeight: "900" },
-  totalStrike: { color: C.textLight, fontSize: 13, textDecorationLine: "line-through" },
-  totalValue: { color: C.text, fontSize: 18, fontWeight: "900" },
+  totalLabel: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 16 },
+  totalValue: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 18 },
 
   // Note card
   noteCard: {
@@ -1536,23 +1571,24 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderColor: "#ffe082",
   },
-  noteText: { color: C.text, fontSize: 12, lineHeight: 18 },
-  noteBold: { fontWeight: "800" },
-  noteLink: { color: C.primary, fontSize: 12, fontWeight: "700", marginTop: 4 },
+  noteText: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 12, lineHeight: 18 },
+  noteBold: { fontFamily: "PlusJakartaSans_800ExtraBold" },
+  noteLinkBtn: { alignSelf: "flex-start", paddingVertical: 4 },
+  noteLink: { fontFamily: "PlusJakartaSans_700Bold", color: C.primary, fontSize: 12 },
 
   // Inputs
-  textInput: {
+  textInput: { fontFamily: "PlusJakartaSans_400Regular",
     borderRadius: 10,
     borderWidth: 1.5,
     borderColor: C.border,
-    paddingHorizontal: 13,
+    paddingHorizontal: 12,
     paddingVertical: 12,
     backgroundColor: C.card,
     color: C.text,
     fontSize: 14,
     height: 44,
   },
-  multilineInput: { minHeight: 74, height: undefined, textAlignVertical: "top" },
+  multilineInput: { minHeight: 76, height: undefined, textAlignVertical: "top" },
   textInputError: { borderColor: C.danger },
 
   // "Who is this order for?" section
@@ -1577,29 +1613,20 @@ const styles = StyleSheet.create({
     borderColor: C.primary,
     backgroundColor: C.primaryXLight,
   },
-  orderForChipText: {
+  orderForChipText: { fontFamily: "PlusJakartaSans_700Bold",
     fontSize: 13,
-    fontWeight: "700",
     color: C.text,
   },
   orderForChipTextActive: {
     color: C.primary,
   },
-  // Pay dock — Blinkit-style horizontal bar
+  // Pay dock — Blinkit-style horizontal bar. Overrides on top of BottomDock
+  // (which supplies position absolute bottom 0, paddingBottom 28, the top
+  // border and the base dock shadow). elevation 16 keeps it above siblings.
   payDock: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: "#f0f0f5",
     paddingHorizontal: 12,
     paddingTop: 10,
-    paddingBottom: 28,
-    borderTopWidth: 1,
-    borderTopColor: C.border,
-    shadowColor: "#000",
     shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.08,
     shadowRadius: 10,
     elevation: 16,
   },
@@ -1615,11 +1642,12 @@ const styles = StyleSheet.create({
     maxWidth: "38%",
     gap: 8,
     paddingVertical: 4,
+    minHeight: 44,
   },
   payMethodIconWrap: {
     width: 36,
     height: 36,
-    borderRadius: 8,
+    borderRadius: 10,
     backgroundColor: C.card,
     borderWidth: 1,
     borderColor: C.border,
@@ -1628,8 +1656,8 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   payMethodLogo: {
-    width: 36,
-    height: 36,
+    width: 34,
+    height: 34,
   },
   payMethodTextCol: { flexShrink: 1 },
   payMethodLabelRow: {
@@ -1637,16 +1665,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 2,
   },
-  payMethodLabel: {
+  payMethodLabel: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: C.text,
     fontSize: 10,
-    fontWeight: "800",
     letterSpacing: 0.4,
   },
-  payMethodValue: {
+  payMethodValue: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: C.text,
     fontSize: 13,
-    fontWeight: "800",
     marginTop: 1,
   },
   payButton: {
@@ -1671,28 +1697,25 @@ const styles = StyleSheet.create({
   payButtonAmount: {
     justifyContent: "center",
   },
-  payButtonAmountValue: {
-    color: "#fff",
+  payButtonAmountValue: { fontFamily: "PlusJakartaSans_800ExtraBold",
+    color: C.card,
     fontSize: 16,
-    fontWeight: "900",
     letterSpacing: 0.2,
   },
-  payButtonAmountLabel: {
+  payButtonAmountLabel: { fontFamily: "PlusJakartaSans_700Bold",
     color: "rgba(255,255,255,0.85)",
     fontSize: 10,
-    fontWeight: "700",
     letterSpacing: 0.6,
     marginTop: 1,
   },
   payButtonCta: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
+    gap: 6,
   },
-  payButtonCtaText: {
-    color: "#fff",
+  payButtonCtaText: { fontFamily: "PlusJakartaSans_800ExtraBold",
+    color: C.card,
     fontSize: 15,
-    fontWeight: "900",
     letterSpacing: 0.2,
   },
 });

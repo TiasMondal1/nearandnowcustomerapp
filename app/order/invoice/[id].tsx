@@ -5,15 +5,26 @@ import {
     ActivityIndicator,
     Alert,
     Linking,
+    ScrollView,
     Share,
     StyleSheet,
     Text,
     TouchableOpacity,
     View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 
+import {
+    Card,
+    EmptyState,
+    IconButton,
+    IconWrap,
+    Screen,
+    ScreenHeader,
+    Skeleton,
+    SkeletonCircle,
+} from "../../../components/ui";
 import { C } from "../../../constants/colors";
+import { text } from "../../../constants/ui";
 import { apiFetch } from "../../../lib/apiClient";
 import { logError } from "../../../lib/logError";
 import { logSilentFailure } from "../../../lib/logSilentFailure";
@@ -106,93 +117,116 @@ export default function InvoiceScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safe}>
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={C.primary} />
-          <Text style={styles.loadingText}>Loading invoice...</Text>
+      <Screen>
+        <ScreenHeader title="Tax Invoice" align="left" onBack={() => router.back()} />
+        <View style={styles.content} accessible accessibilityLabel="Loading invoice">
+          <Card shadow="card" style={styles.summaryCard}>
+            <SkeletonCircle size={72} />
+            <View style={styles.rows}>
+              {[0, 1, 2, 3].map((i) => (
+                <View key={i} style={styles.summaryRow}>
+                  <Skeleton width={90} height={12} />
+                  <Skeleton width={120} height={12} />
+                </View>
+              ))}
+            </View>
+            <Skeleton width="70%" height={10} style={styles.hintSkeleton} />
+          </Card>
+          <View style={styles.actions}>
+            <Skeleton height={48} radius={12} style={styles.actionSkeleton} />
+            <Skeleton height={48} radius={12} style={styles.actionSkeleton} />
+          </View>
         </View>
-      </SafeAreaView>
+      </Screen>
     );
   }
 
   if (error || !invoice) {
     return (
-      <SafeAreaView style={styles.safe}>
-        <View style={styles.center}>
-          <MaterialCommunityIcons name="file-alert-outline" size={64} color={C.danger} />
-          <Text style={styles.errorText}>{error || "Invoice not found"}</Text>
-          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-            <Text style={styles.backButtonText}>Go Back</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
+      <Screen>
+        <ScreenHeader title="Tax Invoice" align="left" onBack={() => router.back()} />
+        <EmptyState
+          fill
+          icon="file-alert-outline"
+          iconSize={64}
+          iconColor={C.danger}
+          title={error || "Invoice not found"}
+          action={{ label: "Go Back", onPress: () => router.back() }}
+        />
+      </Screen>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()} activeOpacity={0.7}>
-          <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
-        </TouchableOpacity>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>Tax Invoice</Text>
-          {invoice.invoice_number && (
-            <Text style={styles.headerSubtitle}>{invoice.invoice_number}</Text>
-          )}
-        </View>
-        <TouchableOpacity style={styles.shareBtn} onPress={handleShare} activeOpacity={0.7}>
-          <MaterialCommunityIcons name="share-variant" size={20} color={C.primary} />
-        </TouchableOpacity>
-      </View>
+    <Screen>
+      <ScreenHeader
+        title="Tax Invoice"
+        subtitle={invoice.invoice_number}
+        align="left"
+        onBack={() => router.back()}
+        right={
+          <IconButton
+            icon="share-variant"
+            iconSize={20}
+            bg={C.primaryLight}
+            color={C.primary}
+            accessibilityLabel="Share invoice"
+            onPress={handleShare}
+          />
+        }
+      />
 
-      <View style={styles.content}>
-        <View style={styles.summaryCard}>
-          <MaterialCommunityIcons name="file-document-outline" size={48} color={C.primary} />
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <Card shadow="card" style={styles.summaryCard}>
+          <IconWrap size={72} radius={20} icon="file-document-outline" iconSize={36} />
 
-          {invoice.invoice_number && (
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Invoice Number</Text>
-              <Text style={styles.summaryValue}>{invoice.invoice_number}</Text>
-            </View>
-          )}
-          {invoice.invoice_date && (
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Date</Text>
-              <Text style={styles.summaryValue}>{formatInvoiceDate(invoice.invoice_date)}</Text>
-            </View>
-          )}
-          {order?.order_number && (
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Order</Text>
-              <Text style={styles.summaryValue}>#{order.order_number}</Text>
-            </View>
-          )}
-          {invoice.grand_total != null && (
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Total Amount</Text>
-              <Text style={styles.grandTotalValue}>₹{invoice.grand_total.toFixed(2)}</Text>
-            </View>
-          )}
+          <View style={styles.rows}>
+            {invoice.invoice_number && (
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Invoice Number</Text>
+                <Text style={styles.summaryValue}>{invoice.invoice_number}</Text>
+              </View>
+            )}
+            {invoice.invoice_date && (
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Date</Text>
+                <Text style={styles.summaryValue}>{formatInvoiceDate(invoice.invoice_date)}</Text>
+              </View>
+            )}
+            {order?.order_number && (
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Order</Text>
+                <Text style={styles.summaryValue}>#{order.order_number}</Text>
+              </View>
+            )}
+            {invoice.grand_total != null && (
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Total Amount</Text>
+                <Text style={styles.grandTotalValue}>₹{invoice.grand_total.toFixed(2)}</Text>
+              </View>
+            )}
+          </View>
 
           <Text style={styles.hint}>
             Your full tax invoice, with itemized GST breakdown, is ready as a PDF.
           </Text>
-        </View>
+        </Card>
 
-        {/* Action Buttons */}
+        {/* Action Buttons — kept local: the download button swaps its icon for a spinner
+            while the label stays visible, which PrimaryButton's `loading` mode does not do. */}
         <View style={styles.actions}>
           <TouchableOpacity
-            style={[styles.actionBtn, styles.downloadBtn]}
+            style={[styles.actionBtn, styles.downloadBtn, opening && styles.actionBtnDisabled]}
             onPress={handleOpen}
-            activeOpacity={0.85}
+            activeOpacity={0.8}
             disabled={opening}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: opening, busy: opening }}
           >
             {opening ? (
-              <ActivityIndicator size="small" color="#fff" />
+              <ActivityIndicator size="small" color={C.card} />
             ) : (
-              <MaterialCommunityIcons name="file-pdf-box" size={20} color="#fff" />
+              <MaterialCommunityIcons name="file-pdf-box" size={20} color={C.card} />
             )}
             <Text style={styles.actionBtnText}>View / Download PDF</Text>
           </TouchableOpacity>
@@ -200,104 +234,54 @@ export default function InvoiceScreen() {
           <TouchableOpacity
             style={[styles.actionBtn, styles.shareActionBtn]}
             onPress={handleShare}
-            activeOpacity={0.85}
+            activeOpacity={0.8}
+            accessibilityRole="button"
           >
-            <MaterialCommunityIcons name="share-variant" size={20} color="#fff" />
+            <MaterialCommunityIcons name="share-variant" size={20} color={C.card} />
             <Text style={styles.actionBtnText}>Share</Text>
           </TouchableOpacity>
         </View>
-      </View>
-    </SafeAreaView>
+      </ScrollView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
-  center: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 16,
-    paddingHorizontal: 32,
-  },
-  loadingText: { color: C.textSub, fontSize: 14 },
-  errorText: { color: C.text, fontSize: 16, fontWeight: "700", marginTop: 12, textAlign: "center" },
-  backButton: {
-    backgroundColor: C.primary,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 12,
-    marginTop: 16,
-  },
-  backButtonText: { color: "#fff", fontSize: 14, fontWeight: "700" },
-
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingHorizontal: 12,
-    paddingTop: 16,
-    paddingBottom: 14,
-    backgroundColor: C.card,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  backBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: C.bgSoft,
-  },
-  headerTitle: { color: C.text, fontSize: 20, fontWeight: "900" },
-  headerSubtitle: { color: C.textSub, fontSize: 12, fontWeight: "600", marginTop: 2 },
-  shareBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: C.primaryLight,
-  },
-
-  content: { flex: 1, padding: 16, justifyContent: "center" },
+  // flexGrow (not flex) so the card stays centered on tall screens and scrolls on short ones.
+  content: { flexGrow: 1, padding: 16, justifyContent: "center" },
 
   summaryCard: {
-    backgroundColor: C.card,
-    borderRadius: 16,
     padding: 24,
     alignItems: "center",
     gap: 12,
-    borderWidth: 1,
-    borderColor: C.border,
-    shadowColor: C.shadow,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 5,
   },
+  rows: { alignSelf: "stretch" },
   summaryRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    width: "100%",
-    paddingVertical: 6,
+    alignItems: "center",
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: C.borderSoft,
   },
-  summaryLabel: { color: C.textSub, fontSize: 13, fontWeight: "600" },
-  summaryValue: { color: C.text, fontSize: 14, fontWeight: "700" },
-  grandTotalValue: { color: C.primary, fontSize: 16, fontWeight: "900" },
-  hint: {
+  summaryLabel: { color: C.textSub, fontSize: 13, fontFamily: "PlusJakartaSans_600SemiBold", flexShrink: 0 },
+  // Values wrap instead of truncating — an invoice number must stay fully readable.
+  summaryValue: { fontFamily: "PlusJakartaSans_700Bold", color: C.text, fontSize: 14, flexShrink: 1, marginLeft: 12, textAlign: "right" },
+  grandTotalValue: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.primary, fontSize: 16, flexShrink: 1, marginLeft: 12, textAlign: "right" },
+  hint: { fontFamily: "PlusJakartaSans_400Regular",
     color: C.textLight,
     fontSize: 12,
     textAlign: "center",
     marginTop: 8,
   },
+  hintSkeleton: { marginTop: 8 },
 
   actions: {
     flexDirection: "row",
     gap: 12,
-    marginTop: 20,
+    marginTop: 24,
   },
+  actionSkeleton: { flex: 1 },
   actionBtn: {
     flex: 1,
     flexDirection: "row",
@@ -307,10 +291,11 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 12,
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    elevation: 4,
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 2,
   },
+  actionBtnDisabled: { opacity: 0.7 },
   downloadBtn: {
     backgroundColor: C.primary,
     shadowColor: C.primary,
@@ -319,9 +304,5 @@ const styles = StyleSheet.create({
     backgroundColor: C.success,
     shadowColor: C.success,
   },
-  actionBtnText: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "700",
-  },
+  actionBtnText: { ...text.buttonSm },
 });

@@ -1,10 +1,8 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
-import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-    ActivityIndicator,
     FlatList,
     InteractionManager,
     Pressable,
@@ -14,15 +12,17 @@ import {
     Text,
     TouchableOpacity,
     View,
+    type PressableStateCallbackType,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 
+import { IconWrap, PrimaryButton, Screen, Skeleton } from "../../components/ui";
 import { C } from "../../constants/colors";
 import {
     CATEGORY_GROUPS,
     DEFAULT_GROUP,
     getGroupForCategoryName,
 } from "../../constants/categoryGroups";
+import { HIT_SLOP, opacity } from "../../constants/ui";
 import { useAuth } from "../../context/AuthContext";
 import { useCart, useCartItemMap, type CartItem } from "../../context/CartContext";
 import { cdnImage } from "../../lib/imageUrl";
@@ -42,16 +42,27 @@ import {
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const T = {
   green: "#2D7A4F",
-  greenLight: "#3DA668",
+  // Terracotta deal accent — mirrors C.deal in constants/colors.ts; deals only.
+  deal: "#EA580C",
   greenXLight: "#EAF6EE",
+  greenBorder: "rgba(45,122,79,0.15)",
   white: "#FFFFFF",
   bg: "#F7F6F2",
   bark: "#3C2F1E",
-  barkMid: "#6B5744",
   barkLight: "#A89282",
   cardBorder: "rgba(60,47,30,0.07)",
   cardShadow: "rgba(0,0,0,0.06)",
 };
+
+// Extra reach for the compact ADD chip so the effective target clears 44pt.
+const ADD_HIT_SLOP = { top: 8, bottom: 8, left: 6, right: 6 };
+const SKELETON_CARDS = [0, 1, 2];
+const SKELETON_CHIPS = [0, 1, 2, 3];
+
+const cardPressStyle = ({ pressed }: PressableStateCallbackType) => [
+  styles.pressFill,
+  pressed && styles.pressed,
+];
 
 // ─── Interfaces ────────────────────────────────────────────────────────────────
 interface DisplayItem {
@@ -101,7 +112,12 @@ const ProductCard = React.memo(
 
     return (
       <View style={[styles.card, width ? { width } : undefined]}>
-        <Pressable onPress={handleOpen} style={{ flex: 1 }}>
+        <Pressable
+          onPress={handleOpen}
+          style={cardPressStyle}
+          accessibilityRole="button"
+          accessibilityLabel={p.name}
+        >
           <View style={styles.imageWrap}>
             {p.image_url ? (
               <Image
@@ -134,16 +150,37 @@ const ProductCard = React.memo(
               </View>
               {cartItem ? (
                 <View style={styles.qtyBox}>
-                  <TouchableOpacity style={styles.qtyBtn} onPress={handleMinus} hitSlop={6}>
-                    <MaterialCommunityIcons name="minus" size={12} color={T.white} />
+                  <TouchableOpacity
+                    style={styles.qtyBtn}
+                    onPress={handleMinus}
+                    hitSlop={HIT_SLOP}
+                    activeOpacity={opacity.pressIcon}
+                    accessibilityRole="button"
+                    accessibilityLabel="Decrease quantity"
+                  >
+                    <MaterialCommunityIcons name="minus" size={14} color={T.white} />
                   </TouchableOpacity>
                   <Text style={styles.qtyVal}>{cartItem.quantity}</Text>
-                  <TouchableOpacity style={styles.qtyBtn} onPress={handlePlus} hitSlop={6}>
-                    <MaterialCommunityIcons name="plus" size={12} color={T.white} />
+                  <TouchableOpacity
+                    style={styles.qtyBtn}
+                    onPress={handlePlus}
+                    hitSlop={HIT_SLOP}
+                    activeOpacity={opacity.pressIcon}
+                    accessibilityRole="button"
+                    accessibilityLabel="Increase quantity"
+                  >
+                    <MaterialCommunityIcons name="plus" size={14} color={T.white} />
                   </TouchableOpacity>
                 </View>
               ) : (
-                <TouchableOpacity style={styles.addBtn} onPress={handleAdd} activeOpacity={0.85}>
+                <TouchableOpacity
+                  style={styles.addBtn}
+                  onPress={handleAdd}
+                  hitSlop={ADD_HIT_SLOP}
+                  activeOpacity={opacity.pressCta}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Add ${p.name}`}
+                >
                   <Text style={styles.addBtnText}>ADD</Text>
                 </TouchableOpacity>
               )}
@@ -173,7 +210,12 @@ const LegacyItemCard = React.memo(function LegacyItemCard({
   }, [item.name]);
 
   return (
-    <Pressable style={[styles.card, width ? { width } : undefined]} onPress={onPress}>
+    <Pressable
+      style={({ pressed }) => [styles.card, width ? { width } : undefined, pressed && styles.pressed]}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Find ${item.name}`}
+    >
       <View style={styles.imageWrap}>
         {item.image ? (
           <Image
@@ -219,10 +261,8 @@ const CategoryChip = React.memo(function CategoryChip({
   return (
     <Pressable
       onPress={onPress}
-      style={({ pressed }) => [
-        styles.chip,
-        pressed && { opacity: 0.85, transform: [{ scale: 0.97 }] },
-      ]}
+      accessibilityRole="button"
+      style={({ pressed }) => [styles.chip, pressed && styles.chipPressed]}
     >
       <View style={styles.chipImgWrap}>
         <View style={styles.chipImgRow}>
@@ -260,7 +300,7 @@ const CategoryChip = React.memo(function CategoryChip({
 function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
     <View style={styles.sectionHeaderRow}>
-      <Text style={styles.sectionTitle}>{title}</Text>
+      <Text style={styles.sectionTitle} accessibilityRole="header">{title}</Text>
       {subtitle ? <Text style={styles.sectionSubtitle}>{subtitle}</Text> : null}
     </View>
   );
@@ -492,60 +532,118 @@ export default function OrderAgainScreen() {
   // ── States ────────────────────────────────────────────────────────────────
   if (!userId) {
     return (
-      <SafeAreaView style={styles.safe} edges={["top"]}>
+      <Screen bg={T.bg} edges={["top"]}>
         <Header />
         <View style={styles.emptyWrap}>
-          <View style={styles.emptyIconWrap}>
-            <MaterialCommunityIcons name="account-outline" size={36} color={T.green} />
-          </View>
+          <IconWrap
+            size={72}
+            circle
+            bg={T.greenXLight}
+            icon="account-outline"
+            iconSize={36}
+            iconColor={T.green}
+            style={styles.emptyIconWrap}
+          />
           <Text style={styles.emptyTitle}>Sign in first</Text>
           <Text style={styles.emptyDesc}>Reorder your favourites in one tap once you&apos;re signed in.</Text>
-          <TouchableOpacity style={styles.emptyBtn} onPress={() => router.push("/phone" as any)} activeOpacity={0.85}>
-            <Text style={styles.emptyBtnText}>Sign in</Text>
-          </TouchableOpacity>
+          <PrimaryButton
+            label="Sign in"
+            onPress={() => router.push("/phone" as any)}
+            fullWidth={false}
+            shadow
+            style={styles.emptyBtn}
+            textStyle={styles.emptyBtnText}
+          />
         </View>
-      </SafeAreaView>
+      </Screen>
     );
   }
 
   if (loading && !orders) {
     return (
-      <SafeAreaView style={styles.safe} edges={["top"]}>
+      <Screen bg={T.bg} edges={["top"]}>
         <Header />
-        <View style={styles.emptyWrap}>
-          <ActivityIndicator size="large" color={T.green} />
-          <Text style={styles.emptyDesc}>Loading your order history…</Text>
+        <View
+          style={styles.skeletonWrap}
+          accessible
+          accessibilityRole="progressbar"
+          accessibilityLabel="Loading your order history…"
+        >
+          <View style={styles.section}>
+            <View style={styles.sectionHeaderRow}>
+              <Skeleton width={150} height={16} color={T.cardBorder} />
+              <Skeleton width={120} height={10} color={T.cardBorder} />
+            </View>
+            <View style={[styles.hList, styles.skeletonRow]}>
+              {SKELETON_CARDS.map((i) => (
+                <View key={i} style={[styles.card, styles.skeletonCard]}>
+                  <View style={styles.imageWrap} />
+                  <View style={styles.cardBody}>
+                    <Skeleton width={40} height={10} color={T.cardBorder} />
+                    <Skeleton width="100%" height={12} color={T.cardBorder} />
+                    <Skeleton width="70%" height={12} color={T.cardBorder} />
+                    <View style={styles.priceRow}>
+                      <Skeleton width={44} height={14} color={T.cardBorder} />
+                      <Skeleton width={52} height={30} radius={8} color={T.cardBorder} />
+                    </View>
+                  </View>
+                </View>
+              ))}
+            </View>
+          </View>
+          <View style={styles.section}>
+            <View style={styles.sectionHeaderRow}>
+              <Skeleton width={200} height={16} color={T.cardBorder} />
+              <Skeleton width={80} height={10} color={T.cardBorder} />
+            </View>
+            <View style={[styles.hList, styles.skeletonRow]}>
+              {SKELETON_CHIPS.map((i) => (
+                <View key={i} style={styles.chip}>
+                  <Skeleton width={96} height={80} radius={14} color={T.cardBorder} />
+                  <Skeleton width={64} height={12} color={T.cardBorder} />
+                  <Skeleton width={40} height={10} color={T.cardBorder} />
+                </View>
+              ))}
+            </View>
+          </View>
         </View>
-      </SafeAreaView>
+      </Screen>
     );
   }
 
   if (!loading && (orders?.length === 0 || displayItems.length === 0)) {
     return (
-      <SafeAreaView style={styles.safe} edges={["top"]}>
+      <Screen bg={T.bg} edges={["top"]}>
         <Header />
         <View style={styles.emptyWrap}>
-          <View style={styles.emptyIconWrap}>
-            <MaterialCommunityIcons name="basket-outline" size={36} color={T.green} />
-          </View>
+          <IconWrap
+            size={72}
+            circle
+            bg={T.greenXLight}
+            icon="basket-outline"
+            iconSize={36}
+            iconColor={T.green}
+            style={styles.emptyIconWrap}
+          />
           <Text style={styles.emptyTitle}>No past orders yet</Text>
           <Text style={styles.emptyDesc}>
             Place your first order and come back here to reorder in a tap.
           </Text>
-          <TouchableOpacity
-            style={styles.emptyBtn}
+          <PrimaryButton
+            label="Start shopping"
             onPress={() => router.replace("/(tabs)/home" as any)}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.emptyBtnText}>Start shopping</Text>
-          </TouchableOpacity>
+            fullWidth={false}
+            shadow
+            style={styles.emptyBtn}
+            textStyle={styles.emptyBtnText}
+          />
         </View>
-      </SafeAreaView>
+      </Screen>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top"]}>
+    <Screen bg={T.bg} edges={["top"]}>
       <Header />
 
       <ScrollView
@@ -660,7 +758,8 @@ export default function OrderAgainScreen() {
             <TouchableOpacity
               style={styles.loadMoreBtn}
               onPress={() => setGridVisibleCount((c) => c + GRID_PAGE_SIZE)}
-              activeOpacity={0.8}
+              activeOpacity={opacity.pressCta}
+              accessibilityRole="button"
             >
               <Text style={styles.loadMoreText}>
                 Load More ({displayItems.length - gridVisibleCount} remaining)
@@ -671,108 +770,88 @@ export default function OrderAgainScreen() {
 
         {/* Bottom stamp */}
         <View style={styles.endRow}>
-          <MaterialCommunityIcons name="history" size={13} color={T.barkLight} />
+          <MaterialCommunityIcons name="history" size={14} color={T.barkLight} />
           <Text style={styles.endText}>That&apos;s everything you&apos;ve ordered</Text>
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 // ─── Header ──────────────────────────────────────────────────────────────────
 const Header = React.memo(function Header() {
   return (
-    <LinearGradient
-      colors={[T.white, "#F0F9F4"]}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={styles.header}
-    >
+    <View style={styles.header}>
       <View>
-        <Text style={styles.headerTitle}>Order Again</Text>
+        <Text style={styles.headerTitle} accessibilityRole="header">Order Again</Text>
         <Text style={styles.headerSub}>Your favourites, one tap away</Text>
       </View>
-      <View style={styles.headerBadge}>
-        <MaterialCommunityIcons name="history" size={20} color={T.green} />
-      </View>
-    </LinearGradient>
+      <IconWrap size={40} radius={12} bg={T.greenXLight} icon="history" iconSize={20} iconColor={T.green} />
+    </View>
   );
 });
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: T.bg },
-
   loadMoreBtn: {
     alignSelf: "center",
-    marginTop: 14,
+    marginTop: 16,
+    minHeight: 44,
+    justifyContent: "center",
     paddingVertical: 12,
     paddingHorizontal: 28,
-    borderRadius: 999,
+    borderRadius: 14,
     borderWidth: 1.5,
     borderColor: T.green,
   },
-  loadMoreText: { color: T.green, fontWeight: "700", fontSize: 13 },
+  loadMoreText: { color: T.green, fontFamily: "PlusJakartaSans_700Bold", fontSize: 13 },
 
-  // Header
+  // Header (shared tab-header spec with categories.tsx)
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 14,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 12,
+    backgroundColor: T.white,
     borderBottomWidth: 1,
     borderBottomColor: T.cardBorder,
   },
-  headerTitle: { fontSize: 22, fontWeight: "900", color: T.bark, letterSpacing: -0.4 },
-  headerSub: { fontSize: 13, color: T.barkLight, fontWeight: "500", marginTop: 2 },
-  headerBadge: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    backgroundColor: T.greenXLight,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "rgba(45,122,79,0.15)",
-  },
+  headerTitle: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 22, color: T.bark, letterSpacing: -0.4 },
+  headerSub: { fontFamily: "PlusJakartaSans_500Medium", fontSize: 12, color: T.barkLight, marginTop: 2 },
 
   // Scroll
   scroll: { paddingBottom: 140 },
 
-  // Empty / loading
+  // Loading skeleton — mirrors the first two section bands
+  skeletonWrap: { flex: 1, overflow: "hidden" },
+  skeletonRow: { flexDirection: "row" },
+  skeletonCard: { width: 148 },
+
+  // Empty / signed-out
   emptyWrap: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 40,
-    gap: 10,
+    gap: 12,
   },
   emptyIconWrap: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: T.greenXLight,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 4,
+    borderWidth: 1.5,
+    borderColor: T.greenBorder,
   },
-  emptyTitle: { fontSize: 18, fontWeight: "800", color: T.bark, letterSpacing: -0.2 },
-  emptyDesc: { fontSize: 14, color: T.barkLight, textAlign: "center", lineHeight: 21 },
+  emptyTitle: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 18, color: T.bark, letterSpacing: -0.2 },
+  emptyDesc: { fontFamily: "PlusJakartaSans_400Regular", fontSize: 14, color: T.barkLight, textAlign: "center", lineHeight: 21 },
   emptyBtn: {
-    marginTop: 8,
     paddingHorizontal: 28,
-    paddingVertical: 13,
-    borderRadius: 14,
+    paddingVertical: 14,
     backgroundColor: T.green,
     shadowColor: T.green,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.28,
-    shadowRadius: 8,
-    elevation: 6,
+    shadowOpacity: 0.18,
+    elevation: 3,
   },
-  emptyBtnText: { color: T.white, fontWeight: "800", fontSize: 14 },
+  emptyBtnText: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 14 },
 
   // Error
   errorBanner: {
@@ -780,12 +859,13 @@ const styles = StyleSheet.create({
     gap: 8,
     alignItems: "center",
     marginHorizontal: 16,
-    marginTop: 14,
+    marginTop: 12,
+    marginBottom: 4,
     padding: 12,
     borderRadius: 12,
     backgroundColor: C.dangerLight,
   },
-  errorText: { color: C.danger, flex: 1, fontSize: 13, fontWeight: "600" },
+  errorText: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.danger, flex: 1, fontSize: 13 },
 
   // Section
   section: {
@@ -797,34 +877,33 @@ const styles = StyleSheet.create({
   },
   sectionHeaderRow: {
     paddingHorizontal: 16,
-    marginBottom: 14,
-    gap: 3,
+    marginBottom: 16,
+    gap: 4,
   },
-  sectionTitle: {
+  sectionTitle: { fontFamily: "PlusJakartaSans_800ExtraBold",
     fontSize: 17,
-    fontWeight: "900",
     color: T.bark,
     letterSpacing: -0.3,
   },
-  sectionSubtitle: {
+  sectionSubtitle: { fontFamily: "PlusJakartaSans_500Medium",
     fontSize: 12,
     color: T.barkLight,
-    fontWeight: "500",
   },
 
   // Horizontal list
   hList: {
     paddingHorizontal: 16,
-    paddingBottom: 14,
-    gap: 10,
+    paddingBottom: 16,
+    gap: 12,
   },
 
   // Category chips
   chip: {
     width: 100,
     alignItems: "center",
-    gap: 5,
+    gap: 4,
   },
+  chipPressed: { opacity: opacity.pressCard, transform: [{ scale: 0.97 }] },
   chipImgWrap: {
     width: 96,
     height: 80,
@@ -833,7 +912,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
-    padding: 6,
+    padding: 8,
     position: "relative",
   },
   chipImgRow: {
@@ -853,22 +932,22 @@ const styles = StyleSheet.create({
     bottom: 4,
     right: 4,
     paddingHorizontal: 6,
-    paddingVertical: 2,
+    paddingVertical: 3,
     borderRadius: 8,
+    borderWidth: 1,
+    borderColor: T.cardBorder,
     backgroundColor: "rgba(255,255,255,0.9)",
   },
-  chipBadgeText: { fontSize: 9, fontWeight: "900", color: T.green },
-  chipLabel: {
-    fontSize: 11.5,
+  chipBadgeText: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 10, color: T.green },
+  chipLabel: { fontFamily: "PlusJakartaSans_700Bold",
+    fontSize: 12,
     color: T.bark,
-    fontWeight: "700",
     textAlign: "center",
-    lineHeight: 14,
+    lineHeight: 16,
   },
-  chipCount: {
+  chipCount: { fontFamily: "PlusJakartaSans_600SemiBold",
     fontSize: 10,
     color: T.barkLight,
-    fontWeight: "600",
   },
 
   // Product card
@@ -884,9 +963,14 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 2,
   },
+  pressFill: { flex: 1 },
+  pressed: { opacity: 0.92 },
   imageWrap: {
     height: 120,
-    backgroundColor: T.white,
+    backgroundColor: T.bg,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: T.cardBorder,
     alignItems: "center",
     justifyContent: "center",
     position: "relative",
@@ -894,21 +978,19 @@ const styles = StyleSheet.create({
   cardImage: { width: "100%", height: "100%" },
   discountBadge: {
     position: "absolute",
-    top: 0,
-    left: 0,
-    backgroundColor: T.green,
-    paddingHorizontal: 7,
+    top: 8,
+    left: 8,
+    backgroundColor: T.deal,
+    paddingHorizontal: 6,
     paddingVertical: 3,
-    borderBottomRightRadius: 8,
-    borderTopLeftRadius: 14,
+    borderRadius: 6,
   },
-  discountBadgeText: { color: T.white, fontSize: 9.5, fontWeight: "900", letterSpacing: 0.2 },
-  cardBody: { padding: 9, gap: 3 },
-  unitText: { fontSize: 10, color: T.barkLight, fontWeight: "700" },
-  nameText: {
+  discountBadgeText: { fontFamily: "PlusJakartaSans_800ExtraBold", color: T.white, fontSize: 10, letterSpacing: 0.2 },
+  cardBody: { padding: 10, gap: 4 },
+  unitText: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 10, color: T.barkLight },
+  nameText: { fontFamily: "PlusJakartaSans_700Bold",
     fontSize: 12,
     color: T.bark,
-    fontWeight: "700",
     lineHeight: 15,
     minHeight: 30,
   },
@@ -918,8 +1000,8 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     marginTop: 4,
   },
-  priceText: { fontSize: 13, color: T.bark, fontWeight: "900", letterSpacing: -0.3 },
-  oldPriceText: {
+  priceText: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 13, color: T.bark, letterSpacing: -0.3 },
+  oldPriceText: { fontFamily: "PlusJakartaSans_300Light",
     fontSize: 10,
     color: T.barkLight,
     textDecorationLine: "line-through",
@@ -927,29 +1009,29 @@ const styles = StyleSheet.create({
   },
   addBtn: {
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 8,
     borderRadius: 8,
     backgroundColor: T.greenXLight,
     borderWidth: 1.5,
     borderColor: T.green,
-    minWidth: 46,
+    minWidth: 52,
     alignItems: "center",
   },
-  addBtnText: { fontSize: 11, color: T.green, fontWeight: "900", letterSpacing: 0.8 },
+  addBtnText: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 11, color: T.green, letterSpacing: 0.8 },
   findBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 3,
     paddingHorizontal: 8,
-    paddingVertical: 6,
+    paddingVertical: 8,
     borderRadius: 8,
     backgroundColor: T.greenXLight,
     borderWidth: 1.5,
     borderColor: T.green,
-    minWidth: 46,
+    minWidth: 52,
     justifyContent: "center",
   },
-  findBtnText: { fontSize: 11, color: T.green, fontWeight: "900", letterSpacing: 0.5 },
+  findBtnText: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 11, color: T.green, letterSpacing: 0.5 },
   qtyBox: {
     flexDirection: "row",
     alignItems: "center",
@@ -957,17 +1039,17 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: 2,
     paddingVertical: 2,
-    minWidth: 68,
+    minWidth: 76,
     justifyContent: "space-between",
   },
   qtyBtn: {
-    width: 22,
-    height: 22,
+    width: 28,
+    height: 28,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 6,
+    borderRadius: 8,
   },
-  qtyVal: { color: T.white, fontSize: 12, fontWeight: "900", minWidth: 14, textAlign: "center" },
+  qtyVal: { fontFamily: "PlusJakartaSans_800ExtraBold", color: T.white, fontSize: 12, minWidth: 14, textAlign: "center" },
 
   // Grid
   grid: {
@@ -984,7 +1066,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-    paddingVertical: 20,
+    paddingVertical: 24,
   },
-  endText: { fontSize: 12, color: T.barkLight, fontWeight: "600" },
+  endText: { fontFamily: "PlusJakartaSans_600SemiBold", fontSize: 12, color: T.barkLight },
 });

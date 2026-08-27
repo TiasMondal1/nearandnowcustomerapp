@@ -3,7 +3,6 @@ import { FlashList } from "@shopify/flash-list";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import {
-    ActivityIndicator,
     Alert,
     RefreshControl,
     StyleSheet,
@@ -11,8 +10,16 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 
+import {
+    EmptyState,
+    IconButton,
+    IconWrap,
+    PrimaryButton,
+    Screen,
+    ScreenHeader,
+    Skeleton,
+} from "../components/ui";
 import { C } from "../constants/colors";
 import { useAuth } from "../context/AuthContext";
 import { apiFetch } from "../lib/apiClient";
@@ -61,16 +68,11 @@ function NotificationCard({
   return (
     <TouchableOpacity
       style={[styles.card, !item.is_read && styles.cardUnread]}
-      activeOpacity={0.7}
+      activeOpacity={0.85}
+      accessibilityRole="button"
       onPress={() => onPress(item)}
     >
-      <View style={styles.iconWrap}>
-        <MaterialCommunityIcons
-          name={TYPE_ICON[item.type] ?? "bell-outline"}
-          size={20}
-          color={C.primary}
-        />
-      </View>
+      <IconWrap size={34} bg={C.bg} icon={TYPE_ICON[item.type] ?? "bell-outline"} />
       <View style={{ flex: 1 }}>
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>
@@ -182,66 +184,76 @@ export default function NotificationsScreen() {
   const unreadCount = notifications.filter((n) => !n.is_read).length;
 
   const Header = (
-    <View style={styles.header}>
-      <TouchableOpacity
-        style={styles.backBtn}
-        onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)/home"))}
-        activeOpacity={0.7}
-      >
-        <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
-      </TouchableOpacity>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.headerTitle}>Notifications</Text>
-        {unreadCount > 0 && (
-          <Text style={styles.orderCount}>{unreadCount} unread</Text>
-        )}
-      </View>
-      {unreadCount > 0 && (
-        <TouchableOpacity onPress={markAllRead}>
-          <Text style={styles.markAllText}>Mark all read</Text>
-        </TouchableOpacity>
-      )}
-      <TouchableOpacity
-        style={styles.settingsBtn}
-        onPress={() => router.push("/notification-preferences" as any)}
-        activeOpacity={0.7}
-      >
-        <MaterialCommunityIcons name="cog-outline" size={20} color={C.text} />
-      </TouchableOpacity>
-    </View>
+    <ScreenHeader
+      size="lg"
+      title="Notifications"
+      subtitle={unreadCount > 0 ? `${unreadCount} unread` : undefined}
+      right={
+        <View style={styles.headerActions}>
+          {unreadCount > 0 && (
+            <TouchableOpacity
+              onPress={markAllRead}
+              style={styles.markAllBtn}
+              activeOpacity={0.7}
+              hitSlop={8}
+              accessibilityRole="button"
+            >
+              <Text style={styles.markAllText}>Mark all read</Text>
+            </TouchableOpacity>
+          )}
+          <IconButton
+            icon="cog-outline"
+            iconSize={20}
+            shape="circle"
+            accessibilityLabel="Notification settings"
+            onPress={() => router.push("/notification-preferences" as any)}
+          />
+        </View>
+      }
+    />
   );
 
   const PushStatusCard = pushEnabled === false ? (
     <View style={styles.pushCard}>
-      <MaterialCommunityIcons name="bell-alert-outline" size={20} color={C.primary} />
+      <IconWrap size={34} bg={C.card} icon="bell-alert-outline" />
       <View style={{ flex: 1 }}>
         <Text style={styles.pushCardTitle}>Turn on notifications</Text>
         <Text style={styles.pushCardText}>Get order updates the moment they happen.</Text>
       </View>
-      <TouchableOpacity style={styles.pushCardBtn} onPress={handleEnablePush} disabled={enablingPush} activeOpacity={0.8}>
-        {enablingPush ? (
-          <ActivityIndicator size="small" color="#fff" />
-        ) : (
-          <Text style={styles.pushCardBtnText}>Enable</Text>
-        )}
-      </TouchableOpacity>
+      <PrimaryButton
+        size="xs"
+        shadow={false}
+        label="Enable"
+        loading={enablingPush}
+        onPress={handleEnablePush}
+        style={styles.pushCardBtn}
+      />
     </View>
   ) : null;
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safe}>
+      <Screen>
         {Header}
         {PushStatusCard}
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color={C.primary} />
+        <View style={styles.skeletonList}>
+          {[0, 1, 2, 3].map((i) => (
+            <View key={i} style={styles.card}>
+              <Skeleton width={34} height={34} radius={10} />
+              <View style={{ flex: 1 }}>
+                <Skeleton width="55%" height={12} />
+                <Skeleton width="85%" height={10} style={styles.skeletonGap} />
+                <Skeleton width="30%" height={10} style={styles.skeletonGap} />
+              </View>
+            </View>
+          ))}
         </View>
-      </SafeAreaView>
+      </Screen>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <Screen>
       {Header}
       {PushStatusCard}
       <FlashList
@@ -259,124 +271,73 @@ export default function NotificationsScreen() {
         }
         ListEmptyComponent={
           loadError ? (
-            <View style={styles.empty}>
-              <MaterialCommunityIcons name="wifi-off" size={56} color={C.warning} />
-              <Text style={styles.emptyTitle}>Couldn&apos;t load notifications</Text>
-              <Text style={styles.emptyText}>Check your connection and try again.</Text>
-              <TouchableOpacity style={styles.retryBtn} onPress={() => fetchNotifications()}>
-                <Text style={styles.retryBtnText}>Try Again</Text>
-              </TouchableOpacity>
-            </View>
+            <EmptyState
+              icon="wifi-off"
+              iconColor={C.warning}
+              title="Couldn't load notifications"
+              text="Check your connection and try again."
+              action={{ label: "Try Again", variant: "warning", onPress: () => fetchNotifications() }}
+            />
           ) : (
-            <View style={styles.empty}>
-              <MaterialCommunityIcons name="bell-outline" size={56} color={C.textLight} />
-              <Text style={styles.emptyTitle}>No notifications yet</Text>
-              <Text style={styles.emptyText}>Order updates will appear here</Text>
-            </View>
+            <EmptyState
+              icon="bell-outline"
+              title="No notifications yet"
+              text="Order updates will appear here"
+            />
           )
         }
         renderItem={({ item }) => <NotificationCard item={item} onPress={handlePress} />}
       />
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
-
   pushCard: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    margin: 12,
+    marginHorizontal: 16,
+    marginTop: 12,
     padding: 14,
     borderRadius: 14,
     backgroundColor: C.primaryXLight,
     borderWidth: 1,
     borderColor: C.primaryLight,
   },
-  pushCardTitle: { fontSize: 14, fontWeight: "700", color: C.text },
-  pushCardText: { fontSize: 12, color: C.textSub, marginTop: 1 },
-  pushCardBtn: {
-    backgroundColor: C.primary,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    minWidth: 68,
-    alignItems: "center",
-  },
-  pushCardBtnText: { color: "#fff", fontSize: 13, fontWeight: "700" },
+  pushCardTitle: { fontSize: 14, fontFamily: "PlusJakartaSans_700Bold", color: C.text },
+  pushCardText: { fontFamily: "PlusJakartaSans_400Regular", fontSize: 12, color: C.textSub, marginTop: 1 },
+  pushCardBtn: { minWidth: 68, minHeight: 40, paddingHorizontal: 14 },
 
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingTop: 16,
-    paddingBottom: 14,
-    backgroundColor: C.card,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 10 },
+  markAllBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: C.primaryXLight,
   },
-  backBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: C.bgSoft,
-  },
-  headerTitle: { color: C.text, fontSize: 20, fontWeight: "900" },
-  orderCount: { color: C.textSub, fontSize: 12, fontWeight: "600", marginTop: 2 },
-  markAllText: { color: C.primary, fontSize: 13, fontWeight: "700" },
-  settingsBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: C.bgSoft,
-  },
+  markAllText: { fontFamily: "PlusJakartaSans_700Bold", color: C.primary, fontSize: 13 },
 
-  centerContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
+  skeletonList: { paddingTop: 16 },
+  skeletonGap: { marginTop: 8 },
 
-  list: { paddingTop: 14, paddingBottom: 40 },
+  list: { paddingTop: 16, paddingBottom: 40 },
 
   card: {
     flexDirection: "row",
     gap: 12,
     backgroundColor: C.card,
     marginHorizontal: 16,
-    marginBottom: 10,
+    marginBottom: 12,
     borderRadius: 14,
     padding: 14,
     borderWidth: 1,
     borderColor: C.border,
   },
   cardUnread: { backgroundColor: C.bgSoft },
-  iconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: C.bg,
-    alignItems: "center",
-    justifyContent: "center",
-  },
   cardHeader: { flexDirection: "row", alignItems: "center", gap: 6 },
-  cardTitle: { color: C.text, fontWeight: "800", fontSize: 14, flexShrink: 1 },
+  cardTitle: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 14, flexShrink: 1 },
   dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: C.primary },
-  cardMessage: { color: C.textSub, fontSize: 13, marginTop: 3 },
-  cardTime: { color: C.textLight, fontSize: 11, marginTop: 6 },
-
-  empty: { marginTop: 80, alignItems: "center", gap: 10, padding: 32 },
-  emptyTitle: { color: C.text, fontSize: 16, fontWeight: "800" },
-  emptyText: { color: C.textSub, fontSize: 14, textAlign: "center" },
-  retryBtn: {
-    marginTop: 8,
-    backgroundColor: C.warning,
-    borderRadius: 10,
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-  },
-  retryBtnText: { color: "#fff", fontWeight: "700" },
+  cardMessage: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.textSub, fontSize: 13, marginTop: 4 },
+  cardTime: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.textLight, fontSize: 11, marginTop: 8 },
 });

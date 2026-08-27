@@ -27,5 +27,13 @@ export const C = {
   orange: '#f97316',
   orangeLight: '#ffedd5',
 
+  // Deal/discount accent (terracotta) — the ONLY hue besides the greens that
+  // carries brand meaning. Use SPARINGLY and only for commercial-benefit
+  // signals: % -off badges, "You save ₹X" lines, coupon tags. Never for
+  // errors (danger), warnings (warning) or success states.
+  deal: '#ea580c',      // badge/chip backgrounds with white text
+  dealDark: '#c2410c',  // deal-colored TEXT on white/light backgrounds (AA contrast)
+  dealLight: '#ffedd5', // tinted background behind dealDark text
+
   shadow: '#000',
 };

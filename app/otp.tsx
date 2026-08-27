@@ -1,7 +1,6 @@
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
-    ActivityIndicator,
     Alert,
     Image,
     KeyboardAvoidingView,
@@ -12,11 +11,16 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 
+import { PrimaryButton, Screen } from "../components/ui";
 import { C } from "../constants/colors";
 import { useAuth } from "../context/AuthContext";
 import { sendOTP } from "../lib/authService";
+
+// Text-link hit areas. Top slop is kept smaller than the gap to the element
+// above so the extended target never sits over the OTP boxes / Verify button
+// (a later sibling's hitSlop wins over an earlier sibling's frame).
+const LINK_HIT_SLOP = { top: 8, bottom: 12, left: 16, right: 16 };
 
 export default function OtpScreen() {
   const params = useLocalSearchParams();
@@ -154,7 +158,7 @@ export default function OtpScreen() {
   const code = digits.join("");
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <Screen bg={C.card}>
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -172,7 +176,7 @@ export default function OtpScreen() {
 
           <View style={styles.header}>
             <Text style={styles.pageName}>OTP Verification</Text>
-            <Text style={styles.title}>Enter the code</Text>
+            <Text style={styles.title} accessibilityRole="header">Enter the code</Text>
             <Text style={styles.subtitle}>
               We sent a 6-digit code to {phone || "your number"}.
             </Text>
@@ -201,6 +205,7 @@ export default function OtpScreen() {
                     textContentType="oneTimeCode"
                     autoComplete={idx === 0 ? "sms-otp" : "off"}
                     importantForAutofill={idx === 0 ? "yes" : "no"}
+                    accessibilityLabel={`Digit ${idx + 1} of 6`}
                   />
                 );
               })}
@@ -208,17 +213,21 @@ export default function OtpScreen() {
 
             <View style={styles.infoRow}>
               {secondsLeft > 0 ? (
-                <Text style={styles.timerText}>
+                <Text style={styles.timerText} accessibilityLiveRegion="polite">
                   Didn&apos;t receive it? Resend in {formatTimer(secondsLeft)}
                 </Text>
               ) : (
                 <TouchableOpacity
                   onPress={handleResend}
-                  activeOpacity={0.8}
+                  activeOpacity={0.7}
                   disabled={resending}
+                  hitSlop={LINK_HIT_SLOP}
+                  style={styles.linkBtn}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: resending, busy: resending }}
                 >
                   <Text style={styles.resendText}>
-                    {resending ? "Resending..." : "Resend code"}
+                    {resending ? "Resending…" : "Resend code"}
                   </Text>
                 </TouchableOpacity>
               )}
@@ -226,37 +235,33 @@ export default function OtpScreen() {
           </View>
 
           <View style={styles.bottomSection}>
-            <TouchableOpacity
-              activeOpacity={code.length === 6 && !loading ? 0.85 : 1}
+            <PrimaryButton
+              label="Verify"
               onPress={() => handleVerify(code)}
               disabled={code.length !== 6 || loading}
-              style={[
-                styles.button,
-                (code.length !== 6 || loading) && styles.buttonDisabled,
-              ]}
-            >
-              {loading ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <Text style={styles.buttonText}>Verify</Text>
-              )}
-            </TouchableOpacity>
+              loading={loading}
+              shadow
+              style={(code.length !== 6 || loading) && styles.ctaDisabled}
+              textStyle={styles.ctaText}
+            />
 
             <TouchableOpacity
               style={styles.backRow}
               onPress={() => router.back()}
+              activeOpacity={0.7}
+              hitSlop={LINK_HIT_SLOP}
+              accessibilityRole="button"
             >
               <Text style={styles.backText}>Use a different number</Text>
             </TouchableOpacity>
           </View>
         </View>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: "#FFFFFF" },
   flex: { flex: 1 },
   container: {
     flex: 1,
@@ -267,58 +272,53 @@ const styles = StyleSheet.create({
   },
   logoSection: { alignItems: "center", paddingTop: 4 },
   logo: { width: 160, height: 145 },
-  header: { gap: 6 },
+  header: { gap: 8 },
   pageName: {
     fontSize: 11,
-    color: "#6b7280",
+    color: C.textSub,
     textTransform: "uppercase",
     letterSpacing: 1.4,
-    fontWeight: "600",
+    fontFamily: "PlusJakartaSans_600SemiBold",
   },
-  title: { fontSize: 28, fontWeight: "700", color: "#1f2937", letterSpacing: 0.5 },
-  subtitle: { fontSize: 14, color: "#6b7280" },
+  title: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 28, color: C.text, letterSpacing: -0.3 },
+  subtitle: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 14, color: C.textSub },
   otpSection: { alignItems: "center" },
   otpBoxesWrapper: {
     flexDirection: "row",
     justifyContent: "space-between",
+    gap: 8,
     width: "100%",
     marginTop: 32,
     marginBottom: 16,
   },
-  otpBox: {
-    width: 48,
+  otpBox: { fontFamily: "PlusJakartaSans_600SemiBold",
+    flex: 1,
+    maxWidth: 52,
     height: 56,
     borderRadius: 12,
     borderWidth: 2,
-    borderColor: "#e5e7eb",
-    backgroundColor: "#ffffff",
+    borderColor: C.border,
+    backgroundColor: C.card,
     textAlign: "center",
     fontSize: 20,
-    fontWeight: "600",
-    color: "#1f2937",
+    color: C.text,
   },
   otpBoxFocused: {
     borderColor: C.primary,
     shadowColor: C.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.18,
+    shadowRadius: 6,
+    elevation: 2,
   },
   otpBoxFilled: { borderColor: C.primary, backgroundColor: C.primaryXLight },
-  infoRow: { marginTop: 8 },
-  timerText: { fontSize: 12, color: "#6b7280" },
-  resendText: { fontSize: 13, color: C.primary, fontWeight: "600" },
+  infoRow: { marginTop: 8, minHeight: 24, alignItems: "center", justifyContent: "center" },
+  timerText: { fontFamily: "PlusJakartaSans_600SemiBold", fontSize: 13, color: C.textSub },
+  linkBtn: { paddingVertical: 4 },
+  resendText: { fontFamily: "PlusJakartaSans_600SemiBold", fontSize: 13, color: C.primary },
   bottomSection: { gap: 12 },
-  button: {
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: C.primary,
-  },
-  buttonDisabled: { opacity: 0.45 },
-  buttonText: { fontSize: 16, fontWeight: "600", color: "#FFFFFF" },
-  backRow: { alignItems: "center", marginTop: 4 },
-  backText: { fontSize: 12, color: "#6b7280" },
+  ctaDisabled: { shadowOpacity: 0, elevation: 0 },
+  ctaText: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 16 },
+  backRow: { alignItems: "center", marginTop: 4, paddingVertical: 8 },
+  backText: { fontFamily: "PlusJakartaSans_600SemiBold", fontSize: 13, color: C.textSub },
 });

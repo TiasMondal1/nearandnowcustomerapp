@@ -9,10 +9,19 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 
+import {
+    Card,
+    IconWrap,
+    Screen,
+    ScreenHeader,
+    Section,
+    SectionLabel,
+    Skeleton,
+} from "../../components/ui";
 import { C } from "../../constants/colors";
 import { calcOrderTotal } from "../../constants/fees";
+import { text } from "../../constants/ui";
 import { useAuth } from "../../context/AuthContext";
 import { useCart } from "../../context/CartContext";
 import {
@@ -62,7 +71,7 @@ const UPI_APPS: RailOption[] = [
     subLabel: "Pay via Google Pay UPI",
     icon: "cellphone-wireless",
     logoKey: "gpay",
-    iconBg: "#ffffff",
+    iconBg: C.card,
   },
   {
     key: "phonepe",
@@ -82,7 +91,7 @@ const UPI_APPS: RailOption[] = [
     subLabel: "Pay via Paytm UPI",
     icon: "cellphone-wireless",
     logoKey: "paytm",
-    iconBg: "#ffffff",
+    iconBg: C.card,
   },
   {
     key: "cred",
@@ -92,7 +101,7 @@ const UPI_APPS: RailOption[] = [
     subLabel: "Pay via CRED",
     icon: "cellphone-wireless",
     logoKey: "cred",
-    iconBg: "#ffffff",
+    iconBg: C.card,
   },
   {
     key: "bhim",
@@ -102,7 +111,7 @@ const UPI_APPS: RailOption[] = [
     subLabel: "Pay via BHIM",
     icon: "cellphone-wireless",
     logoKey: "bhim",
-    iconBg: "#ffffff",
+    iconBg: C.card,
   },
   {
     key: "upi-other",
@@ -112,7 +121,7 @@ const UPI_APPS: RailOption[] = [
     subLabel: "Any UPI ID or UPI app",
     icon: "cellphone-wireless",
     logoKey: "upi",
-    iconBg: "#ffffff",
+    iconBg: C.card,
   },
 ];
 
@@ -158,6 +167,9 @@ const WALLET_OPTION: RailOption = {
   iconColor: "#6d28d9",
   iconBg: "#ede9fe",
 };
+
+/** Warm skeleton gray shared with home.tsx (not a C token). */
+const SKELETON_COLOR = "#EFEDE7";
 
 export default function PaymentOptionsScreen() {
   const { items, discount } = useCart();
@@ -223,6 +235,11 @@ export default function PaymentOptionsScreen() {
 
   const walletInsufficient = walletBalance != null && walletBalance < finalPayable;
   const isWalletSelected = current.mode === "wallet";
+  // Same expression as the wallet row's `disabled` prop; drives the a11y
+  // state and the dimmed look (which stays full-opacity while loading).
+  const walletRowDisabled =
+    loadingWalletBalance || walletBalance == null || walletInsufficient;
+  const walletRowDimmed = walletRowDisabled && !loadingWalletBalance;
 
   useEffect(() => {
     // Feature off, not logged in, or we already know the answer → nothing to
@@ -312,44 +329,26 @@ export default function PaymentOptionsScreen() {
     !!current.tokenId && current.tokenId === m.tokenId;
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top"]}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => router.back()}
-          activeOpacity={0.7}
-        >
-          <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
-        </TouchableOpacity>
-        <View style={{ flex: 1, marginLeft: 8 }}>
-          <Text style={styles.headerTitle}>Payment Options</Text>
-          <Text style={styles.headerSub}>
-            {totalItems} {totalItems === 1 ? "item" : "items"}. Total: ₹
-            {finalPayable.toFixed(0)}
-          </Text>
-        </View>
-      </View>
+    <Screen edges={["top"]} bg="#f0f0f5">
+      {/* Header — left-aligned title with the item count + total beneath */}
+      <ScreenHeader
+        title="Payment Options"
+        subtitle={`${totalItems} ${totalItems === 1 ? "item" : "items"}. Total: ₹${finalPayable.toFixed(0)}`}
+        align="left"
+      />
 
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 40 }}
+        contentContainerStyle={styles.scrollContent}
       >
         {/* Preferred Payment — saved Razorpay tokens (empty on first visit) */}
-        <Text style={styles.sectionTitle}>Preferred Payment</Text>
-        <View style={styles.card}>
+        <Section title="Preferred Payment" style={styles.section} cardStyle={styles.sectionCard}>
           {loadingSaved ? (
             <SavedMethodsSkeleton />
           ) : savedMethods.length === 0 ? (
             <View style={styles.emptySaved}>
-              <View style={styles.emptySavedIconWrap}>
-                <MaterialCommunityIcons
-                  name="shield-lock-outline"
-                  size={22}
-                  color={C.primary}
-                />
-              </View>
-              <View style={{ flex: 1 }}>
+              <IconWrap size={40} radius={10} icon="shield-lock-outline" iconSize={22} />
+              <View style={styles.emptySavedText}>
                 <Text style={styles.emptySavedTitle}>
                   No saved payment methods yet
                 </Text>
@@ -372,25 +371,30 @@ export default function PaymentOptionsScreen() {
               />
             ))
           )}
-        </View>
+        </Section>
 
         {/* Near & Now Wallet — real stored-value balance, separate from the
             "Wallets" rail below (which is Razorpay's third-party wallet
             aggregator — PhonePe/Amazon Pay/Paytm — not our own balance). */}
-        <Text style={styles.sectionTitle}>Near & Now Wallet</Text>
-        <View style={styles.card}>
+        <Section title="Near & Now Wallet" style={styles.section} cardStyle={styles.sectionCard}>
           <TouchableOpacity
             style={styles.row}
             activeOpacity={0.7}
             onPress={handlePickWallet}
             disabled={loadingWalletBalance || walletBalance == null || walletInsufficient}
+            accessibilityRole="radio"
+            accessibilityState={{
+              selected: isWalletSelected,
+              checked: isWalletSelected,
+              disabled: walletRowDisabled,
+            }}
           >
-            <View style={[styles.rowIcon, { backgroundColor: "#EAF6EE" }]}>
+            <View style={[styles.rowIcon, styles.walletIcon, walletRowDimmed && styles.dimmed]}>
               <MaterialCommunityIcons name="wallet-outline" size={20} color="#2D7A4F" />
             </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.rowTitle}>Near & Now Wallet</Text>
-              <Text style={styles.rowSub}>
+            <View style={[styles.rowText, walletRowDimmed && styles.dimmed]}>
+              <Text style={styles.rowTitle} numberOfLines={1}>Near & Now Wallet</Text>
+              <Text style={styles.rowSub} numberOfLines={2}>
                 {loadingWalletBalance
                   ? "Loading balance…"
                   : walletBalance == null
@@ -405,77 +409,75 @@ export default function PaymentOptionsScreen() {
               pointerEvents="none"
             >
               {isWalletSelected ? (
-                <MaterialCommunityIcons name="check" size={14} color="#fff" />
+                <MaterialCommunityIcons name="check" size={14} color={C.card} />
               ) : null}
             </View>
           </TouchableOpacity>
-        </View>
+        </Section>
 
-        {/* UPI apps */}
-        <View style={styles.upiHeaderRow}>
-          <View style={styles.upiBadge}>
-            <Text style={styles.upiBadgeText}>UPI</Text>
+        {/* UPI apps — hand-rolled section so the label can carry the UPI badge */}
+        <View style={styles.upiSection}>
+          <View style={styles.upiHeaderRow}>
+            <View style={styles.upiBadge}>
+              <Text style={styles.upiBadgeText}>UPI</Text>
+            </View>
+            <SectionLabel style={styles.sectionLabelInline}>Pay by any UPI App</SectionLabel>
           </View>
-          <Text style={styles.sectionTitleInline}>Pay by any UPI App</Text>
-        </View>
-        <View style={styles.card}>
-          {UPI_APPS.map((opt, i) => (
-            <RailRow
-              key={opt.key}
-              opt={opt}
-              selected={isSelectedRail(opt)}
-              onPress={() => handlePickRail(opt)}
-              divider={i < UPI_APPS.length - 1}
-            />
-          ))}
+          <Card padded={false} borderColor={C.borderSoft}>
+            {UPI_APPS.map((opt, i) => (
+              <RailRow
+                key={opt.key}
+                opt={opt}
+                selected={isSelectedRail(opt)}
+                onPress={() => handlePickRail(opt)}
+                divider={i < UPI_APPS.length - 1}
+              />
+            ))}
+          </Card>
         </View>
 
         {/* COD */}
-        <Text style={styles.sectionTitle}>Cash on Delivery</Text>
-        <View style={styles.card}>
+        <Section title="Cash on Delivery" style={styles.section} cardStyle={styles.sectionCard}>
           <RailRow
             opt={COD_OPTION}
             selected={isSelectedRail(COD_OPTION)}
             onPress={() => handlePickRail(COD_OPTION)}
           />
-        </View>
+        </Section>
 
         {/* Cards */}
-        <Text style={styles.sectionTitle}>Credit & Debit Cards</Text>
-        <View style={styles.card}>
+        <Section title="Credit & Debit Cards" style={styles.section} cardStyle={styles.sectionCard}>
           <RailRow
             opt={CARD_OPTION}
             selected={isSelectedRail(CARD_OPTION)}
             onPress={() => handlePickRail(CARD_OPTION)}
           />
-        </View>
+        </Section>
 
         {/* Netbanking */}
-        <Text style={styles.sectionTitle}>Netbanking</Text>
-        <View style={styles.card}>
+        <Section title="Netbanking" style={styles.section} cardStyle={styles.sectionCard}>
           <RailRow
             opt={NETBANKING_OPTION}
             selected={isSelectedRail(NETBANKING_OPTION)}
             onPress={() => handlePickRail(NETBANKING_OPTION)}
           />
-        </View>
+        </Section>
 
         {/* More — third-party wallets via Razorpay */}
-        <Text style={styles.sectionTitle}>More Payment Options</Text>
-        <View style={styles.card}>
+        <Section title="More Payment Options" style={styles.section} cardStyle={styles.sectionCard}>
           <RailRow
             opt={WALLET_OPTION}
             selected={isSelectedRail(WALLET_OPTION)}
             onPress={() => handlePickRail(WALLET_OPTION)}
           />
-        </View>
+        </Section>
 
         <Text style={styles.footerNote}>
           All online payments are handled securely by Razorpay. We never see
           your card or UPI credentials.
         </Text>
       </ScrollView>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
@@ -495,17 +497,14 @@ function SavedMethodsSkeleton() {
       {[0, 1].map((i) => (
         <View
           key={i}
-          style={[
-            styles.row,
-            i === 0 ? { borderBottomWidth: 1, borderBottomColor: C.borderSoft } : null,
-          ]}
+          style={[styles.row, i === 0 && styles.skeletonRowDivider]}
         >
-          <View style={[styles.rowIcon, styles.skeletonBlock]} />
-          <View style={{ flex: 1, gap: 8 }}>
-            <View style={[styles.skeletonLine, { width: "55%", height: 12 }]} />
-            <View style={[styles.skeletonLine, { width: "80%", height: 10 }]} />
+          <Skeleton width={40} height={40} radius={10} color={SKELETON_COLOR} animated={false} />
+          <View style={styles.skeletonLines}>
+            <Skeleton width="55%" height={12} color={SKELETON_COLOR} animated={false} />
+            <Skeleton width="80%" height={10} color={SKELETON_COLOR} animated={false} />
           </View>
-          <View style={[styles.radio, styles.skeletonBlock, { borderWidth: 0 }]} />
+          <Skeleton width={22} height={22} radius={11} color={SKELETON_COLOR} animated={false} />
         </View>
       ))}
     </View>
@@ -530,6 +529,8 @@ function RailRow({
         style={styles.row}
         activeOpacity={0.7}
         onPress={onPress}
+        accessibilityRole="radio"
+        accessibilityState={{ selected, checked: selected }}
       >
         <View
           style={[
@@ -543,6 +544,7 @@ function RailRow({
               source={logo}
               style={styles.rowLogo}
               contentFit="contain"
+              transition={120}
             />
           ) : (
             <MaterialCommunityIcons
@@ -552,10 +554,10 @@ function RailRow({
             />
           )}
         </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.rowTitle}>{opt.label}</Text>
+        <View style={styles.rowText}>
+          <Text style={styles.rowTitle} numberOfLines={1}>{opt.label}</Text>
           {opt.subLabel ? (
-            <Text style={styles.rowSub}>{opt.subLabel}</Text>
+            <Text style={styles.rowSub} numberOfLines={2}>{opt.subLabel}</Text>
           ) : null}
         </View>
         <View
@@ -563,7 +565,7 @@ function RailRow({
           pointerEvents="none"
         >
           {selected ? (
-            <MaterialCommunityIcons name="check" size={14} color="#fff" />
+            <MaterialCommunityIcons name="check" size={14} color={C.card} />
           ) : null}
         </View>
       </TouchableOpacity>
@@ -594,24 +596,27 @@ function SavedRow({
   return (
     <>
       <TouchableOpacity
-        style={styles.row}
+        style={[styles.row, showPayButton && styles.rowTop]}
         activeOpacity={0.7}
         onPress={onPress}
+        accessibilityRole="radio"
+        accessibilityState={{ selected, checked: selected }}
       >
         <View style={[styles.rowIcon, { backgroundColor: iconBg }]}>
           <MaterialCommunityIcons name={icon} size={20} color={iconColor} />
         </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.rowTitle}>{method.label}</Text>
+        <View style={styles.rowText}>
+          <Text style={styles.rowTitle} numberOfLines={1}>{method.label}</Text>
           {method.subLabel ? (
-            <Text style={styles.rowSub}>{method.subLabel}</Text>
+            <Text style={styles.rowSub} numberOfLines={2}>{method.subLabel}</Text>
           ) : null}
           {showPayButton && amount != null ? (
             <>
               <TouchableOpacity
                 style={styles.inlinePayBtn}
-                activeOpacity={0.85}
+                activeOpacity={0.8}
                 onPress={onPress}
+                accessibilityRole="button"
               >
                 <Text style={styles.inlinePayText}>
                   Pay ₹{amount.toFixed(0)}
@@ -624,11 +629,11 @@ function SavedRow({
           ) : null}
         </View>
         <View
-          style={[styles.radio, selected && styles.radioActive]}
+          style={[styles.radio, showPayButton && styles.radioTop, selected && styles.radioActive]}
           pointerEvents="none"
         >
           {selected ? (
-            <MaterialCommunityIcons name="check" size={14} color="#fff" />
+            <MaterialCommunityIcons name="check" size={14} color={C.card} />
           ) : null}
         </View>
       </TouchableOpacity>
@@ -640,47 +645,33 @@ function SavedRow({
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#f0f0f5" },
+  scrollContent: { paddingTop: 20, paddingBottom: 40 },
 
-  header: {
+  // Section (label + card) — the primitive supplies marginBottom 20; the
+  // label's own paddingHorizontal 2 sits it 2px inside the card edge.
+  section: { marginHorizontal: 16 },
+  // Keep the original soft card edge (a color decision left to the orchestrator).
+  sectionCard: { borderColor: C.borderSoft },
+  upiSection: { marginHorizontal: 16, marginBottom: 20 },
+  upiHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    backgroundColor: C.card,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  backBtn: {
-    width: 38,
-    height: 38,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerTitle: { color: C.text, fontSize: 17, fontWeight: "800" },
-  headerSub: { color: C.textSub, fontSize: 12, marginTop: 2 },
-
-  sectionTitle: {
-    color: C.text,
-    fontSize: 14,
-    fontWeight: "800",
-    marginTop: 18,
+    gap: 8,
     marginBottom: 8,
-    marginHorizontal: 16,
+    paddingHorizontal: 2,
   },
-  sectionTitleInline: {
-    color: C.text,
-    fontSize: 14,
-    fontWeight: "800",
+  sectionLabelInline: { marginBottom: 0, paddingHorizontal: 0 },
+  upiBadge: {
+    backgroundColor: C.warning,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 6,
   },
-
-  card: {
-    backgroundColor: C.card,
-    marginHorizontal: 12,
-    borderRadius: 16,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: C.borderSoft,
+  upiBadgeText: {
+    color: C.card,
+    fontSize: 10,
+    fontFamily: "PlusJakartaSans_800ExtraBold",
+    letterSpacing: 0.3,
   },
 
   row: {
@@ -690,10 +681,13 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     gap: 12,
   },
+  // When the inline Pay button makes the row tall, pin the tile + radio to
+  // the title line instead of floating them mid-height.
+  rowTop: { alignItems: "flex-start" },
   rowIcon: {
     width: 40,
     height: 40,
-    borderRadius: 8,
+    borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
@@ -707,13 +701,17 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
   },
-  rowTitle: { color: C.text, fontSize: 14, fontWeight: "700" },
-  rowSub: { color: C.textSub, fontSize: 12, marginTop: 2 },
+  walletIcon: { backgroundColor: "#EAF6EE" },
+  rowText: { flex: 1, flexShrink: 1 },
+  rowTitle: { ...text.rowTitle },
+  rowSub: { ...text.rowSubtitle, marginTop: 2 },
+  // 66 = row paddingHorizontal 14 + rowIcon 40 + gap 12 — keep in lockstep.
   rowDivider: {
     height: 1,
     backgroundColor: C.borderSoft,
     marginLeft: 66,
   },
+  dimmed: { opacity: 0.55 },
 
   radio: {
     width: 22,
@@ -724,6 +722,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  radioTop: { marginTop: 10 },
   radioActive: {
     backgroundColor: "#2563eb",
     borderColor: "#2563eb",
@@ -736,72 +735,41 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 16,
   },
-  emptySavedIconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 10,
-    backgroundColor: C.primaryXLight,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  emptySavedTitle: { color: C.text, fontSize: 14, fontWeight: "800" },
-  emptySavedSub: {
+  emptySavedText: { flex: 1 },
+  emptySavedTitle: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 14 },
+  emptySavedSub: { fontFamily: "PlusJakartaSans_400Regular",
     color: C.textSub,
     fontSize: 12,
     marginTop: 4,
     lineHeight: 17,
   },
 
-  skeletonBlock: {
-    backgroundColor: "#EFEDE7",
-  },
-  skeletonLine: {
-    backgroundColor: "#EFEDE7",
-    borderRadius: 4,
-  },
+  skeletonRowDivider: { borderBottomWidth: 1, borderBottomColor: C.borderSoft },
+  skeletonLines: { flex: 1, gap: 8 },
 
   inlinePayBtn: {
     marginTop: 10,
+    minHeight: 44,
     backgroundColor: "#2563eb",
-    borderRadius: 10,
-    paddingVertical: 12,
+    borderRadius: 12,
+    paddingVertical: 13,
     alignItems: "center",
+    justifyContent: "center",
   },
-  inlinePayText: { color: "#fff", fontSize: 15, fontWeight: "800" },
-  inlinePayHint: {
+  inlinePayText: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.card, fontSize: 15 },
+  inlinePayHint: { fontFamily: "PlusJakartaSans_300Light",
     color: C.textSub,
     fontSize: 11,
     marginTop: 8,
     lineHeight: 15,
   },
 
-  upiHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginTop: 18,
-    marginBottom: 8,
-    marginHorizontal: 16,
-  },
-  upiBadge: {
-    backgroundColor: "#f59e0b",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  upiBadgeText: {
-    color: "#fff",
-    fontSize: 10,
-    fontWeight: "900",
-    letterSpacing: 0.3,
-  },
-
-  footerNote: {
+  footerNote: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: C.textSub,
     fontSize: 11,
     lineHeight: 16,
     textAlign: "center",
-    marginTop: 20,
-    paddingHorizontal: 30,
+    marginTop: 4,
+    paddingHorizontal: 32,
   },
 });

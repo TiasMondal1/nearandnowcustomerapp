@@ -1,17 +1,20 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
-import {
-    ActivityIndicator,
-    FlatList,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { FlatList, StyleSheet, Text, View } from "react-native";
 
+import {
+    Badge,
+    Card,
+    Divider,
+    IconWrap,
+    PrimaryButton,
+    Screen,
+    ScreenHeader,
+    Skeleton,
+} from "../../components/ui";
 import { C } from "../../constants/colors";
+import { text } from "../../constants/ui";
 import { useCart } from "../../context/CartContext";
 import { apiFetch } from "../../lib/apiClient";
 
@@ -53,22 +56,21 @@ export default function CouponsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Coupons</Text>
-        <View style={{ width: 38 }} />
-      </View>
+    <Screen>
+      <ScreenHeader title="Coupons" />
 
       {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={C.primary} />
-        </View>
+        <CouponsSkeleton />
       ) : coupons.length === 0 ? (
         <View style={styles.center}>
-          <MaterialCommunityIcons name="ticket-percent-outline" size={56} color={C.textLight} />
+          <IconWrap
+            size={72}
+            circle
+            bg={C.bgSoft}
+            icon="ticket-percent-outline"
+            iconSize={36}
+            iconColor={C.textLight}
+          />
           <Text style={styles.emptyTitle}>No coupons available</Text>
           <Text style={styles.emptyText}>Check back later for offers</Text>
         </View>
@@ -83,27 +85,44 @@ export default function CouponsScreen() {
             const disabled = !isApplicable(item);
 
             return (
-              <View style={[styles.couponCard, applied && styles.couponCardApplied]}>
+              <Card
+                size="lg"
+                shadow="card"
+                style={[styles.couponCard, applied && styles.couponCardApplied]}
+              >
                 <View style={styles.couponTop}>
                   <View style={styles.couponTopLeft}>
-                    <View style={[styles.discountPill, applied && styles.discountPillApplied]}>
-                      <Text style={[styles.discountPillText, applied && { color: C.primary }]}>
-                        {item.discount_type === "flat"
+                    <Badge
+                      label={
+                        item.discount_type === "flat"
                           ? `₹${item.value} OFF`
-                          : `${item.value}% OFF`}
-                      </Text>
-                    </View>
-                    <Text style={styles.code}>{item.code}</Text>
+                          : `${item.value}% OFF`
+                      }
+                      bg={applied ? C.primaryLight : C.bgSoft}
+                      color={applied ? C.primary : C.text}
+                      bordered
+                      borderColor={applied ? C.primary : C.border}
+                      style={styles.discountPill}
+                      textStyle={styles.discountPillText}
+                    />
+                    <Text style={styles.code} numberOfLines={1}>{item.code}</Text>
                   </View>
                   {applied && (
-                    <View style={styles.appliedBadge}>
-                      <MaterialCommunityIcons name="check" size={12} color={C.primary} />
-                      <Text style={styles.appliedText}>APPLIED</Text>
-                    </View>
+                    <Badge
+                      label="APPLIED"
+                      tone="primary"
+                      icon="check"
+                      iconSize={12}
+                      pill
+                      bordered
+                      borderColor={C.primaryLight}
+                      style={styles.appliedBadge}
+                      textStyle={styles.appliedText}
+                    />
                   )}
                 </View>
 
-                <View style={styles.divider} />
+                <Divider spacing={0} />
 
                 <Text style={styles.desc}>{item.description}</Text>
 
@@ -119,14 +138,12 @@ export default function CouponsScreen() {
                   </View>
                 )}
 
-                <TouchableOpacity
+                <PrimaryButton
+                  size="sm"
+                  fullWidth
+                  variant={applied ? "danger" : "primary"}
                   disabled={disabled && !applied}
-                  style={[
-                    styles.actionBtn,
-                    applied && styles.removeBtnStyle,
-                    disabled && !applied && styles.disabledBtn,
-                  ]}
-                  activeOpacity={0.85}
+                  label={applied ? "Remove" : disabled ? "Not Applicable" : "Apply Coupon"}
                   onPress={() => {
                     if (applied) {
                       removeCoupon();
@@ -135,62 +152,46 @@ export default function CouponsScreen() {
                       router.back();
                     }
                   }}
-                >
-                  <Text style={[styles.actionText, applied && { color: C.danger }]}>
-                    {applied ? "Remove" : disabled ? "Not Applicable" : "Apply Coupon"}
-                  </Text>
-                </TouchableOpacity>
-              </View>
+                  style={styles.actionBtn}
+                  textStyle={styles.actionText}
+                />
+              </Card>
             );
           }}
         />
       )}
-    </SafeAreaView>
+    </Screen>
+  );
+}
+
+/** Three placeholder cards mirroring the coupon card layout while the list loads. */
+function CouponsSkeleton() {
+  return (
+    <View style={styles.list}>
+      {[0, 1, 2].map((i) => (
+        <Card key={i} size="lg" style={styles.couponCard}>
+          <View style={styles.couponTopLeft}>
+            <Skeleton width={72} height={24} radius={8} />
+            <Skeleton width="40%" height={18} />
+          </View>
+          <Divider spacing={0} />
+          <Skeleton width="90%" height={13} />
+          <Skeleton width="60%" height={13} />
+          <Skeleton height={44} radius={12} />
+        </Card>
+      ))}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12, paddingBottom: 48 },
+  emptyTitle: { ...text.emptyTitle },
+  emptyText: { ...text.emptyText },
 
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: C.card,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  backBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: C.bgSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerTitle: { color: C.text, fontSize: 18, fontWeight: "800" },
+  list: { padding: 16, paddingBottom: 32, gap: 12 },
 
-  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10 },
-  emptyTitle: { color: C.text, fontSize: 16, fontWeight: "700" },
-  emptyText: { color: C.textSub, fontSize: 14 },
-
-  list: { padding: 16, gap: 12 },
-
-  couponCard: {
-    backgroundColor: C.card,
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1.5,
-    borderColor: C.border,
-    shadowColor: C.shadow,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 2,
-    gap: 10,
-  },
+  couponCard: { gap: 12 },
   couponCardApplied: {
     borderColor: C.primary,
     backgroundColor: C.primaryXLight,
@@ -201,64 +202,27 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
   },
-  couponTopLeft: { gap: 6 },
-  discountPill: {
-    alignSelf: "flex-start",
-    backgroundColor: C.bgSoft,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: C.border,
-  },
-  discountPillApplied: {
-    backgroundColor: C.primaryLight,
-    borderColor: C.primary,
-  },
-  discountPillText: { color: C.text, fontSize: 12, fontWeight: "800" },
-  code: { color: C.text, fontSize: 18, fontWeight: "900", letterSpacing: 1.5 },
+  couponTopLeft: { flex: 1, flexShrink: 1, gap: 8, marginRight: 10 },
+  discountPill: { paddingVertical: 4 },
+  discountPillText: { fontFamily: "PlusJakartaSans_800ExtraBold" },
+  code: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 18, letterSpacing: 1.5 },
 
-  appliedBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    backgroundColor: C.primaryXLight,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: C.primaryLight,
-  },
-  appliedText: { color: C.primary, fontSize: 11, fontWeight: "800" },
+  appliedBadge: { flexShrink: 0 },
+  appliedText: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 11 },
 
-  divider: { height: 1, backgroundColor: C.border },
-
-  desc: { color: C.textSub, fontSize: 13, lineHeight: 19 },
+  desc: { ...text.bodySm },
 
   minOrderRow: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" },
-  minOrderText: { color: C.textSub, fontSize: 12 },
-  needMore: {
+  minOrderText: { ...text.rowSubtitle },
+  needMore: { fontFamily: "PlusJakartaSans_700Bold",
     color: C.warning,
     fontSize: 12,
-    fontWeight: "700",
     backgroundColor: C.warningLight,
-    paddingHorizontal: 7,
+    paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 6,
   },
 
-  actionBtn: {
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: C.primary,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  removeBtnStyle: {
-    backgroundColor: C.dangerLight,
-    borderWidth: 1,
-    borderColor: "#fca5a5",
-  },
-  disabledBtn: { opacity: 0.45 },
-  actionText: { color: "#fff", fontSize: 14, fontWeight: "800" },
+  actionBtn: { height: 44 },
+  actionText: { fontFamily: "PlusJakartaSans_800ExtraBold" },
 });

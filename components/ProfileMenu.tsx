@@ -1,4 +1,3 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React from "react";
 import {
@@ -8,12 +7,14 @@ import {
     ScrollView,
     StyleSheet,
     Text,
-    TouchableOpacity,
     View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { C } from "../constants/colors";
+import { radius, shadow } from "../constants/ui";
 import { useAuth } from "../context/AuthContext";
+import { Card, IconButton, ListRow, PrimaryButton, type IconName } from "./ui";
 
 interface ProfileMenuProps {
   visible: boolean;
@@ -22,6 +23,7 @@ interface ProfileMenuProps {
 
 export default function ProfileMenu({ visible, onClose }: ProfileMenuProps) {
   const { user, logoutUser } = useAuth();
+  const insets = useSafeAreaInsets();
 
   const handleLogout = () => {
     Alert.alert("Logout", "Are you sure you want to logout?", [
@@ -50,30 +52,41 @@ export default function ProfileMenu({ visible, onClose }: ProfileMenuProps) {
       animationType="slide"
       onRequestClose={onClose}
     >
-      <Pressable style={styles.overlay} onPress={onClose}>
-        <Pressable style={styles.menuCard} onPress={(e) => e.stopPropagation()}>
+      <Pressable style={styles.overlay} onPress={onClose} accessibilityLabel="Close menu">
+        <Pressable
+          style={[styles.menuCard, { paddingBottom: Math.max(insets.bottom, 16) + 8 }]}
+          onPress={(e) => e.stopPropagation()}
+        >
+          <View style={styles.grabber} />
           <View style={styles.header}>
             <Text style={styles.headerTitle}>Profile</Text>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
-              <MaterialCommunityIcons name="close" size={24} color={C.text} />
-            </TouchableOpacity>
+            <IconButton
+              icon="close"
+              iconSize={24}
+              size={40}
+              shape="circle"
+              accessibilityLabel="Close menu"
+              onPress={onClose}
+            />
           </View>
 
           <ScrollView showsVerticalScrollIndicator={false}>
-            <View style={styles.profileCard}>
+            <Card size="lg" bg={C.bgSoft} style={styles.profileCard}>
               <View style={styles.avatarFallback}>
                 <Text style={styles.avatarText}>
                   {user?.name?.charAt(0)?.toUpperCase() ?? "?"}
                 </Text>
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.name}>{user?.name ?? "Guest"}</Text>
-                {user?.phone ? <Text style={styles.sub}>{user.phone}</Text> : null}
-                {user?.email ? <Text style={styles.sub}>{user.email}</Text> : null}
+                <Text style={styles.name} numberOfLines={1}>{user?.name ?? "Guest"}</Text>
+                {user?.phone ? <Text style={styles.sub} numberOfLines={1}>{user.phone}</Text> : null}
+                {user?.email ? (
+                  <Text style={styles.sub} numberOfLines={1} ellipsizeMode="middle">{user.email}</Text>
+                ) : null}
               </View>
-            </View>
+            </Card>
 
-            <View style={styles.section}>
+            <Card size="lg" padded={false} style={styles.section}>
               <MenuItem
                 icon="pencil-outline"
                 title="Edit Profile"
@@ -117,12 +130,16 @@ export default function ProfileMenu({ visible, onClose }: ProfileMenuProps) {
                 onPress={() => handleNavigation("/settings/terms")}
                 isLast
               />
-            </View>
+            </Card>
 
-            <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
-              <MaterialCommunityIcons name="logout" size={20} color={C.danger} />
-              <Text style={styles.logoutText}>Logout</Text>
-            </TouchableOpacity>
+            <PrimaryButton
+              variant="danger"
+              icon="logout"
+              label="Logout"
+              onPress={handleLogout}
+              style={styles.logoutBtn}
+              textStyle={styles.logoutText}
+            />
 
             <View style={styles.footer}>
               <Text style={styles.footerBrand}>Near & Now</Text>
@@ -142,27 +159,22 @@ function MenuItem({
   onPress,
   isLast,
 }: {
-  icon: any;
+  icon: IconName;
   title: string;
   subtitle: string;
   onPress: () => void;
   isLast?: boolean;
 }) {
   return (
-    <TouchableOpacity
-      style={[styles.menuItem, !isLast && styles.menuItemBorder]}
+    <ListRow
+      size="lg"
+      icon={icon}
+      title={title}
+      subtitle={subtitle}
       onPress={onPress}
+      divider={!isLast}
       activeOpacity={0.7}
-    >
-      <View style={styles.menuIconWrap}>
-        <MaterialCommunityIcons name={icon} size={22} color={C.primary} />
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.menuTitle}>{title}</Text>
-        <Text style={styles.menuSubtitle}>{subtitle}</Text>
-      </View>
-      <MaterialCommunityIcons name="chevron-right" size={20} color={C.textLight} />
-    </TouchableOpacity>
+    />
   );
 }
 
@@ -174,50 +186,41 @@ const styles = StyleSheet.create({
   },
   menuCard: {
     backgroundColor: C.card,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
+    borderTopLeftRadius: radius.sheet,
+    borderTopRightRadius: radius.sheet,
     maxHeight: "85%",
-    paddingBottom: 40,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 20,
+    ...shadow.sheet,
+  },
+  grabber: {
+    alignSelf: "center",
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: C.border,
+    marginTop: 10,
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingTop: 20,
+    paddingHorizontal: 16,
+    paddingTop: 12,
     paddingBottom: 16,
     borderBottomWidth: 1,
     borderBottomColor: C.border,
   },
   headerTitle: {
     fontSize: 22,
-    fontWeight: "900",
+    fontFamily: "PlusJakartaSans_800ExtraBold",
     color: C.text,
   },
-  closeBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: C.bgSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
   profileCard: {
-    backgroundColor: C.bgSoft,
-    borderRadius: 16,
-    padding: 16,
     flexDirection: "row",
     gap: 14,
     alignItems: "center",
-    margin: 20,
+    marginHorizontal: 16,
+    marginTop: 16,
     marginBottom: 16,
-    borderWidth: 1,
-    borderColor: C.border,
   },
   avatarFallback: {
     width: 60,
@@ -232,66 +235,22 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 4,
   },
-  avatarText: { color: "#fff", fontSize: 24, fontWeight: "900" },
-  name: { color: C.text, fontSize: 17, fontWeight: "800" },
-  sub: { color: C.textSub, fontSize: 13, marginTop: 2 },
-  section: {
-    backgroundColor: C.card,
-    borderRadius: 16,
-    marginHorizontal: 20,
-    borderWidth: 1,
-    borderColor: C.border,
-    overflow: "hidden",
-    shadowColor: C.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  menuItem: {
-    flexDirection: "row",
-    gap: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    alignItems: "center",
-  },
-  menuItemBorder: { borderBottomWidth: 1, borderBottomColor: C.border },
-  menuIconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: C.primaryXLight,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  menuTitle: { color: C.text, fontSize: 15, fontWeight: "700" },
-  menuSubtitle: { color: C.textSub, fontSize: 13, marginTop: 2 },
+  avatarText: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.card, fontSize: 24 },
+  name: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 17 },
+  sub: { fontFamily: "PlusJakartaSans_400Regular", color: C.textSub, fontSize: 13, marginTop: 2 },
+  section: { marginHorizontal: 16 },
   logoutBtn: {
-    flexDirection: "row",
-    gap: 10,
-    marginHorizontal: 20,
+    marginHorizontal: 16,
     marginTop: 24,
     paddingVertical: 16,
-    paddingHorizontal: 24,
-    backgroundColor: C.dangerLight,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1.5,
-    borderColor: "#fca5a5",
-    shadowColor: C.danger,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    elevation: 3,
   },
-  logoutText: { color: C.danger, fontWeight: "800", fontSize: 15 },
+  logoutText: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 15 },
   footer: {
     marginTop: 28,
     marginBottom: 24,
     alignItems: "center",
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
   },
-  footerBrand: { fontSize: 16, fontWeight: "800", color: C.primary },
-  footerTagline: { fontSize: 12, color: C.textSub, marginTop: 4 },
+  footerBrand: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 16, color: C.primary },
+  footerTagline: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 12, color: C.textSub, marginTop: 4 },
 });

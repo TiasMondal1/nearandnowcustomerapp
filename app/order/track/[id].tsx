@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Animated,
+    LayoutAnimation,
     Linking,
     Platform,
     Pressable,
@@ -15,8 +16,19 @@ import {
     View,
 } from "react-native";
 import MapView, { Marker, PROVIDER_GOOGLE, Polyline, type Region } from "react-native-maps";
-import { SafeAreaView } from "react-native-safe-area-context";
 
+import {
+    Badge,
+    Card,
+    Divider,
+    EmptyState,
+    IconButton,
+    IconWrap,
+    PrimaryButton,
+    Screen,
+    ScreenHeader,
+    Skeleton,
+} from "../../../components/ui";
 import { C } from "../../../constants/colors";
 import {
     CANCELLED_STATUSES,
@@ -25,6 +37,7 @@ import {
     getStatusMeta,
     getTimelineIndex,
 } from "../../../constants/orderStatus";
+import { clipOverflow, layout, text as typo } from "../../../constants/ui";
 import { useOrderTracking } from "../../../hooks/useOrderTracking";
 import { shouldShowOTP } from "../../../lib/orderService";
 
@@ -155,6 +168,31 @@ export default function TrackOrderScreen() {
   const isDriverSignalStale =
     driverLocationAgeMs !== null && driverLocationAgeMs > STALE_DRIVER_LOCATION_MS;
 
+  // Presentational only: the "Live tracking" ring breathes outward while the
+  // rider signal is fresh. Native driver, looped, stopped on cleanup; kept
+  // well outside the MapView subtree.
+  const pulse = useMemo(() => new Animated.Value(0), []);
+  const showLivePulse = !isCancelled && status !== "order_delivered" && !isDriverSignalStale;
+  useEffect(() => {
+    if (!showLivePulse) return;
+    pulse.setValue(0);
+    const loop = Animated.loop(
+      Animated.timing(pulse, { toValue: 1, duration: 1400, useNativeDriver: true }),
+    );
+    loop.start();
+    return () => {
+      loop.stop();
+      pulse.setValue(0);
+    };
+  }, [pulse, showLivePulse]);
+  const livePulseStyle = useMemo(
+    () => ({
+      transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1.9] }) }],
+      opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0] }),
+    }),
+    [pulse],
+  );
+
   const storeLocation = data?.storeLocations?.[0];
   // Memoized on the actual coordinate values (not just [order] — a new order
   // object arrives on every poll/realtime refresh even when nothing moved),
@@ -235,30 +273,26 @@ export default function TrackOrderScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safe}>
+      <Screen>
         <Header title="Live Tracking" />
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={C.primary} />
-          <Text style={styles.muted}>Loading live tracking…</Text>
-        </View>
-      </SafeAreaView>
+        <TrackSkeleton />
+      </Screen>
     );
   }
 
   if (error || !order) {
     return (
-      <SafeAreaView style={styles.safe}>
+      <Screen>
         <Header title="Live Tracking" />
-        <View style={styles.center}>
-          <MaterialCommunityIcons name="alert-circle-outline" size={56} color={C.textLight} />
-          <Text style={styles.errorTitle}>Tracking unavailable</Text>
-          <Text style={styles.muted}>{error ?? "We couldn't find this order."}</Text>
-          <TouchableOpacity style={styles.primaryBtn} onPress={onRefresh}>
-            <MaterialCommunityIcons name="refresh" size={16} color="#fff" />
-            <Text style={styles.primaryBtnText}>Retry</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
+        <EmptyState
+          fill
+          icon="alert-circle-outline"
+          iconSize={48}
+          title="Tracking unavailable"
+          text={error ?? "We couldn't find this order."}
+          action={{ label: "Retry", icon: "refresh", onPress: onRefresh }}
+        />
+      </Screen>
     );
   }
 
@@ -273,7 +307,7 @@ export default function TrackOrderScreen() {
         }));
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <Screen>
       <Header
         title={`#${order.order_code || order.id.slice(0, 8).toUpperCase()}`}
         autoRefreshing={autoRefreshing}
@@ -289,15 +323,15 @@ export default function TrackOrderScreen() {
             colors={[C.primary]}
           />
         }
-        contentContainerStyle={{ paddingBottom: 32 }}
+        contentContainerStyle={styles.scrollContent}
       >
         {/* ─── Live status pill + ETA ───────────────────────────────────────── */}
-        <View style={styles.statusCard}>
+        <Card size="lg" style={styles.statusCard}>
           <View style={styles.liveRow}>
             {!isCancelled && status !== "order_delivered" && (
               <>
                 <View style={styles.livePulseWrap}>
-                  {!isDriverSignalStale && <View style={styles.livePulse} />}
+                  {!isDriverSignalStale && <Animated.View style={[styles.livePulse, livePulseStyle]} />}
                   <View style={[styles.liveDot, isDriverSignalStale && styles.liveDotStale]} />
                 </View>
                 <Text style={[styles.liveText, isDriverSignalStale && styles.liveTextStale]}>
@@ -308,14 +342,25 @@ export default function TrackOrderScreen() {
               </>
             )}
             {isMultiStore && (
-              <Text style={styles.multiStoreBadge}>{storeOrders.length} stores</Text>
+              <Badge
+                size="sm"
+                pill
+                label={`${storeOrders.length} stores`}
+                style={styles.multiStoreBadge}
+                textStyle={styles.multiStoreBadgeText}
+              />
             )}
           </View>
 
-          <View style={[styles.statusPill, { backgroundColor: meta.bg }]}>
-            <MaterialCommunityIcons name={meta.icon} size={18} color={meta.color} />
-            <Text style={[styles.statusPillText, { color: meta.color }]}>{meta.label}</Text>
-          </View>
+          <Badge
+            label={meta.label}
+            bg={meta.bg}
+            color={meta.color}
+            icon={meta.icon}
+            iconSize={18}
+            style={styles.statusPill}
+            textStyle={styles.statusPillText}
+          />
           <Text style={styles.statusDescription}>{meta.description}</Text>
 
           {order.estimated_delivery_time && status !== "order_delivered" && !isCancelled && (
@@ -326,9 +371,9 @@ export default function TrackOrderScreen() {
                 color={isRunningLate ? C.warning : C.textSub}
               />
               {isRunningLate ? (
-                <Text style={[styles.etaText, { color: C.warning }]}>
+                <Text style={[styles.etaText, styles.etaLate]}>
                   Running a little behind — was expected by{" "}
-                  <Text style={[styles.etaTime, { color: C.warning }]}>{formatTime(order.estimated_delivery_time)}</Text>
+                  <Text style={[styles.etaTime, styles.etaLate]}>{formatTime(order.estimated_delivery_time)}</Text>
                 </Text>
               ) : (
                 <Text style={styles.etaText}>
@@ -338,21 +383,21 @@ export default function TrackOrderScreen() {
               )}
             </View>
           )}
-        </View>
+        </Card>
 
         {/* ─── Pending at store: no stores have accepted yet ──────────────────── */}
         {noStoreAcceptedYet && (
-          <View style={styles.infoCard}>
+          <Card size="lg" style={styles.infoCard}>
             <MaterialCommunityIcons name="storefront-outline" size={22} color={C.textSub} />
             <Text style={styles.infoCardText}>
               {getStatusMeta("pending_at_store").description || "Waiting for the store to confirm your order."}
             </Text>
-          </View>
+          </Card>
         )}
 
         {/* ─── Map ──────────────────────────────────────────────────────────── */}
         {!noStoreAcceptedYet && !isCancelled && status !== "order_delivered" && mapRegion && !isMultiStore ? (
-          <View style={styles.mapWrap}>
+          <Card size="lg" padded={false} bg={C.bgSoft} style={styles.mapWrap}>
             <MapView
               ref={mapRef}
               provider={PROVIDER_GOOGLE}
@@ -444,9 +489,9 @@ export default function TrackOrderScreen() {
                 </Text>
               </View>
             )}
-          </View>
+          </Card>
         ) : !noStoreAcceptedYet && isMultiStore ? (
-          <View style={{ marginHorizontal: 16, gap: 10 }}>
+          <View style={styles.storeOrderList}>
             {/* One card per store that has actually accepted — a store still at
                 'pending_at_store' is excluded from acceptedStoreOrders entirely
                 (no placeholder box), so cards appear one by one as each store
@@ -457,31 +502,54 @@ export default function TrackOrderScreen() {
               const items = so.order_items || [];
               const expanded = expandedStoreOrderIds.has(so.id);
               return (
-                <View key={so.id} style={styles.storeOrderCard}>
+                <Card key={so.id} size="lg" style={styles.storeOrderCard}>
                   <View style={styles.storeOrderHeader}>
                     <MaterialCommunityIcons name="storefront" size={20} color={C.primary} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.storeOrderName}>{loc?.label || "Store"}</Text>
-                      {loc?.address && <Text style={styles.storeOrderAddress}>{loc.address}</Text>}
+                    <View style={styles.flex1}>
+                      <Text style={styles.storeOrderName} numberOfLines={1}>{loc?.label || "Store"}</Text>
+                      {loc?.address && (
+                        <Text style={styles.storeOrderAddress} numberOfLines={2}>{loc.address}</Text>
+                      )}
                     </View>
                     {loc?.phone && (
-                      <TouchableOpacity onPress={() => Linking.openURL(`tel:${loc.phone}`)}>
-                        <MaterialCommunityIcons name="phone" size={18} color={C.primary} />
-                      </TouchableOpacity>
+                      <IconButton
+                        icon="phone"
+                        size={34}
+                        iconSize={18}
+                        bg={C.primaryXLight}
+                        color={C.primary}
+                        hitSlop={6}
+                        accessibilityLabel="Call store"
+                        style={styles.smallIconBtn}
+                        onPress={() => Linking.openURL(`tel:${loc.phone}`)}
+                      />
                     )}
                   </View>
 
-                  <View style={[styles.statusPill, { backgroundColor: storeMeta.bg, alignSelf: "flex-start", marginTop: 10 }]}>
-                    <MaterialCommunityIcons name={storeMeta.icon} size={14} color={storeMeta.color} />
-                    <Text style={[styles.statusPillText, { color: storeMeta.color, fontSize: 12 }]}>{storeMeta.label}</Text>
-                  </View>
+                  <Badge
+                    label={storeMeta.label}
+                    bg={storeMeta.bg}
+                    color={storeMeta.color}
+                    icon={storeMeta.icon}
+                    iconSize={14}
+                    style={[styles.statusPill, styles.storePill]}
+                    textStyle={[styles.statusPillText, styles.storePillText]}
+                  />
 
                   {items.length > 0 && (
                     <>
                       <Pressable
-                        style={styles.sectionToggle}
-                        onPress={() => toggleStoreItems(so.id)}
+                        style={({ pressed }) => [
+                          styles.sectionToggle,
+                          pressed && Platform.OS === "ios" && styles.sectionTogglePressed,
+                        ]}
+                        onPress={() => {
+                          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                          toggleStoreItems(so.id);
+                        }}
                         android_ripple={{ color: C.bgSoft }}
+                        accessibilityRole="button"
+                        accessibilityState={{ expanded }}
                       >
                         <Text style={styles.sectionTitle}>
                           Items from this store <Text style={styles.sectionCount}>({items.length})</Text>
@@ -499,13 +567,13 @@ export default function TrackOrderScreen() {
                               key={`${it.product_name}-${idx}`}
                               style={[styles.itemRow, idx < items.length - 1 && styles.itemRowBorder]}
                             >
-                              <View style={{ flex: 1 }}>
-                                <Text style={styles.itemName}>{it.product_name}</Text>
+                              <View style={styles.flex1}>
+                                <Text style={styles.itemName} numberOfLines={2}>{it.product_name}</Text>
                                 <Text style={styles.itemUnit}>
                                   ₹{Number(it.unit_price).toFixed(2)} {it.unit ? `/ ${it.unit}` : ""}
                                 </Text>
                               </View>
-                              <View style={{ alignItems: "flex-end" }}>
+                              <View style={styles.itemRight}>
                                 <Text style={styles.itemQty}>×{it.quantity}</Text>
                                 <Text style={styles.itemTotal}>
                                   ₹{Math.round(Number(it.unit_price) * Number(it.quantity))}
@@ -517,7 +585,7 @@ export default function TrackOrderScreen() {
                       )}
                     </>
                   )}
-                </View>
+                </Card>
               );
             })}
           </View>
@@ -525,41 +593,39 @@ export default function TrackOrderScreen() {
 
         {/* ─── Delivery partner ─────────────────────────────────────────────── */}
         {primaryAgent && status !== "order_delivered" && !isCancelled && (
-          <View style={styles.partnerCard}>
-            <View style={styles.partnerAvatar}>
-              <MaterialCommunityIcons name="account" size={26} color={C.primary} />
-            </View>
-            <View style={{ flex: 1 }}>
+          <Card size="lg" style={styles.partnerCard}>
+            <IconWrap size={46} circle icon="account" iconSize={26} />
+            <View style={styles.flex1}>
               <Text style={styles.partnerLabel}>Your delivery partner</Text>
-              <Text style={styles.partnerName}>{primaryAgent.name}</Text>
+              <Text style={styles.partnerName} numberOfLines={1}>{primaryAgent.name}</Text>
               {primaryAgent.vehicle_number && (
-                <Text style={styles.partnerVehicle}>
-                  <MaterialCommunityIcons name="bike" size={12} color={C.textSub} />{" "}
-                  {primaryAgent.vehicle_number}
-                </Text>
+                <View style={styles.partnerVehicleRow}>
+                  <MaterialCommunityIcons name="bike" size={12} color={C.textSub} />
+                  <Text style={styles.partnerVehicle}>{primaryAgent.vehicle_number}</Text>
+                </View>
               )}
             </View>
             {primaryAgent.phone && (
-              <TouchableOpacity
-                style={styles.callBtn}
-                activeOpacity={0.85}
+              <PrimaryButton
+                size="xs"
+                icon="phone"
+                iconSize={16}
+                label="Call"
+                accessibilityLabel="Call delivery partner"
                 onPress={() => Linking.openURL(`tel:${primaryAgent.phone}`)}
-              >
-                <MaterialCommunityIcons name="phone" size={16} color="#fff" />
-                <Text style={styles.callBtnText}>Call</Text>
-              </TouchableOpacity>
+                style={styles.callBtn}
+                textStyle={styles.callBtnText}
+              />
             )}
-          </View>
+          </Card>
         )}
 
         {/* ─── Delivery OTP Card ────────────────────────────────────────────── */}
         {deliveryOTP && shouldShowOTP(status) && !isCancelled && (
-          <View style={styles.otpCard}>
+          <Card size="lg" borderColor={C.primary} style={styles.otpCard}>
             <View style={styles.otpHeader}>
-              <View style={styles.otpIconWrap}>
-                <MaterialCommunityIcons name="shield-key" size={24} color={C.primary} />
-              </View>
-              <View style={{ flex: 1 }}>
+              <IconWrap size={44} icon="shield-key" iconSize={24} />
+              <View style={styles.flex1}>
                 <Text style={styles.otpTitle}>Delivery Verification PIN</Text>
                 <Text style={styles.otpSub}>
                   Share this PIN with your delivery partner to confirm delivery
@@ -579,12 +645,12 @@ export default function TrackOrderScreen() {
                 Do not share this PIN until you receive your order
               </Text>
             </View>
-          </View>
+          </Card>
         )}
 
         {/* ─── Delivered card ──────────────────────────────────────────────── */}
         {status === "order_delivered" && (
-          <View style={styles.deliveredCard}>
+          <Card size="lg" bg={C.successLight} borderColor="#86efac" style={styles.deliveredCard}>
             <View style={styles.deliveredIconWrap}>
               <MaterialCommunityIcons name="check-circle" size={36} color={C.success} />
             </View>
@@ -598,46 +664,51 @@ export default function TrackOrderScreen() {
             {primaryAgent && (
               <Text style={styles.deliveredSub}>Delivered by {primaryAgent.name}</Text>
             )}
-          </View>
+          </Card>
         )}
 
         {/* ─── Cancelled banner ────────────────────────────────────────────── */}
         {isCancelled && (
-          <View style={styles.cancelledBanner}>
-            <MaterialCommunityIcons name="close-circle" size={26} color={C.danger} />
-            <View style={{ flex: 1 }}>
+          <Card size="lg" bg={C.dangerLight} borderColor="#fca5a5" style={styles.cancelledBanner}>
+            <MaterialCommunityIcons name="close-circle" size={24} color={C.danger} />
+            <View style={styles.flex1}>
               <Text style={styles.cancelledTitle}>Order cancelled</Text>
               <Text style={styles.cancelledSub}>This order was not fulfilled.</Text>
             </View>
-          </View>
+          </Card>
         )}
 
         {/* ─── Address ──────────────────────────────────────────────────────── */}
-        <View style={styles.addressCard}>
+        <Card size="lg" style={styles.addressCard}>
           {storeLocation && (
             <View style={styles.addressRow}>
               <MaterialCommunityIcons name="storefront-outline" size={18} color={C.primary} />
-              <View style={{ flex: 1 }}>
+              <View style={styles.flex1}>
                 <Text style={styles.addressLabel}>Picked up from</Text>
-                <Text style={styles.addressValue}>{storeLocation.label || "Store"}</Text>
+                <Text style={styles.addressValue} numberOfLines={1}>{storeLocation.label || "Store"}</Text>
                 {storeLocation.address && (
-                  <Text style={styles.addressSecondary}>{storeLocation.address}</Text>
+                  <Text style={styles.addressSecondary} numberOfLines={2}>{storeLocation.address}</Text>
                 )}
               </View>
               {storeLocation.phone && (
-                <Pressable
-                  hitSlop={8}
+                <IconButton
+                  icon="phone-outline"
+                  size={34}
+                  iconSize={18}
+                  bg={C.primaryXLight}
+                  color={C.primary}
+                  hitSlop={6}
+                  accessibilityLabel="Call store"
+                  style={styles.smallIconBtn}
                   onPress={() => Linking.openURL(`tel:${storeLocation.phone}`)}
-                >
-                  <MaterialCommunityIcons name="phone-outline" size={18} color={C.primary} />
-                </Pressable>
+                />
               )}
             </View>
           )}
-          <View style={styles.addressDivider} />
+          <Divider />
           <View style={styles.addressRow}>
             <MaterialCommunityIcons name="map-marker-outline" size={18} color={C.primary} />
-            <View style={{ flex: 1 }}>
+            <View style={styles.flex1}>
               <Text style={styles.addressLabel}>Delivering to</Text>
               <Text style={styles.addressValue} numberOfLines={3}>
                 {order.delivery_address || "—"}
@@ -646,12 +717,12 @@ export default function TrackOrderScreen() {
           </View>
           {order.receiver_name && (
             <>
-              <View style={styles.addressDivider} />
+              <Divider />
               <View style={styles.addressRow}>
                 <MaterialCommunityIcons name="account-outline" size={18} color={C.primary} />
-                <View style={{ flex: 1 }}>
+                <View style={styles.flex1}>
                   <Text style={styles.addressLabel}>Ordered for</Text>
-                  <Text style={styles.addressValue}>
+                  <Text style={styles.addressValue} numberOfLines={2}>
                     {order.receiver_name}
                     {order.receiver_phone ? ` · ${order.receiver_phone}` : ""}
                   </Text>
@@ -659,19 +730,27 @@ export default function TrackOrderScreen() {
               </View>
             </>
           )}
-        </View>
+        </Card>
 
         {/* ─── Timeline (collapsible) ──────────────────────────────────────── */}
-        <View style={styles.section}>
+        <Card size="lg" padded={false} style={styles.section}>
           <Pressable
-            style={styles.sectionToggle}
-            onPress={() => setShowHistory((v) => !v)}
+            style={({ pressed }) => [
+              styles.sectionToggle,
+              pressed && Platform.OS === "ios" && styles.sectionTogglePressed,
+            ]}
+            onPress={() => {
+              LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+              setShowHistory((v) => !v);
+            }}
             android_ripple={{ color: C.bgSoft }}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: showHistory }}
           >
             <Text style={styles.sectionTitle}>Order timeline</Text>
             <MaterialCommunityIcons
               name={showHistory ? "chevron-up" : "chevron-down"}
-              size={22}
+              size={20}
               color={C.textSub}
             />
           </Pressable>
@@ -689,7 +768,7 @@ export default function TrackOrderScreen() {
                       </View>
                       {!isLast && <View style={styles.timelineLine} />}
                     </View>
-                    <View style={{ flex: 1, paddingBottom: 16 }}>
+                    <View style={styles.timelineContent}>
                       <Text style={styles.timelineLabel}>
                         {formatStatusLabel(event.status)}
                       </Text>
@@ -706,14 +785,22 @@ export default function TrackOrderScreen() {
               })}
             </View>
           )}
-        </View>
+        </Card>
 
         {/* ─── Items (collapsible) ─────────────────────────────────────────── */}
-        <View style={styles.section}>
+        <Card size="lg" padded={false} style={styles.section}>
           <Pressable
-            style={styles.sectionToggle}
-            onPress={() => setShowItems((v) => !v)}
+            style={({ pressed }) => [
+              styles.sectionToggle,
+              pressed && Platform.OS === "ios" && styles.sectionTogglePressed,
+            ]}
+            onPress={() => {
+              LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+              setShowItems((v) => !v);
+            }}
             android_ripple={{ color: C.bgSoft }}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: showItems }}
           >
             <Text style={styles.sectionTitle}>
               Order items{" "}
@@ -723,13 +810,16 @@ export default function TrackOrderScreen() {
             </Text>
             <MaterialCommunityIcons
               name={showItems ? "chevron-up" : "chevron-down"}
-              size={22}
+              size={20}
               color={C.textSub}
             />
           </Pressable>
 
           {showItems && (
             <View style={styles.itemsCard}>
+              {storeOrders.flatMap((so) => so.order_items || []).length === 0 && (
+                <Text style={styles.itemsEmpty}>No items to show</Text>
+              )}
               {storeOrders
                 .flatMap((so) => so.order_items || [])
                 .map((it, idx, arr) => (
@@ -737,13 +827,13 @@ export default function TrackOrderScreen() {
                     key={`${it.product_name}-${idx}`}
                     style={[styles.itemRow, idx < arr.length - 1 && styles.itemRowBorder]}
                   >
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.itemName}>{it.product_name}</Text>
+                    <View style={styles.flex1}>
+                      <Text style={styles.itemName} numberOfLines={2}>{it.product_name}</Text>
                       <Text style={styles.itemUnit}>
                         ₹{Number(it.unit_price).toFixed(2)} {it.unit ? `/ ${it.unit}` : ""}
                       </Text>
                     </View>
-                    <View style={{ alignItems: "flex-end" }}>
+                    <View style={styles.itemRight}>
                       <Text style={styles.itemQty}>×{it.quantity}</Text>
                       <Text style={styles.itemTotal}>
                         ₹{Math.round(Number(it.unit_price) * Number(it.quantity))}
@@ -757,78 +847,96 @@ export default function TrackOrderScreen() {
               </View>
             </View>
           )}
-        </View>
+        </Card>
 
         {/* ─── Help footer ─────────────────────────────────────────────────── */}
         <TouchableOpacity
           style={styles.helpRow}
           activeOpacity={0.85}
+          accessibilityRole="button"
           onPress={() => router.push("/settings/support")}
         >
           <MaterialCommunityIcons name="headset" size={20} color={C.primary} />
-          <View style={{ flex: 1 }}>
+          <View style={styles.flex1}>
             <Text style={styles.helpTitle}>Need help with this order?</Text>
             <Text style={styles.helpSub}>Get in touch with our support team</Text>
           </View>
           <MaterialCommunityIcons name="chevron-right" size={20} color={C.textSub} />
         </TouchableOpacity>
       </ScrollView>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 function Header({ title, autoRefreshing }: { title: string; autoRefreshing?: boolean }) {
   return (
-    <View style={styles.header}>
-      <TouchableOpacity style={styles.backBtn} onPress={() => router.back()} activeOpacity={0.7}>
-        <MaterialCommunityIcons name="arrow-left" size={20} color={C.text} />
-      </TouchableOpacity>
-      <Text style={styles.headerTitle} numberOfLines={1}>
-        {title}
-      </Text>
-      <View style={styles.headerSlot}>
-        {autoRefreshing ? <ActivityIndicator size="small" color={C.primary} /> : null}
-      </View>
+    <ScreenHeader
+      title={title}
+      onBack={() => router.back()}
+      titleStyle={styles.headerTitle}
+      right={
+        <View style={styles.headerSlot}>
+          {autoRefreshing ? <ActivityIndicator size="small" color={C.primary} /> : null}
+        </View>
+      }
+    />
+  );
+}
+
+/** Loading placeholder mirroring the status card → map → address card stack. */
+function TrackSkeleton() {
+  return (
+    <View accessibilityRole="progressbar" accessibilityLabel="Loading live tracking">
+      <Card size="lg" style={styles.statusCard}>
+        <View style={styles.skeletonLiveRow}>
+          <Skeleton width={12} height={12} radius={6} />
+          <Skeleton width={80} height={12} />
+        </View>
+        <Skeleton width={140} height={32} radius={12} />
+        <Skeleton height={12} style={styles.skeletonGapLg} />
+        <Skeleton width="70%" height={12} style={styles.skeletonGap} />
+      </Card>
+      <Skeleton height={280} radius={16} style={styles.skeletonMap} />
+      <Card size="lg" style={styles.addressCard}>
+        <View style={styles.addressRow}>
+          <Skeleton width={18} height={18} radius={9} />
+          <View style={styles.flex1}>
+            <Skeleton width={90} height={10} />
+            <Skeleton width="60%" height={12} style={styles.skeletonGap} />
+          </View>
+        </View>
+        <Divider />
+        <View style={styles.addressRow}>
+          <Skeleton width={18} height={18} radius={9} />
+          <View style={styles.flex1}>
+            <Skeleton width={90} height={10} />
+            <Skeleton height={12} style={styles.skeletonGap} />
+            <Skeleton width="80%" height={12} style={styles.skeletonGap} />
+          </View>
+        </View>
+      </Card>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
+  flex1: { flex: 1 },
 
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: C.card,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  backBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: C.bgSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerTitle: { flex: 1, color: C.text, fontSize: 17, fontWeight: "800", marginHorizontal: 12 },
+  headerTitle: { marginHorizontal: 12 },
   headerSlot: { width: 38, height: 38, alignItems: "center", justifyContent: "center" },
 
-  center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32, gap: 12 },
-  muted: { color: C.textSub, fontSize: 13.5, textAlign: "center" },
-  errorTitle: { color: C.text, fontSize: 17, fontWeight: "800", marginTop: 8 },
+  scrollContent: { paddingBottom: layout.scrollBottom },
+
+  // Skeleton
+  skeletonLiveRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 },
+  skeletonGap: { marginTop: 8 },
+  skeletonGapLg: { marginTop: 12 },
+  skeletonMap: { marginHorizontal: 16 },
 
   // Status card
   statusCard: {
-    backgroundColor: C.card,
     margin: 16,
     marginBottom: 12,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: C.border,
-    padding: 16,
   },
   liveRow: {
     flexDirection: "row",
@@ -848,34 +956,24 @@ const styles = StyleSheet.create({
     height: 12,
     borderRadius: 6,
     backgroundColor: C.success,
-    opacity: 0.35,
   },
   liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: C.success },
   liveDotStale: { backgroundColor: C.warning },
-  liveText: { color: C.success, fontSize: 12, fontWeight: "800", letterSpacing: 0.3 },
+  liveText: { color: C.success, fontSize: 12, fontFamily: "PlusJakartaSans_800ExtraBold", letterSpacing: 0.3 },
   liveTextStale: { color: C.warning },
-  multiStoreBadge: {
-    marginLeft: "auto",
-    color: C.textSub,
-    fontSize: 11,
-    fontWeight: "700",
-    backgroundColor: C.bgSoft,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
+  multiStoreBadge: { marginLeft: "auto", alignSelf: "center", paddingVertical: 4 },
+  multiStoreBadgeText: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 11 },
 
   statusPill: {
-    flexDirection: "row",
-    alignItems: "center",
     gap: 6,
-    alignSelf: "flex-start",
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 12,
   },
-  statusPillText: { fontSize: 14, fontWeight: "800" },
-  statusDescription: { color: C.textSub, fontSize: 13.5, lineHeight: 19, marginTop: 10 },
+  statusPillText: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 14 },
+  storePill: { marginTop: 12 },
+  storePillText: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 12 },
+  statusDescription: { fontFamily: "PlusJakartaSans_400Regular", color: C.textSub, fontSize: 14, lineHeight: 20, marginTop: 10 },
 
   etaRow: {
     flexDirection: "row",
@@ -886,18 +984,12 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: C.border,
   },
-  etaText: { color: C.textSub, fontSize: 13 },
-  etaTime: { color: C.text, fontWeight: "800" },
+  etaText: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.textSub, fontSize: 13 },
+  etaTime: { color: C.text },
+  etaLate: { color: C.warning },
 
   // Map
-  mapWrap: {
-    marginHorizontal: 16,
-    borderRadius: 18,
-    overflow: "hidden",
-    backgroundColor: C.bgSoft,
-    borderWidth: 1,
-    borderColor: C.border,
-  },
+  mapWrap: { marginHorizontal: 16 },
   map: { width: "100%", height: 280 },
   mapHint: {
     flexDirection: "row",
@@ -909,7 +1001,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: C.border,
   },
-  mapHintText: { color: C.textSub, fontSize: 12 },
+  mapHintText: { fontFamily: "PlusJakartaSans_400Regular", flex: 1, color: C.textSub, fontSize: 12, lineHeight: 16 },
 
   markerHome: {
     width: 38,
@@ -920,7 +1012,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderWidth: 2,
     borderColor: "#fff",
-    shadowColor: "#000",
+    shadowColor: C.shadow,
     shadowOpacity: 0.25,
     shadowRadius: 4,
     shadowOffset: { width: 0, height: 2 },
@@ -935,7 +1027,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderWidth: 2,
     borderColor: "#fff",
-    shadowColor: "#000",
+    shadowColor: C.shadow,
     shadowOpacity: 0.25,
     shadowRadius: 4,
     shadowOffset: { width: 0, height: 2 },
@@ -950,7 +1042,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderWidth: 2,
     borderColor: "#fff",
-    shadowColor: "#000",
+    shadowColor: C.shadow,
     shadowOpacity: 0.25,
     shadowRadius: 4,
     shadowOffset: { width: 0, height: 2 },
@@ -964,24 +1056,16 @@ const styles = StyleSheet.create({
     gap: 10,
     marginHorizontal: 16,
     padding: 14,
-    borderRadius: 14,
-    backgroundColor: C.card,
-    borderWidth: 1,
-    borderColor: C.border,
   },
-  infoCardText: { flex: 1, color: C.textSub, fontSize: 13, lineHeight: 19 },
+  infoCardText: { fontFamily: "PlusJakartaSans_400Regular", flex: 1, color: C.textSub, fontSize: 13, lineHeight: 19 },
 
   // Per-store card (multi-store tracking)
-  storeOrderCard: {
-    padding: 14,
-    borderRadius: 16,
-    backgroundColor: C.card,
-    borderWidth: 1,
-    borderColor: C.border,
-  },
+  storeOrderList: { marginHorizontal: 16, gap: 12 },
+  storeOrderCard: { padding: 14 },
   storeOrderHeader: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
-  storeOrderName: { color: C.text, fontSize: 15, fontWeight: "800" },
-  storeOrderAddress: { color: C.textSub, fontSize: 12.5, marginTop: 2 },
+  storeOrderName: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 15 },
+  storeOrderAddress: { fontFamily: "PlusJakartaSans_400Regular", color: C.textSub, fontSize: 12, marginTop: 2 },
+  smallIconBtn: { borderRadius: 10 },
 
   // Delivery partner
   partnerCard: {
@@ -991,53 +1075,31 @@ const styles = StyleSheet.create({
     margin: 16,
     marginTop: 12,
     padding: 14,
-    backgroundColor: C.card,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: C.border,
   },
-  partnerAvatar: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    backgroundColor: C.primaryXLight,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  partnerLabel: { color: C.textSub, fontSize: 11, fontWeight: "700", letterSpacing: 0.3 },
-  partnerName: { color: C.text, fontSize: 15, fontWeight: "800", marginTop: 2 },
-  partnerVehicle: { color: C.textSub, fontSize: 12, marginTop: 2 },
+  partnerLabel: { ...typo.eyebrow },
+  partnerName: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 15, marginTop: 2 },
+  partnerVehicleRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 },
+  partnerVehicle: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.textSub, fontSize: 12 },
   callBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: C.primary,
+    minHeight: 44,
     paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: 10,
-    shadowColor: C.primary,
+    paddingVertical: 12,
+    borderRadius: 12,
     shadowOpacity: 0.25,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
   },
-  callBtnText: { color: "#fff", fontSize: 13, fontWeight: "800" },
+  callBtnText: { fontFamily: "PlusJakartaSans_800ExtraBold" },
 
   // Delivered
   deliveredCard: {
     margin: 16,
     marginTop: 12,
-    backgroundColor: C.successLight,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: "#86efac",
-    padding: 22,
+    padding: 24,
     alignItems: "center",
     gap: 6,
   },
   deliveredIconWrap: { marginBottom: 4 },
-  deliveredTitle: { color: "#065f46", fontSize: 18, fontWeight: "900" },
-  deliveredSub: { color: "#065f46", fontSize: 13, opacity: 0.85 },
+  deliveredTitle: { fontFamily: "PlusJakartaSans_800ExtraBold", color: "#065f46", fontSize: 18 },
+  deliveredSub: { fontFamily: "PlusJakartaSans_800ExtraBold", color: "#065f46", fontSize: 13, opacity: 0.85 },
 
   // Cancelled
   cancelledBanner: {
@@ -1046,51 +1108,38 @@ const styles = StyleSheet.create({
     gap: 12,
     margin: 16,
     marginTop: 12,
-    padding: 14,
-    backgroundColor: C.dangerLight,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#fca5a5",
   },
-  cancelledTitle: { color: C.danger, fontSize: 15, fontWeight: "800" },
-  cancelledSub: { color: C.danger, fontSize: 12, opacity: 0.8, marginTop: 2 },
+  cancelledTitle: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.danger, fontSize: 15 },
+  cancelledSub: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.danger, fontSize: 13, opacity: 0.8, marginTop: 2 },
 
   // Address
   addressCard: {
     margin: 16,
     marginTop: 12,
     padding: 14,
-    backgroundColor: C.card,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: C.border,
   },
   addressRow: { flexDirection: "row", gap: 10, alignItems: "flex-start" },
-  addressDivider: { height: 1, backgroundColor: C.border, marginVertical: 12 },
-  addressLabel: { color: C.textSub, fontSize: 11, fontWeight: "700", letterSpacing: 0.3 },
-  addressValue: { color: C.text, fontSize: 14, fontWeight: "700", marginTop: 2 },
-  addressSecondary: { color: C.textSub, fontSize: 12, marginTop: 2, lineHeight: 17 },
+  addressLabel: { ...typo.eyebrow },
+  addressValue: { fontFamily: "PlusJakartaSans_700Bold", color: C.text, fontSize: 14, marginTop: 2 },
+  addressSecondary: { fontFamily: "PlusJakartaSans_400Regular", color: C.textSub, fontSize: 12, marginTop: 2, lineHeight: 17 },
 
   // Sections
   section: {
     marginHorizontal: 16,
     marginTop: 12,
-    backgroundColor: C.card,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: C.border,
-    overflow: Platform.OS === "android" ? "hidden" : "visible",
+    overflow: clipOverflow,
   },
   sectionToggle: {
     flexDirection: "row",
     alignItems: "center",
     padding: 16,
   },
-  sectionTitle: { flex: 1, color: C.text, fontSize: 15, fontWeight: "800" },
-  sectionCount: { color: C.textSub, fontWeight: "600" },
+  sectionTogglePressed: { backgroundColor: C.bgSoft },
+  sectionTitle: { fontFamily: "PlusJakartaSans_800ExtraBold", flex: 1, color: C.text, fontSize: 15 },
+  sectionCount: { color: C.textSub },
 
   // Timeline
-  timeline: { paddingHorizontal: 16, paddingBottom: 8 },
+  timeline: { paddingHorizontal: 16, paddingBottom: 4 },
   timelineRow: { flexDirection: "row", gap: 12 },
   timelineLeft: { width: 28, alignItems: "center" },
   timelineDot: {
@@ -1101,10 +1150,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   timelineLine: { flex: 1, width: 2, backgroundColor: C.border, marginVertical: 2, minHeight: 24 },
-  timelineLabel: { color: C.text, fontSize: 14, fontWeight: "800" },
-  timelineDesc: { color: C.textSub, fontSize: 12.5, marginTop: 2, lineHeight: 17 },
-  timelineTime: { color: C.textLight, fontSize: 11, marginTop: 4 },
-  timelineNotes: {
+  timelineContent: { flex: 1, paddingBottom: 16 },
+  timelineLabel: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 14 },
+  timelineDesc: { fontFamily: "PlusJakartaSans_400Regular", color: C.textSub, fontSize: 12, marginTop: 2, lineHeight: 16 },
+  timelineTime: { fontFamily: "PlusJakartaSans_300Light", color: C.textLight, fontSize: 11, marginTop: 4 },
+  timelineNotes: { fontFamily: "PlusJakartaSans_400Regular",
     color: C.textSub,
     fontSize: 12,
     marginTop: 4,
@@ -1113,22 +1163,24 @@ const styles = StyleSheet.create({
 
   // Items
   itemsCard: { paddingHorizontal: 16, paddingBottom: 14 },
+  itemsEmpty: { fontFamily: "PlusJakartaSans_700Bold", color: C.textSub, fontSize: 13, textAlign: "center", paddingVertical: 16 },
   itemRow: { flexDirection: "row", paddingVertical: 12, gap: 10, alignItems: "flex-start" },
   itemRowBorder: { borderBottomWidth: 1, borderBottomColor: C.border },
-  itemName: { color: C.text, fontSize: 14, fontWeight: "700" },
-  itemUnit: { color: C.textSub, fontSize: 12, marginTop: 2 },
-  itemQty: { color: C.textSub, fontSize: 12 },
-  itemTotal: { color: C.primary, fontSize: 14, fontWeight: "800", marginTop: 2 },
+  itemName: { fontFamily: "PlusJakartaSans_700Bold", color: C.text, fontSize: 14 },
+  itemUnit: { fontFamily: "PlusJakartaSans_700Bold", color: C.textSub, fontSize: 12, marginTop: 2 },
+  itemRight: { alignItems: "flex-end" },
+  itemQty: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.textSub, fontSize: 12 },
+  itemTotal: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.primary, fontSize: 14, marginTop: 2, fontVariant: ["tabular-nums"] },
   totalRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     paddingTop: 12,
-    marginTop: 6,
+    marginTop: 4,
     borderTopWidth: 1,
     borderTopColor: C.border,
   },
-  totalLabel: { color: C.text, fontSize: 14, fontWeight: "800" },
-  totalValue: { color: C.primary, fontSize: 16, fontWeight: "900" },
+  totalLabel: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 14 },
+  totalValue: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.primary, fontSize: 16, fontVariant: ["tabular-nums"] },
 
   // Help
   helpRow: {
@@ -1136,41 +1188,23 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
     margin: 16,
-    marginTop: 14,
+    marginTop: 12,
     padding: 14,
-    borderRadius: 14,
+    borderRadius: 16,
     backgroundColor: C.primaryXLight,
     borderWidth: 1,
     borderColor: C.primaryLight,
   },
-  helpTitle: { color: C.text, fontSize: 14, fontWeight: "800" },
-  helpSub: { color: C.textSub, fontSize: 12, marginTop: 2 },
-
-  // Reusable buttons
-  primaryBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: C.primary,
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    borderRadius: 10,
-    marginTop: 8,
-  },
-  primaryBtnText: { color: "#fff", fontWeight: "800", fontSize: 13 },
+  helpTitle: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 14 },
+  helpSub: { fontFamily: "PlusJakartaSans_400Regular", color: C.textSub, fontSize: 12, marginTop: 2 },
 
   // OTP Card
   otpCard: {
     margin: 16,
     marginTop: 12,
-    padding: 18,
-    backgroundColor: C.card,
-    borderRadius: 18,
-    borderWidth: 2,
-    borderColor: C.primary,
     shadowColor: C.primary,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
+    shadowOpacity: 0.1,
     shadowRadius: 8,
     elevation: 5,
   },
@@ -1179,24 +1213,15 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     gap: 12,
   },
-  otpIconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: C.primaryXLight,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  otpTitle: {
+  otpTitle: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: C.text,
     fontSize: 15,
-    fontWeight: "800",
   },
-  otpSub: {
+  otpSub: { fontFamily: "PlusJakartaSans_400Regular",
     color: C.textSub,
-    fontSize: 12.5,
+    fontSize: 12,
     marginTop: 4,
-    lineHeight: 17,
+    lineHeight: 16,
   },
   otpDisplay: {
     flexDirection: "row",
@@ -1208,17 +1233,16 @@ const styles = StyleSheet.create({
   otpDigit: {
     width: 52,
     height: 64,
-    borderRadius: 14,
+    borderRadius: 12,
     backgroundColor: C.primaryXLight,
     borderWidth: 2,
     borderColor: C.primary,
     alignItems: "center",
     justifyContent: "center",
   },
-  otpDigitText: {
+  otpDigitText: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: C.primary,
     fontSize: 28,
-    fontWeight: "900",
     fontVariant: ["tabular-nums"],
   },
   otpWarning: {
@@ -1229,11 +1253,9 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: C.border,
   },
-  otpWarningText: {
+  otpWarningText: { fontFamily: "PlusJakartaSans_600SemiBold",
     flex: 1,
     color: C.warning,
     fontSize: 12,
-    fontWeight: "600",
   },
-
 });

@@ -3,7 +3,9 @@ import { Image } from "expo-image";
 import { router } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import {
+    ActivityIndicator,
     FlatList,
+    LayoutAnimation,
     Modal,
     Pressable,
     StyleSheet,
@@ -11,8 +13,17 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 
+import {
+    BackButton,
+    BottomDock,
+    Card,
+    Divider,
+    PrimaryButton,
+    Screen,
+    ScreenHeader,
+    SectionLabel,
+} from "../../components/ui";
 import { C } from "../../constants/colors";
 import { calcOrderTotal, DELIVERY_FEE, HANDLING_FEE, PLATFORM_FEE } from "../../constants/fees";
 import { useCart } from "../../context/CartContext";
@@ -47,20 +58,42 @@ export default function CartScreen() {
   );
 
   if (items.length === 0) {
-    return <SafeAreaView style={styles.safe} />;
+    // Hydration / redirect frame: keep the header so there is no blank flash
+    // while AsyncStorage hydrates or the redirect effect above navigates away.
+    return (
+      <Screen>
+        <ScreenHeader title="Your Cart" onBack={() => router.back()} />
+        <View style={styles.loadingWrap}>
+          <ActivityIndicator color={C.primary} />
+        </View>
+      </Screen>
+    );
   }
 
+  const itemCountLabel = `${items.length} item${items.length === 1 ? "" : "s"}`;
+
   return (
-    <SafeAreaView style={styles.safe}>
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Your Cart</Text>
-        <TouchableOpacity onPress={clearCart}>
-          <Text style={styles.clearText}>Clear all</Text>
-        </TouchableOpacity>
-      </View>
+    <Screen>
+      <ScreenHeader
+        title="Your Cart"
+        subtitle={itemCountLabel}
+        left={
+          <View style={styles.headerSlot}>
+            <BackButton onPress={() => router.back()} />
+          </View>
+        }
+        right={
+          <TouchableOpacity
+            style={[styles.headerSlot, styles.clearBtn]}
+            onPress={clearCart}
+            hitSlop={8}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+          >
+            <Text style={styles.clearText}>Clear all</Text>
+          </TouchableOpacity>
+        }
+      />
 
       <FlatList
             data={items}
@@ -68,40 +101,48 @@ export default function CartScreen() {
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
             ListFooterComponent={
-              <View style={styles.billCard}>
-                <Text style={styles.billTitle}>Bill Summary</Text>
-                <View style={styles.billRow}>
-                  <Text style={styles.billLabel}>Items subtotal</Text>
-                  <Text style={styles.billValue}>₹{subtotal.toFixed(2)}</Text>
-                </View>
-                <View style={styles.billRow}>
-                  <Text style={styles.billLabel}>Platform fee</Text>
-                  <Text style={styles.billValue}>₹{platformFee.toFixed(2)}</Text>
-                </View>
-                <View style={styles.billRow}>
-                  <Text style={styles.billLabel}>Handling fee</Text>
-                  <Text style={styles.billValue}>₹{handlingFee.toFixed(2)}</Text>
-                </View>
-                <View style={styles.billRow}>
-                  <View style={styles.billLabelRow}>
-                    <Text style={styles.billLabel}>Delivery fee</Text>
-                    <TouchableOpacity onPress={() => setShowInfo(true)}>
-                      <MaterialCommunityIcons name="information-outline" size={14} color={C.textLight} />
-                    </TouchableOpacity>
+              <View style={styles.billSection}>
+                <SectionLabel>Bill Summary</SectionLabel>
+                <Card style={styles.billCard}>
+                  <View style={styles.billRow}>
+                    <Text style={styles.billLabel}>Items subtotal</Text>
+                    <Text style={styles.billValue}>₹{subtotal.toFixed(2)}</Text>
                   </View>
-                  <Text style={styles.billValue}>
-                    {deliveryFee === 0 ? "Free" : `₹${deliveryFee.toFixed(2)}`}
-                  </Text>
-                </View>
-                <View style={styles.billDivider} />
-                <View style={styles.billRow}>
-                  <Text style={styles.billTotal}>Estimated Total</Text>
-                  <Text style={styles.billTotalValue}>₹{projected.toFixed(2)}</Text>
-                </View>
+                  <View style={styles.billRow}>
+                    <Text style={styles.billLabel}>Platform fee</Text>
+                    <Text style={styles.billValue}>₹{platformFee.toFixed(2)}</Text>
+                  </View>
+                  <View style={styles.billRow}>
+                    <Text style={styles.billLabel}>Handling fee</Text>
+                    <Text style={styles.billValue}>₹{handlingFee.toFixed(2)}</Text>
+                  </View>
+                  <View style={styles.billRow}>
+                    <View style={styles.billLabelRow}>
+                      <Text style={styles.billLabel}>Delivery fee</Text>
+                      <TouchableOpacity
+                        onPress={() => setShowInfo(true)}
+                        hitSlop={10}
+                        activeOpacity={0.7}
+                        accessibilityRole="button"
+                        accessibilityLabel="How delivery fee is calculated"
+                      >
+                        <MaterialCommunityIcons name="information-outline" size={16} color={C.textLight} />
+                      </TouchableOpacity>
+                    </View>
+                    <Text style={styles.billValue}>
+                      {deliveryFee === 0 ? "Free" : `₹${deliveryFee.toFixed(2)}`}
+                    </Text>
+                  </View>
+                  <Divider spacing={12} />
+                  <View style={[styles.billRow, styles.billRowLast]}>
+                    <Text style={styles.billTotal}>Estimated Total</Text>
+                    <Text style={styles.billTotalValue}>₹{projected.toFixed(2)}</Text>
+                  </View>
+                </Card>
               </View>
             }
             renderItem={({ item }) => (
-              <View style={styles.itemCard}>
+              <Card shadow="card" style={styles.itemCard}>
                 {item.image_url ? (
                   <Image
                     source={{ uri: cdnImage(item.image_url, 200) }}
@@ -117,18 +158,29 @@ export default function CartScreen() {
                 )}
                 <View style={styles.itemInfo}>
                   <Text style={styles.name} numberOfLines={2}>{item.name}</Text>
-                  <Text style={styles.unitPrice}>₹{item.price} / {item.unit}</Text>
+                  <Text style={styles.unitPrice} numberOfLines={1}>₹{item.price} / {item.unit}</Text>
                   <View style={styles.bottomRow}>
                     <View style={styles.qtyRow}>
                       <TouchableOpacity
                         style={styles.qtyBtn}
-                        onPress={() => incrementQty(item.product_id, -1)}
+                        hitSlop={6}
+                        activeOpacity={0.7}
+                        accessibilityRole="button"
+                        accessibilityLabel="Decrease quantity"
+                        onPress={() => {
+                          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                          incrementQty(item.product_id, -1);
+                        }}
                       >
                         <Text style={styles.qtyBtnText}>−</Text>
                       </TouchableOpacity>
                       <Text style={styles.qty}>{formatQuantityDisplay(item.quantity, item.isLoose)}</Text>
                       <TouchableOpacity
                         style={styles.qtyBtn}
+                        hitSlop={6}
+                        activeOpacity={0.7}
+                        accessibilityRole="button"
+                        accessibilityLabel="Increase quantity"
                         onPress={() => incrementQty(item.product_id, 1)}
                       >
                         <Text style={styles.qtyBtnText}>+</Text>
@@ -139,112 +191,86 @@ export default function CartScreen() {
                 </View>
                 <TouchableOpacity
                   style={styles.deleteBtn}
-                  onPress={() => removeItem(item.product_id)}
+                  hitSlop={6}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remove ${item.name}`}
+                  onPress={() => {
+                    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                    removeItem(item.product_id);
+                  }}
                 >
                   <MaterialCommunityIcons name="trash-can-outline" size={20} color={C.danger} />
                 </TouchableOpacity>
-              </View>
+              </Card>
             )}
           />
 
-          <View style={styles.checkoutBar}>
+          <BottomDock style={styles.checkoutBar}>
             <View>
               <Text style={styles.projectedLabel}>Estimated total</Text>
               <Text style={styles.projectedAmount}>₹{projected.toFixed(2)}</Text>
             </View>
-            <TouchableOpacity
-              style={styles.checkoutBtn}
-              activeOpacity={0.9}
+            <PrimaryButton
+              label="Proceed to Checkout"
+              iconRight="arrow-right"
+              iconSize={18}
+              fullWidth={false}
               onPress={() => router.push("../support/checkout")}
-            >
-              <Text style={styles.checkoutText}>Proceed to Checkout</Text>
-              <MaterialCommunityIcons name="arrow-right" size={18} color="#fff" />
-            </TouchableOpacity>
-          </View>
+              style={styles.checkoutBtn}
+              textStyle={styles.checkoutText}
+            />
+          </BottomDock>
 
       <Modal transparent animationType="slide" visible={showInfo}>
         <Pressable style={styles.modalOverlay} onPress={() => setShowInfo(false)}>
           <Pressable style={styles.modalCard}>
+            <View style={styles.grabber} />
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>How fees are calculated</Text>
-              <TouchableOpacity onPress={() => setShowInfo(false)}>
+              <TouchableOpacity
+                onPress={() => setShowInfo(false)}
+                hitSlop={10}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+              >
                 <MaterialCommunityIcons name="close" size={22} color={C.text} />
               </TouchableOpacity>
             </View>
             <View style={styles.modalBody}>
               <Text style={styles.modalSectionTitle}>Platform Fee</Text>
               <Text style={styles.modalDesc}>Fixed ₹{PLATFORM_FEE.toFixed(2)} per order</Text>
-              <View style={styles.divider} />
+              <Divider />
               <Text style={styles.modalSectionTitle}>Handling Fee</Text>
               <Text style={styles.modalDesc}>Fixed ₹{HANDLING_FEE.toFixed(2)} per order</Text>
-              <View style={styles.divider} />
+              <Divider />
               <Text style={styles.modalSectionTitle}>Delivery Fee</Text>
               <Text style={styles.modalDesc}>
                 {DELIVERY_FEE > 0 ? `Fixed ₹${DELIVERY_FEE.toFixed(2)} per order` : "Always free — ₹0"}
               </Text>
-              <View style={styles.divider} />
+              <Divider />
               <Text style={styles.modalNote}>All fees are calculated and confirmed at checkout.</Text>
             </View>
           </Pressable>
         </Pressable>
       </Modal>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
+  loadingWrap: { flex: 1, alignItems: "center", justifyContent: "center" },
 
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: C.card,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  backBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: C.bgSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerTitle: { fontSize: 18, fontWeight: "800", color: C.text },
-  clearText: { color: C.danger, fontSize: 14, fontWeight: "600" },
-
-  empty: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10, padding: 32 },
-  emptyTitle: { color: C.text, fontSize: 17, fontWeight: "800" },
-  emptyText: { color: C.textSub, fontSize: 14, textAlign: "center" },
-  shopBtn: {
-    marginTop: 8,
-    backgroundColor: C.primary,
-    paddingVertical: 12,
-    paddingHorizontal: 28,
-    borderRadius: 12,
-  },
-  shopBtnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
+  // Symmetric 64px header slots so the centred title is truly centred even
+  // though "Clear all" is wider than the 38px back button.
+  headerSlot: { width: 64 },
+  clearBtn: { minHeight: 38, alignItems: "flex-end", justifyContent: "center" },
+  clearText: { color: C.danger, fontSize: 14, fontFamily: "PlusJakartaSans_600SemiBold" },
 
   listContent: { paddingTop: 12, paddingBottom: 160, paddingHorizontal: 16 },
 
-  itemCard: {
-    flexDirection: "row",
-    backgroundColor: C.card,
-    marginBottom: 10,
-    padding: 14,
-    borderRadius: 14,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: C.border,
-    shadowColor: C.shadow,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 2,
-  },
+  itemCard: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
   image: { width: 68, height: 68, borderRadius: 10 },
   imagePlaceholder: {
     width: 68,
@@ -255,10 +281,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   itemInfo: { flex: 1, marginLeft: 12 },
-  name: { color: C.text, fontSize: 14, fontWeight: "600", lineHeight: 19 },
-  unitPrice: { color: C.textSub, fontSize: 12, marginTop: 3 },
+  name: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.text, fontSize: 14, lineHeight: 19 },
+  unitPrice: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.textSub, fontSize: 12, marginTop: 4 },
   bottomRow: {
-    marginTop: 10,
+    marginTop: 12,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
@@ -280,66 +306,43 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: C.primary,
   },
-  qtyBtnText: { color: "#fff", fontSize: 16, fontWeight: "800" },
-  qty: { color: C.text, fontSize: 14, fontWeight: "700", minWidth: 28, textAlign: "center" },
-  itemTotal: { color: C.primary, fontSize: 15, fontWeight: "800" },
-  deleteBtn: { paddingLeft: 10 },
-
-  billCard: {
-    backgroundColor: C.card,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: C.border,
+  qtyBtnText: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.card, fontSize: 16 },
+  qty: { fontFamily: "PlusJakartaSans_700Bold", color: C.text, fontSize: 14, minWidth: 28, textAlign: "center" },
+  itemTotal: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.primary, fontSize: 15 },
+  deleteBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: 6,
   },
-  billTitle: { color: C.text, fontSize: 15, fontWeight: "800", marginBottom: 14 },
+
+  billSection: { marginTop: 4 },
+  billCard: { marginBottom: 12 },
   billRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 10,
+    marginBottom: 12,
   },
+  billRowLast: { marginBottom: 0 },
   billLabelRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  billLabel: { color: C.textSub, fontSize: 14 },
-  billValue: { color: C.text, fontSize: 14, fontWeight: "600" },
-  billDivider: { height: 1, backgroundColor: C.border, marginVertical: 10 },
-  billTotal: { color: C.text, fontSize: 15, fontWeight: "800" },
-  billTotalValue: { color: C.primary, fontSize: 18, fontWeight: "900" },
+  billLabel: { fontFamily: "PlusJakartaSans_500Medium", color: C.textSub, fontSize: 14 },
+  billValue: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.text, fontSize: 14 },
+  billTotal: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 15 },
+  billTotalValue: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.primary, fontSize: 18 },
 
   checkoutBar: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: C.card,
     paddingHorizontal: 20,
-    paddingVertical: 14,
-    paddingBottom: 28,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    borderTopWidth: 1,
-    borderTopColor: C.border,
-    shadowColor: C.shadow,
-    shadowOffset: { width: 0, height: -3 },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    elevation: 10,
   },
-  projectedLabel: { color: C.textSub, fontSize: 12, fontWeight: "600" },
-  projectedAmount: { color: C.text, fontSize: 22, fontWeight: "900", marginTop: 2 },
-  checkoutBtn: {
-    backgroundColor: C.primary,
-    flexDirection: "row",
-    gap: 8,
-    paddingHorizontal: 20,
-    height: 50,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  checkoutText: { color: "#fff", fontSize: 14, fontWeight: "800" },
+  projectedLabel: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.textSub, fontSize: 12 },
+  projectedAmount: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 22, marginTop: 2 },
+  checkoutBtn: { height: 50, paddingVertical: 0 },
+  checkoutText: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 14 },
 
   modalOverlay: {
     flex: 1,
@@ -351,7 +354,16 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     padding: 24,
+    paddingTop: 12,
     paddingBottom: 36,
+  },
+  grabber: {
+    alignSelf: "center",
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: C.border,
+    marginBottom: 16,
   },
   modalHeader: {
     flexDirection: "row",
@@ -359,10 +371,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 20,
   },
-  modalTitle: { color: C.text, fontSize: 17, fontWeight: "800" },
-  modalBody: { gap: 6 },
-  modalSectionTitle: { color: C.text, fontSize: 14, fontWeight: "700", marginTop: 4 },
-  modalDesc: { color: C.textSub, fontSize: 13, lineHeight: 20 },
-  modalNote: { color: C.textLight, fontSize: 12, marginTop: 8, fontStyle: "italic", lineHeight: 18 },
-  divider: { height: 1, backgroundColor: C.border, marginVertical: 12 },
+  modalTitle: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 17 },
+  modalBody: { gap: 8 },
+  modalSectionTitle: { fontFamily: "PlusJakartaSans_700Bold", color: C.text, fontSize: 14, marginTop: 4 },
+  modalDesc: { fontFamily: "PlusJakartaSans_400Regular", color: C.textSub, fontSize: 13, lineHeight: 20 },
+  modalNote: { fontFamily: "PlusJakartaSans_400Regular", color: C.textLight, fontSize: 12, marginTop: 8, fontStyle: "italic", lineHeight: 18 },
 });

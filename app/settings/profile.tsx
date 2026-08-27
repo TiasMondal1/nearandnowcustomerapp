@@ -13,9 +13,10 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 
+import { Badge, Card, PrimaryButton, Screen, ScreenHeader } from "../../components/ui";
 import { C } from "../../constants/colors";
+import { border, layout, opacity, radius, text } from "../../constants/ui";
 import { useAuth } from "../../context/AuthContext";
 
 // ─── Avatar ──────────────────────────────────────────────────────────────────
@@ -130,7 +131,7 @@ function Field({
           onFocus={handleFocus}
           onBlur={handleBlur}
           maxLength={maxLength}
-          style={[styles.input, !editable && styles.inputDisabled]}
+          style={styles.input}
         />
         {maxLength !== undefined && editable && (
           <Text style={[styles.charCount, focused && styles.charCountFocused]}>
@@ -141,7 +142,7 @@ function Field({
       {helper && (
         <View style={styles.helperRow}>
           <MaterialCommunityIcons name="information-outline" size={11} color={C.textLight} />
-          <Text style={styles.helper}> {helper}</Text>
+          <Text style={styles.helper}>{helper}</Text>
         </View>
       )}
     </View>
@@ -259,25 +260,20 @@ export default function ProfileScreen() {
   const initial = (user?.name ?? "?").charAt(0).toUpperCase();
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <Screen>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={{ flex: 1 }}
       >
         {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()} activeOpacity={0.7}>
-            <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Edit Profile</Text>
-          <View style={{ width: 38 }} />
-        </View>
+        <ScreenHeader title="Edit Profile" onBack={() => router.back()} />
 
         {/* Content */}
         <Animated.ScrollView
           style={{ opacity: contentAnim, transform: [{ translateY: contentAnim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }] }}
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
         >
           <Avatar initial={initial} />
@@ -291,136 +287,120 @@ export default function ProfileScreen() {
           )}
 
           {/* Card */}
-          <Animated.View style={[styles.card, { transform: [{ translateX: shakeAnim }] }]}>
-            <Field
-              label="Full name"
-              value={name}
-              onChangeText={setName}
-              placeholder="Your name"
-              autoCapitalize="words"
-              returnKeyType="done"
-              onSubmitEditing={handleSave}
-              maxLength={60}
-            />
-            <Field
-              label="Phone"
-              value={user?.phone ?? ""}
-              editable={false}
-              helper="Phone number cannot be changed"
-              isLast
-            />
+          <Animated.View style={{ transform: [{ translateX: shakeAnim }] }}>
+            <Card padded={false}>
+              <Field
+                label="Full name"
+                value={name}
+                onChangeText={setName}
+                placeholder="Your name"
+                autoCapitalize="words"
+                returnKeyType="done"
+                onSubmitEditing={handleSave}
+                maxLength={60}
+              />
+              <Field
+                label="Phone"
+                value={user?.phone ?? ""}
+                editable={false}
+                helper="Phone number cannot be changed"
+                isLast
+              />
+            </Card>
           </Animated.View>
 
           {/* Email — verified separately; changing it requires confirming a code */}
-          <View style={[styles.card, { marginTop: 16, padding: 16 }]}>
-            <Text style={styles.label}>
-              Email {isEmailVerified && !showEmailCodeStep ? "· Verified" : !showEmailCodeStep ? "· Unverified" : ""}
-            </Text>
-            <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
+          <Card padded={false} style={styles.emailCard}>
+            <View style={styles.emailLabelRow}>
+              <Text style={styles.emailLabel}>Email</Text>
+              {isEmailVerified && !showEmailCodeStep ? (
+                <Badge size="sm" pill tone="primary" label="Verified" />
+              ) : !showEmailCodeStep ? (
+                <Badge size="sm" pill tone="warning" label="Unverified" />
+              ) : null}
+            </View>
+            <View style={styles.inlineRow}>
               <TextInput
                 ref={emailRef}
-                style={[styles.input, { backgroundColor: C.bgSoft, borderRadius: 10, flex: 1 }]}
+                style={[styles.input, styles.inlineInput]}
                 value={email}
                 onChangeText={setEmail}
                 placeholder="you@email.com"
+                placeholderTextColor={C.textLight}
                 keyboardType="email-address"
                 autoCapitalize="none"
                 editable={!showEmailCodeStep}
               />
-              <TouchableOpacity
-                style={[styles.saveBtn, { marginTop: 0, paddingHorizontal: 16 }, (isEmailSubmitting || showEmailCodeStep) && styles.saveBtnDisabled]}
+              <PrimaryButton
+                size="xs"
+                shadow={false}
+                label="Send Code"
                 disabled={isEmailSubmitting || showEmailCodeStep || email.trim() === (user?.email ?? "")}
                 onPress={handleSendEmailCode}
-              >
-                <Text style={styles.saveText}>Send Code</Text>
-              </TouchableOpacity>
+              />
             </View>
 
             {showEmailCodeStep && (
-              <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+              <View style={[styles.inlineRow, styles.inlineRowSpaced]}>
                 <TextInput
-                  style={[styles.input, { backgroundColor: C.bgSoft, borderRadius: 10, flex: 1 }]}
+                  style={[styles.input, styles.inlineInput]}
                   value={emailCode}
                   onChangeText={(v) => setEmailCode(v.replace(/\D/g, ""))}
                   placeholder="4-digit code"
+                  placeholderTextColor={C.textLight}
                   keyboardType="number-pad"
                   maxLength={4}
                 />
-                <TouchableOpacity
-                  style={[styles.saveBtn, { marginTop: 0, paddingHorizontal: 16 }, isEmailSubmitting && styles.saveBtnDisabled]}
+                <PrimaryButton
+                  size="xs"
+                  shadow={false}
+                  label="Verify"
                   disabled={isEmailSubmitting}
                   onPress={handleVerifyEmail}
-                >
-                  <Text style={styles.saveText}>Verify</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.saveBtn, { marginTop: 0, paddingHorizontal: 16, backgroundColor: C.bgSoft }, isEmailSubmitting && styles.saveBtnDisabled]}
+                />
+                <PrimaryButton
+                  size="xs"
+                  shadow={false}
+                  variant="secondary"
+                  label="Resend"
                   disabled={isEmailSubmitting}
                   onPress={handleResendEmailCode}
-                >
-                  <Text style={[styles.saveText, { color: C.text }]}>Resend</Text>
-                </TouchableOpacity>
+                />
               </View>
             )}
             {!isEmailVerified && !showEmailCodeStep && (
-              <Text style={[styles.helper, { marginTop: 6 }]}>
+              <Text style={[styles.helper, styles.emailHelper]}>
                 Verify your email before you can place an order.
               </Text>
             )}
-          </View>
+          </Card>
 
           {/* Save Button */}
           <TouchableOpacity
             style={[styles.saveBtn, (!hasChanges || saving) && styles.saveBtnDisabled]}
             disabled={!hasChanges || saving}
             onPress={handleSave}
-            activeOpacity={0.8}
+            activeOpacity={opacity.pressCta}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !hasChanges || saving, busy: saving }}
           >
             {saving ? (
-              <ActivityIndicator size="small" color="#fff" />
+              <ActivityIndicator size="small" color={C.card} />
             ) : (
-              <MaterialCommunityIcons name="content-save-outline" size={18} color="#fff" />
+              <MaterialCommunityIcons name="content-save-outline" size={18} color={C.card} />
             )}
             <Text style={styles.saveText}>{saving ? "Saving…" : "Save Changes"}</Text>
           </TouchableOpacity>
         </Animated.ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
-
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: C.card,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  backBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: C.bgSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerTitle: {
-    flex: 1,
-    textAlign: "center",
-    color: C.text,
-    fontSize: 18,
-    fontWeight: "800",
-  },
-
-  content: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 40 },
+  content: { paddingHorizontal: layout.gutter, paddingTop: 8, paddingBottom: layout.scrollBottom },
 
   // Avatar
   avatarWrap: { alignItems: "center", marginTop: 24, marginBottom: 28 },
@@ -441,7 +421,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  avatarText: { color: "#fff", fontSize: 34, fontWeight: "900" },
+  avatarText: { color: C.card, fontSize: 34, fontFamily: "PlusJakartaSans_800ExtraBold" },
   // Error banner
   errorBanner: {
     flexDirection: "row",
@@ -455,70 +435,66 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#f5c6c2",
   },
-  errorText: { color: "#c0392b", fontSize: 13, fontWeight: "600", flex: 1 },
+  errorText: { fontFamily: "PlusJakartaSans_600SemiBold", color: "#c0392b", fontSize: 13, flex: 1 },
 
-  // Card
-  card: {
-    backgroundColor: C.card,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: C.border,
-    overflow: "hidden",
-  },
+  // Cards
+  emailCard: { marginTop: 16, padding: layout.cardPaddingLg },
   fieldWrap: { paddingHorizontal: 16, paddingVertical: 14 },
   fieldBorder: { borderBottomWidth: 1, borderBottomColor: C.border },
 
-  label: {
-    color: C.textSub,
-    fontSize: 11,
-    fontWeight: "700",
-    marginBottom: 7,
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-  },
+  label: { ...text.eyebrow, marginBottom: 8 },
+  emailLabelRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
+  emailLabel: { ...text.eyebrow },
 
   // Animated input wrapper
   inputWrapper: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: C.bgSoft,
-    borderRadius: 10,
-    borderWidth: 1.5,
+    borderRadius: radius.lg,
+    borderWidth: border.input,
     overflow: "hidden",
   },
   inputWrapperDisabled: { opacity: 0.65 },
-  input: {
+  input: { fontFamily: "PlusJakartaSans_500Medium",
     flex: 1,
     paddingHorizontal: 12,
     paddingVertical: 11,
     color: C.text,
     fontSize: 15,
   },
-  inputDisabled: {},
-  charCount: {
+  inlineInput: {
+    backgroundColor: C.bgSoft,
+    borderRadius: radius.lg,
+    borderWidth: border.input,
+    borderColor: C.border,
+  },
+  inlineRow: { flexDirection: "row", gap: 8, marginTop: 4 },
+  inlineRowSpaced: { marginTop: 12 },
+  charCount: { fontFamily: "PlusJakartaSans_600SemiBold",
     paddingRight: 10,
     fontSize: 11,
     color: C.textLight,
-    fontWeight: "600",
     minWidth: 36,
     textAlign: "right",
   },
   charCountFocused: { color: C.primary },
 
-  helperRow: { flexDirection: "row", alignItems: "center", marginTop: 5 },
-  helper: { color: C.textLight, fontSize: 11 },
+  helperRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 },
+  helper: { ...text.caption },
+  emailHelper: { marginTop: 8 },
 
   // Save button
   saveBtn: {
     marginTop: 24,
     backgroundColor: C.primary,
     paddingVertical: 15,
-    borderRadius: 14,
+    borderRadius: radius.xxl,
     flexDirection: "row",
     gap: 10,
     justifyContent: "center",
     alignItems: "center",
   },
-  saveBtnDisabled: { opacity: 0.45 },
-  saveText: { color: "#fff", fontWeight: "800", fontSize: 15 },
+  saveBtnDisabled: { opacity: opacity.disabled },
+  saveText: { ...text.button },
 });

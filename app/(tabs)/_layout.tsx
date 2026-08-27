@@ -2,12 +2,12 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-const PRIMARY = "#059669";
-const BG = "#ffffff";
+import { C } from "../../constants/colors";
+import { TAB_BAR_BASE_HEIGHT } from "../../constants/ui";
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
-  const baseHeight = 60;
+  const baseHeight = TAB_BAR_BASE_HEIGHT;
   const basePaddingV = 8;
 
   return (
@@ -21,47 +21,48 @@ export default function TabLayout() {
         freezeOnBlur: true,
 
         tabBarStyle: {
-          backgroundColor: BG,
+          backgroundColor: C.card,
           borderTopWidth: 1,
-          borderTopColor: "#e5e7eb",
+          borderTopColor: C.border,
           height: baseHeight + insets.bottom,
           paddingBottom: Math.max(insets.bottom, basePaddingV),
           paddingTop: basePaddingV,
           position: "absolute",
           bottom: 0,
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: -2 },
-          shadowOpacity: 0.1,
-          shadowRadius: 4,
-          elevation: 8,
+          shadowColor: C.shadow,
+          shadowOffset: { width: 0, height: -3 },
+          shadowOpacity: 0.06,
+          shadowRadius: 8,
+          elevation: 4,
         },
 
         tabBarItemStyle: {
-          paddingVertical: 4,
+          paddingVertical: 2,
         },
 
         tabBarLabelStyle: {
           fontSize: 11,
-          marginTop: 2,
+          marginTop: 4,
           marginBottom: 0,
-          fontWeight: "600",
+          fontFamily: "PlusJakartaSans_600SemiBold",
+          letterSpacing: 0.2,
         },
 
         tabBarIconStyle: {
           marginTop: 0,
         },
 
-        tabBarActiveTintColor: PRIMARY,
-        tabBarInactiveTintColor: "#6b7280",
+        tabBarActiveTintColor: C.primary,
+        tabBarInactiveTintColor: C.textSub,
       }}
     >
       <Tabs.Screen
         name="home"
         options={{
           title: "Home",
-          tabBarIcon: ({ color, size }) => (
+          tabBarIcon: ({ color, size, focused }) => (
             <MaterialCommunityIcons
-              name="home-variant"
+              name={focused ? "home-variant" : "home-variant-outline"}
               size={size}
               color={color}
             />
@@ -73,9 +74,9 @@ export default function TabLayout() {
         name="order-again"
         options={{
           title: "Order Again",
-          tabBarIcon: ({ color, size }) => (
+          tabBarIcon: ({ color, size, focused }) => (
             <MaterialCommunityIcons
-              name="shopping-outline"
+              name={focused ? "shopping" : "shopping-outline"}
               size={size}
               color={color}
             />
@@ -87,9 +88,9 @@ export default function TabLayout() {
         name="categories"
         options={{
           title: "Categories",
-          tabBarIcon: ({ color, size }) => (
+          tabBarIcon: ({ color, size, focused }) => (
             <MaterialCommunityIcons
-              name="view-grid"
+              name={focused ? "view-grid" : "view-grid-outline"}
               size={size}
               color={color}
             />

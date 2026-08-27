@@ -1,3 +1,12 @@
+import {
+  PlusJakartaSans_300Light,
+  PlusJakartaSans_400Regular,
+  PlusJakartaSans_500Medium,
+  PlusJakartaSans_600SemiBold,
+  PlusJakartaSans_700Bold,
+  PlusJakartaSans_800ExtraBold,
+  useFonts,
+} from "@expo-google-fonts/plus-jakarta-sans";
 import { Stack, useRouter } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect, useRef } from "react";
@@ -6,6 +15,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ErrorBoundary } from "../components/ErrorBoundary";
+import { C } from "../constants/colors";
 import { AuthProvider, useAuth } from "../context/AuthContext";
 import { CartProvider } from "../context/CartContext";
 import { LocationProvider } from "../context/LocationContext";
@@ -41,11 +51,23 @@ function AppShell() {
   const router = useRouter();
   usePushNotifications(userId);
 
+  // App-wide typeface. Splash stays up until faces are ready so no screen
+  // ever paints in the system font first; fontError falls back gracefully
+  // (styles keep working — RN just uses the platform font).
+  const [fontsLoaded, fontError] = useFonts({
+    PlusJakartaSans_300Light,
+    PlusJakartaSans_400Regular,
+    PlusJakartaSans_500Medium,
+    PlusJakartaSans_600SemiBold,
+    PlusJakartaSans_700Bold,
+    PlusJakartaSans_800ExtraBold,
+  });
+
   useEffect(() => {
-    if (!isLoading) {
+    if (!isLoading && (fontsLoaded || fontError)) {
       SplashScreen.hideAsync().catch(() => {});
     }
-  }, [isLoading]);
+  }, [isLoading, fontsLoaded, fontError]);
 
   // Session can expire (25 days of inactivity) while the user is deep in the
   // app, not just at cold start — app/index.tsx only handles the cold-start
@@ -104,18 +126,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 32,
-    backgroundColor: "#fff",
+    backgroundColor: C.card,
   },
   configErrorTitle: {
     fontSize: 20,
-    fontWeight: "700",
+    fontFamily: "PlusJakartaSans_700Bold",
     marginBottom: 12,
     textAlign: "center",
+    maxWidth: 360,
   },
-  configErrorText: {
+  configErrorText: { fontFamily: "PlusJakartaSans_700Bold",
     fontSize: 15,
     color: "#666",
     textAlign: "center",
     lineHeight: 22,
+    maxWidth: 360,
   },
 });

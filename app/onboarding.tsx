@@ -7,6 +7,7 @@ import {
     Alert,
     Image,
     KeyboardAvoidingView,
+    LayoutAnimation,
     Platform,
     ScrollView,
     StyleSheet,
@@ -15,22 +16,19 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 
+import { Divider, PrimaryButton, Screen } from "../components/ui";
+import { C } from "../constants/colors";
 import { useAuth } from "../context/AuthContext";
 import { useLocation } from "../context/LocationContext";
 
 const T = {
   green: "#2D7A4F",
   greenXLight: "#EAF6EE",
-  white: "#FFFFFF",
   bg: "#F8F8F6",
   bark: "#3C2F1E",
   barkMid: "#6B5744",
   barkLight: "#A89282",
-  border: "#E5E7EB",
-  borderFocus: "#2D7A4F",
-  red: "#EF4444",
 };
 
 const LOCATION_LABELS = ["Home", "Work", "Other"] as const;
@@ -116,7 +114,7 @@ export default function OnboardingScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <Screen bg={C.card}>
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -136,10 +134,10 @@ export default function OnboardingScreen() {
             />
           </View>
 
-          {/* Step indicator */}
-          <View style={styles.stepRow}>
-            <View style={[styles.stepDot, step === "name" && styles.stepDotActive]} />
-            <View style={styles.stepLine} />
+          {/* Step indicator — first dot is current-or-completed, connector fills on advance */}
+          <View style={styles.stepRow} accessibilityLabel={`Step ${step === "name" ? 1 : 2} of 2`}>
+            <View style={[styles.stepDot, styles.stepDotActive]} />
+            <View style={[styles.stepLine, step === "location" && styles.stepLineActive]} />
             <View style={[styles.stepDot, step === "location" && styles.stepDotActive]} />
           </View>
 
@@ -150,7 +148,7 @@ export default function OnboardingScreen() {
               onFirstName={setFirstName}
               onLastName={setLastName}
               valid={nameValid}
-              onNext={() => setStep("location")}
+              onNext={() => { LayoutAnimation.easeInEaseOut(); setStep("location"); }}
             />
           ) : (
             <LocationStep
@@ -166,13 +164,13 @@ export default function OnboardingScreen() {
               onCity={setCity}
               onPincode={setPincode}
               onDetect={handleDetectLocation}
-              onBack={() => setStep("name")}
+              onBack={() => { LayoutAnimation.easeInEaseOut(); setStep("name"); }}
               onFinish={handleFinish}
             />
           )}
         </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
@@ -189,12 +187,14 @@ function NameStep({
 }) {
   return (
     <View style={styles.stepContent}>
-      <Text style={styles.stepTitle}>Tell us about you</Text>
-      <Text style={styles.stepSub}>We&apos;ll use this for your orders and receipts.</Text>
+      <View style={styles.titleBlock}>
+        <Text style={styles.stepTitle} accessibilityRole="header">Tell us about you</Text>
+        <Text style={styles.stepSub}>We&apos;ll use this for your orders and receipts.</Text>
+      </View>
 
       <View style={styles.fieldGroup}>
         <View style={styles.row}>
-          <View style={{ flex: 1 }}>
+          <View style={styles.flex}>
             <Field
               label="First name"
               value={firstName}
@@ -204,7 +204,7 @@ function NameStep({
               autoCapitalize="words"
             />
           </View>
-          <View style={{ flex: 1 }}>
+          <View style={styles.flex}>
             <Field
               label="Last name"
               value={lastName}
@@ -216,15 +216,16 @@ function NameStep({
         </View>
       </View>
 
-      <TouchableOpacity
-        style={[styles.primaryBtn, !valid && styles.primaryBtnDisabled]}
+      <PrimaryButton
+        label="Continue"
+        iconRight="arrow-right"
+        iconSize={18}
         onPress={onNext}
-        activeOpacity={valid ? 0.85 : 1}
         disabled={!valid}
-      >
-        <Text style={styles.primaryBtnText}>Continue</Text>
-        <MaterialCommunityIcons name="arrow-right" size={18} color={T.white} />
-      </TouchableOpacity>
+        shadow
+        style={[styles.primaryBtn, !valid && styles.primaryBtnDisabled]}
+        textStyle={styles.primaryBtnText}
+      />
     </View>
   );
 }
@@ -245,8 +246,10 @@ function LocationStep({
 }) {
   return (
     <View style={styles.stepContent}>
-      <Text style={styles.stepTitle}>Your delivery address</Text>
-      <Text style={styles.stepSub}>Where should we send your orders?</Text>
+      <View style={styles.titleBlock}>
+        <Text style={styles.stepTitle} accessibilityRole="header">Your delivery address</Text>
+        <Text style={styles.stepSub}>Where should we send your orders?</Text>
+      </View>
 
       {/* GPS button */}
       <TouchableOpacity
@@ -254,6 +257,8 @@ function LocationStep({
         onPress={onDetect}
         activeOpacity={0.8}
         disabled={gpsLoading}
+        accessibilityRole="button"
+        accessibilityState={{ disabled: gpsLoading, busy: gpsLoading }}
       >
         {gpsLoading ? (
           <ActivityIndicator size="small" color={T.green} />
@@ -266,9 +271,9 @@ function LocationStep({
       </TouchableOpacity>
 
       <View style={styles.dividerRow}>
-        <View style={styles.dividerLine} />
+        <Divider spacing={0} style={styles.flex} />
         <Text style={styles.dividerText}>or enter manually</Text>
-        <View style={styles.dividerLine} />
+        <Divider spacing={0} style={styles.flex} />
       </View>
 
       {/* Label selector */}
@@ -279,6 +284,8 @@ function LocationStep({
             style={[styles.labelChip, locationLabel === lbl && styles.labelChipActive]}
             onPress={() => onLabel(lbl)}
             activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityState={{ selected: locationLabel === lbl }}
           >
             <MaterialCommunityIcons
               name={lbl === "Home" ? "home-outline" : lbl === "Work" ? "office-building-outline" : "map-marker-outline"}
@@ -302,32 +309,33 @@ function LocationStep({
           multiline
         />
         <View style={styles.row}>
-          <View style={{ flex: 1 }}>
+          <View style={styles.flex}>
             <Field label="City" value={city} onChangeText={onCity} placeholder="Bengaluru" autoCapitalize="words" />
           </View>
-          <View style={{ width: 110 }}>
+          <View style={styles.pincodeCol}>
             <Field label="Pincode" value={pincode} onChangeText={onPincode} placeholder="560001" keyboardType="number-pad" maxLength={6} />
           </View>
         </View>
       </View>
 
-      <TouchableOpacity
-        style={[styles.primaryBtn, (!valid || saving) && styles.primaryBtnDisabled]}
+      <PrimaryButton
+        label="Start Shopping"
+        iconRight="shopping-outline"
+        iconSize={18}
         onPress={onFinish}
-        activeOpacity={valid && !saving ? 0.85 : 1}
         disabled={!valid || saving}
-      >
-        {saving ? (
-          <ActivityIndicator color={T.white} size="small" />
-        ) : (
-          <>
-            <Text style={styles.primaryBtnText}>Start Shopping</Text>
-            <MaterialCommunityIcons name="shopping-outline" size={18} color={T.white} />
-          </>
-        )}
-      </TouchableOpacity>
+        loading={saving}
+        shadow
+        style={[styles.primaryBtn, (!valid || saving) && styles.primaryBtnDisabled]}
+        textStyle={styles.primaryBtnText}
+      />
 
-      <TouchableOpacity style={styles.backRow} onPress={onBack} activeOpacity={0.7}>
+      <TouchableOpacity
+        style={styles.backRow}
+        onPress={onBack}
+        activeOpacity={0.7}
+        accessibilityRole="button"
+      >
         <MaterialCommunityIcons name="chevron-left" size={16} color={T.barkLight} />
         <Text style={styles.backText}>Back</Text>
       </TouchableOpacity>
@@ -367,6 +375,7 @@ function Field({
         keyboardType={keyboardType ?? "default"}
         maxLength={maxLength}
         multiline={multiline}
+        accessibilityLabel={label}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
       />
@@ -376,55 +385,55 @@ function Field({
 }
 
 const fieldStyles = StyleSheet.create({
-  wrap: { gap: 6 },
-  label: { fontSize: 13, fontWeight: "600", color: T.barkMid },
-  input: {
-    backgroundColor: T.white,
+  wrap: { gap: 8 },
+  label: { fontSize: 13, fontFamily: "PlusJakartaSans_600SemiBold", color: T.barkMid },
+  input: { fontFamily: "PlusJakartaSans_500Medium",
+    backgroundColor: C.card,
     borderWidth: 1.5,
-    borderColor: T.border,
+    borderColor: C.border,
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 15,
     color: T.bark,
-    fontWeight: "500",
   },
-  inputFocused: { borderColor: T.borderFocus },
-  inputError: { borderColor: T.red },
+  inputFocused: { borderColor: T.green },
+  inputError: { borderColor: C.danger },
   multiline: { minHeight: 72, textAlignVertical: "top" },
-  errorText: { fontSize: 12, color: T.red, fontWeight: "500", marginTop: -2 },
+  errorText: { fontFamily: "PlusJakartaSans_500Medium", fontSize: 12, color: C.danger, marginTop: -2 },
 });
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: T.white },
   flex: { flex: 1 },
   scroll: { paddingHorizontal: 24, paddingBottom: 48 },
 
-  logoWrap: { alignItems: "center", paddingTop: 16 },
-  logo: { width: 180, height: 160 },
+  logoWrap: { alignItems: "center", paddingTop: 20 },
+  logo: { width: 160, height: 145 },
 
   stepRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 0,
     marginBottom: 28,
   },
   stepDot: {
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: T.border,
+    backgroundColor: C.border,
   },
-  stepDotActive: { backgroundColor: T.green, transform: [{ scale: 1.3 }] },
-  stepLine: { width: 40, height: 2, backgroundColor: T.border },
+  stepDotActive: { width: 12, height: 12, borderRadius: 6, backgroundColor: T.green },
+  stepLine: { width: 40, height: 2, backgroundColor: C.border },
+  stepLineActive: { backgroundColor: T.green },
 
   stepContent: { gap: 20 },
-  stepTitle: { fontSize: 24, fontWeight: "800", color: T.bark, letterSpacing: -0.3 },
-  stepSub: { fontSize: 14, color: T.barkLight, fontWeight: "500", marginTop: -12 },
+  titleBlock: { gap: 8 },
+  stepTitle: { fontSize: 28, fontFamily: "PlusJakartaSans_800ExtraBold", color: T.bark, letterSpacing: -0.3 },
+  stepSub: { fontFamily: "PlusJakartaSans_500Medium", fontSize: 14, color: T.barkLight },
 
-  fieldGroup: { gap: 14 },
+  fieldGroup: { gap: 16 },
   row: { flexDirection: "row", gap: 12 },
+  pincodeCol: { width: 110 },
 
   gpsBtn: {
     flexDirection: "row",
@@ -433,49 +442,38 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: T.green,
     borderRadius: 12,
-    paddingVertical: 13,
+    paddingVertical: 12,
     paddingHorizontal: 16,
+    minHeight: 48,
     backgroundColor: T.greenXLight,
   },
-  gpsBtnText: { fontSize: 14, fontWeight: "700", color: T.green },
+  gpsBtnText: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 14, color: T.green },
 
-  dividerRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: T.border },
-  dividerText: { fontSize: 12, color: T.barkLight, fontWeight: "500" },
+  dividerRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  dividerText: { fontFamily: "PlusJakartaSans_500Medium", fontSize: 12, color: T.barkLight },
 
-  labelRow: { flexDirection: "row", gap: 10 },
+  labelRow: { flexDirection: "row", gap: 12 },
   labelChip: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-    paddingVertical: 10,
-    borderRadius: 10,
+    paddingVertical: 12,
+    minHeight: 44,
+    borderRadius: 12,
     borderWidth: 1.5,
-    borderColor: T.border,
+    borderColor: C.border,
     backgroundColor: T.bg,
   },
   labelChipActive: { borderColor: T.green, backgroundColor: T.greenXLight },
-  labelChipText: { fontSize: 13, fontWeight: "700", color: T.barkLight },
+  labelChipText: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 13, color: T.barkLight },
   labelChipTextActive: { color: T.green },
 
-  primaryBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    backgroundColor: T.green,
-    borderRadius: 14,
-    paddingVertical: 15,
-    shadowColor: T.green,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.28,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  primaryBtnDisabled: { opacity: 0.45, shadowOpacity: 0, elevation: 0 },
-  primaryBtnText: { fontSize: 16, fontWeight: "800", color: T.white },
+  // PrimaryButton overrides: this screen's T palette + shadow off while disabled.
+  primaryBtn: { backgroundColor: T.green, shadowColor: T.green },
+  primaryBtnDisabled: { shadowOpacity: 0, elevation: 0 },
+  primaryBtnText: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 16 },
 
   backRow: {
     flexDirection: "row",
@@ -483,6 +481,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 4,
     paddingVertical: 4,
+    minHeight: 44,
   },
-  backText: { fontSize: 13, color: T.barkLight, fontWeight: "600" },
+  backText: { fontFamily: "PlusJakartaSans_600SemiBold", fontSize: 13, color: T.barkLight },
 });

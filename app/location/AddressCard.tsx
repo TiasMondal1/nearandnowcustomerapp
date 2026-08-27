@@ -3,7 +3,9 @@ import React, { memo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Swipeable } from "react-native-gesture-handler";
 
+import { Badge, IconWrap, type IconName } from "../../components/ui";
 import { C } from "../../constants/colors";
+import { text } from "../../constants/ui";
 
 type Props = {
   id: string;
@@ -25,11 +27,14 @@ function AddressCard({
 }: Props) {
   return (
     <Swipeable
+      overshootLeft={false}
+      overshootRight={false}
       renderLeftActions={() => (
-        <Action color="#2ecc71" icon="pencil" label="Edit" onPress={onEdit} />
+        <Action side="left" color="#2ecc71" icon="pencil" label="Edit" onPress={onEdit} />
       )}
       renderRightActions={() => (
         <Action
+          side="right"
           color="#e74c3c"
           icon="trash-can"
           label="Delete"
@@ -41,25 +46,38 @@ function AddressCard({
       <Pressable
         onPress={onSelect}
         android_ripple={{ color: C.bgSoft }}
+        accessibilityRole="button"
+        accessibilityLabel={`${label}, ${address}`}
+        accessibilityState={{ selected: !!isDefault }}
         style={({ pressed }) => [
           styles.card,
-          pressed && { opacity: 0.88 },
+          pressed && styles.cardPressed,
           isDefault && styles.defaultCard,
         ]}
       >
         <View style={styles.row}>
           <View style={styles.labelRow}>
-            <MaterialCommunityIcons
-              name={label === "Home" ? "home-outline" : label === "Work" ? "briefcase-outline" : "map-marker-outline"}
-              size={16}
-              color={isDefault ? C.primary : C.textSub}
+            <IconWrap
+              size={34}
+              icon={label === "Home" ? "home-outline" : label === "Work" ? "briefcase-outline" : "map-marker-outline"}
+              iconColor={isDefault ? C.primary : C.textSub}
+              bg={isDefault ? C.card : C.bgSoft}
             />
-            <Text style={[styles.label, isDefault && { color: C.primary }]}>{label}</Text>
+            <Text style={[styles.label, isDefault && styles.labelDefault]} numberOfLines={1}>
+              {label}
+            </Text>
           </View>
           {isDefault && (
-            <View style={styles.defaultBadge}>
-              <Text style={styles.defaultBadgeText}>DEFAULT</Text>
-            </View>
+            <Badge
+              size="sm"
+              pill
+              bordered
+              tone="primary"
+              borderColor={C.primaryLight}
+              label="DEFAULT"
+              style={styles.defaultBadge}
+              textStyle={styles.defaultBadgeText}
+            />
           )}
         </View>
         <Text style={styles.address} numberOfLines={2}>{address}</Text>
@@ -69,22 +87,31 @@ function AddressCard({
 }
 
 function Action({
+  side,
   color,
   icon,
   label,
   onPress,
 }: {
+  side: "left" | "right";
   color: string;
-  icon: string;
+  icon: IconName;
   label: string;
   onPress: () => void;
 }) {
   return (
     <Pressable
       onPress={onPress}
-      style={[styles.action, { backgroundColor: color }]}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => [
+        styles.action,
+        side === "left" ? styles.actionLeft : styles.actionRight,
+        { backgroundColor: color },
+        pressed && styles.actionPressed,
+      ]}
     >
-      <MaterialCommunityIcons name={icon as any} size={22} color="#fff" />
+      <MaterialCommunityIcons name={icon} size={22} color={C.card} />
       <Text style={styles.actionText}>{label}</Text>
     </Pressable>
   );
@@ -100,42 +127,41 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     borderWidth: 1,
     borderColor: C.border,
-    shadowColor: C.shadow,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 2,
+    overflow: "hidden",
   },
+  cardPressed: { opacity: 0.85 },
   defaultCard: {
     borderColor: C.primary,
-    borderWidth: 1.5,
     backgroundColor: C.primaryXLight,
   },
   row: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 6,
+    marginBottom: 8,
   },
-  labelRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  label: { color: C.text, fontSize: 15, fontWeight: "700" },
-  defaultBadge: {
-    backgroundColor: C.primaryXLight,
-    borderWidth: 1,
-    borderColor: C.primaryLight,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
+  labelRow: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginRight: 8,
   },
-  defaultBadgeText: { fontSize: 10, color: C.primary, fontWeight: "800" },
-  address: { color: C.textSub, fontSize: 13, lineHeight: 19 },
+  label: { color: C.text, fontSize: 15, fontFamily: "PlusJakartaSans_700Bold", flexShrink: 1 },
+  labelDefault: { color: C.primary },
+  defaultBadge: { alignSelf: "center" },
+  defaultBadgeText: { letterSpacing: 0.4 },
+  address: { ...text.bodySm },
 
   action: {
     width: 80,
     justifyContent: "center",
     alignItems: "center",
-    marginVertical: 6,
-    borderRadius: 12,
+    marginBottom: 10,
+    borderRadius: 14,
   },
-  actionText: { color: "#fff", fontSize: 12, marginTop: 4, fontWeight: "600" },
+  actionLeft: { marginRight: 8 },
+  actionRight: { marginLeft: 8 },
+  actionPressed: { opacity: 0.85 },
+  actionText: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.card, fontSize: 12, marginTop: 4 },
 });

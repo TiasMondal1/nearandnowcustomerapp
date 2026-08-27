@@ -1,3 +1,4 @@
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import React from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { C } from "../constants/colors";
@@ -30,12 +31,19 @@ export class ErrorBoundary extends React.Component<{ children: React.ReactNode }
   render() {
     if (this.state.hasError) {
       return (
-        <View style={styles.container}>
+        <View style={styles.container} accessibilityRole="alert" accessibilityLiveRegion="assertive">
+          <View style={styles.iconWrap}>
+            <MaterialCommunityIcons name="alert-circle-outline" size={40} color={C.danger} />
+          </View>
           <Text style={styles.title}>Something went wrong</Text>
-          <Text style={styles.message}>{this.state.message}</Text>
+          <Text style={styles.message} numberOfLines={6} selectable>
+            {this.state.message}
+          </Text>
           <TouchableOpacity
             style={styles.retryButton}
             onPress={() => this.setState({ hasError: false, message: "" })}
+            activeOpacity={0.8}
+            accessibilityRole="button"
           >
             <Text style={styles.retryText}>Retry</Text>
           </TouchableOpacity>
@@ -54,14 +62,23 @@ const styles = StyleSheet.create({
     padding: 32,
     backgroundColor: C.bg,
   },
+  iconWrap: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    backgroundColor: C.dangerLight,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 20,
+  },
   title: {
-    fontSize: 20,
-    fontWeight: "700",
+    fontSize: 18,
+    fontFamily: "PlusJakartaSans_800ExtraBold",
     color: C.danger,
-    marginBottom: 12,
+    marginBottom: 8,
     textAlign: "center",
   },
-  message: {
+  message: { fontFamily: "PlusJakartaSans_400Regular",
     fontSize: 13,
     color: C.textSub,
     textAlign: "center",
@@ -71,12 +88,13 @@ const styles = StyleSheet.create({
   retryButton: {
     backgroundColor: C.primary,
     paddingHorizontal: 32,
-    paddingVertical: 12,
-    borderRadius: 10,
+    paddingVertical: 14,
+    borderRadius: 14,
+    minWidth: 160,
+    alignItems: "center",
   },
-  retryText: {
-    color: "#fff",
+  retryText: { fontFamily: "PlusJakartaSans_600SemiBold",
+    color: C.card,
     fontSize: 15,
-    fontWeight: "600",
   },
 });

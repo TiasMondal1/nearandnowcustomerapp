@@ -1,9 +1,10 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
+    Animated,
     RefreshControl,
     ScrollView,
     StyleSheet,
@@ -11,9 +12,20 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 
 import { PaymentProcessingOverlay } from "../../components/PaymentProcessingOverlay";
+import {
+    Badge,
+    Card,
+    Divider,
+    EmptyState,
+    IconWrap,
+    PrimaryButton,
+    Screen,
+    ScreenHeader,
+    SectionLabel,
+    Skeleton,
+} from "../../components/ui";
 import { C } from "../../constants/colors";
 import { PLATFORM_FEE, HANDLING_FEE } from "../../constants/fees";
 import {
@@ -23,6 +35,7 @@ import {
     getStatusMeta,
     getTimelineIndex,
 } from "../../constants/orderStatus";
+import { layout } from "../../constants/ui";
 import { useAuth } from "../../context/AuthContext";
 import { usePaymentFlow } from "../../hooks/usePaymentFlow";
 import { logError } from "../../lib/logError";
@@ -67,6 +80,29 @@ export default function OrderDetailScreen() {
   // loading/disabled UI — the ref is the real synchronous guard.
   const walletPaymentInFlight = useRef(false);
   const [walletPaying, setWalletPaying] = useState(false);
+
+  // Presentational only: the ring on the "Live tracking" CTA breathes outward.
+  // Declared above the early returns so hook order stays stable; native
+  // driver, looped, stopped on cleanup.
+  const pulse = useMemo(() => new Animated.Value(0), []);
+  useEffect(() => {
+    pulse.setValue(0);
+    const loop = Animated.loop(
+      Animated.timing(pulse, { toValue: 1, duration: 1400, useNativeDriver: true }),
+    );
+    loop.start();
+    return () => {
+      loop.stop();
+      pulse.setValue(0);
+    };
+  }, [pulse]);
+  const livePulseStyle = useMemo(
+    () => ({
+      transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1.9] }) }],
+      opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0] }),
+    }),
+    [pulse],
+  );
 
   useEffect(() => {
     if (userId) loadOrder();
@@ -187,37 +223,28 @@ export default function OrderDetailScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safe}>
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Order Details</Text>
-          <View style={{ width: 38 }} />
-        </View>
-        <ActivityIndicator size="large" color={C.primary} style={{ marginTop: 40 }} />
-      </SafeAreaView>
+      <Screen>
+        <ScreenHeader title="Order Details" onBack={() => router.back()} />
+        <OrderDetailSkeleton />
+      </Screen>
     );
   }
 
   if (!order) {
     return (
-      <SafeAreaView style={styles.safe}>
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Order Details</Text>
-          <View style={{ width: 38 }} />
-        </View>
-        <View style={styles.centerState}>
-          <MaterialCommunityIcons name="alert-circle-outline" size={48} color={C.textLight} />
-          <Text style={styles.notFoundText}>Order not found</Text>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Text style={styles.backLink}>Go back to orders</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
+      <Screen>
+        <ScreenHeader title="Order Details" onBack={() => router.back()} />
+        <EmptyState fill icon="alert-circle-outline" iconSize={48} title="Order not found">
+          <PrimaryButton
+            size="sm"
+            variant="secondary"
+            label="Go back to orders"
+            onPress={() => router.back()}
+            style={styles.backLinkBtn}
+            textStyle={styles.backLinkText}
+          />
+        </EmptyState>
+      </Screen>
     );
   }
 
@@ -279,23 +306,21 @@ export default function OrderDetailScreen() {
     loadOrder(true);
   };
 
+  const payDisabled = paymentPhase !== "idle" || walletPaying;
+
   return (
-    <SafeAreaView style={styles.safe}>
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>
-          {isDelivered ? 'Invoice' : 'Order Details'}
-        </Text>
-        {autoRefreshing && !isDelivered ? (
-          <View style={styles.autoRefreshIndicator}>
-            <ActivityIndicator size="small" color={C.primary} />
+    <Screen>
+      <ScreenHeader
+        title={isDelivered ? 'Invoice' : 'Order Details'}
+        onBack={() => router.back()}
+        right={
+          <View style={styles.headerSlot}>
+            {autoRefreshing && !isDelivered ? (
+              <ActivityIndicator size="small" color={C.primary} />
+            ) : null}
           </View>
-        ) : (
-          <View style={{ width: 38 }} />
-        )}
-      </View>
+        }
+      />
 
       <ScrollView
         showsVerticalScrollIndicator={false}
@@ -310,21 +335,21 @@ export default function OrderDetailScreen() {
         }
       >
         {needsPayment && (
-          <View style={styles.payBanner}>
-            <View style={styles.payBannerIconWrap}>
-              <MaterialCommunityIcons name="alert-circle" size={22} color={C.warning} />
-            </View>
-            <View style={{ flex: 1 }}>
+          <Card size="lg" bg={C.warningLight} borderColor="#fcd34d" style={styles.payBanner}>
+            <IconWrap size={38} bg={C.card} icon="alert-circle" iconSize={22} iconColor={C.warning} />
+            <View style={styles.flex1}>
               <Text style={styles.payBannerTitle}>Payment pending</Text>
               <Text style={styles.payBannerSub}>
                 Complete payment of ₹{order.order_total.toFixed(2)} to confirm your order.
               </Text>
             </View>
             <TouchableOpacity
-              style={[styles.payBannerBtn, walletPaying && { opacity: 0.6 }]}
-              activeOpacity={0.85}
+              style={[styles.payBannerBtn, payDisabled && styles.payBannerBtnDisabled]}
+              activeOpacity={0.8}
               onPress={handleRetryPayment}
               disabled={paymentPhase !== "idle" || walletPaying}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: payDisabled, busy: walletPaying }}
             >
               {walletPaying ? (
                 <ActivityIndicator size="small" color="#fff" />
@@ -333,25 +358,31 @@ export default function OrderDetailScreen() {
               )}
               <Text style={styles.payBannerBtnText}>{walletPaying ? "Paying…" : "Pay now"}</Text>
             </TouchableOpacity>
-          </View>
+          </Card>
         )}
 
         {/* Order meta */}
-        <View style={styles.metaCard}>
+        <Card size="lg" style={styles.metaCard}>
           <View style={styles.metaRow}>
-            <View style={{ flex: 1 }}>
+            <View style={styles.flex1}>
               <Text style={styles.orderNum}>
                 #{order.order_number || order.id.slice(0, 8).toUpperCase()}
               </Text>
               <Text style={styles.orderDate}>{formatDate(order.created_at)}</Text>
             </View>
-            <View style={[styles.statusBadge, { backgroundColor: statusMeta.bg }]}>
-              <Text style={[styles.statusText, { color: statusMeta.color }]}>{statusMeta.label}</Text>
-            </View>
+            <Badge
+              label={statusMeta.label}
+              bg={statusMeta.bg}
+              color={statusMeta.color}
+              icon={statusMeta.icon}
+              iconSize={14}
+              style={styles.statusBadge}
+              textStyle={styles.statusText}
+            />
           </View>
 
           <View style={styles.infoRow}>
-            <MaterialCommunityIcons name="map-marker-outline" size={15} color={C.textSub} />
+            <MaterialCommunityIcons name="map-marker-outline" size={16} color={C.textSub} style={styles.infoIcon} />
             <Text style={styles.infoText} numberOfLines={2}>
               {order.delivery_address || "—"}
             </Text>
@@ -359,7 +390,7 @@ export default function OrderDetailScreen() {
 
           {order.receiver_name && (
             <View style={styles.infoRow}>
-              <MaterialCommunityIcons name="account-outline" size={15} color={C.textSub} />
+              <MaterialCommunityIcons name="account-outline" size={16} color={C.textSub} style={styles.infoIcon} />
               <Text style={styles.infoText}>
                 Ordered for {order.receiver_name}
                 {order.receiver_phone ? ` · ${order.receiver_phone}` : ""}
@@ -369,7 +400,7 @@ export default function OrderDetailScreen() {
 
           {order.gstin && (
             <View style={styles.infoRow}>
-              <MaterialCommunityIcons name="file-document-outline" size={15} color={C.textSub} />
+              <MaterialCommunityIcons name="file-document-outline" size={16} color={C.textSub} style={styles.infoIcon} />
               <Text style={styles.infoText}>
                 GSTIN {order.gstin}
                 {order.gstin_business_name ? ` · ${order.gstin_business_name}` : ""}
@@ -378,14 +409,10 @@ export default function OrderDetailScreen() {
           )}
 
           <View style={styles.infoRow}>
-            <MaterialCommunityIcons name="credit-card-outline" size={15} color={C.textSub} />
+            <MaterialCommunityIcons name="credit-card-outline" size={16} color={C.textSub} style={styles.infoIcon} />
             <Text style={styles.infoText}>
               {isOnline ? "Online" : "Cash on Delivery"} ·{" "}
-              <Text style={[
-                order.payment_status === "paid"
-                  ? { color: C.success }
-                  : { color: C.warning }
-              ]}>
+              <Text style={order.payment_status === "paid" ? styles.paidText : styles.pendingText}>
                 {order.payment_status === "paid" ? "Paid" : "Pending"}
               </Text>
             </Text>
@@ -394,35 +421,36 @@ export default function OrderDetailScreen() {
           {isInFlight && (
             <TouchableOpacity
               style={styles.liveTrackBtn}
-              activeOpacity={0.85}
+              activeOpacity={0.8}
+              accessibilityRole="button"
               onPress={() => router.push(`/order/track/${order.id}` as any)}
             >
               <View style={styles.liveTrackDotWrap}>
-                <View style={styles.liveTrackPulse} />
+                <Animated.View style={[styles.liveTrackPulse, livePulseStyle]} />
                 <View style={styles.liveTrackDot} />
               </View>
-              <View style={{ flex: 1 }}>
+              <View style={styles.flex1}>
                 <Text style={styles.liveTrackTitle}>Live tracking</Text>
                 <Text style={styles.liveTrackSub}>See your rider on the map in real time</Text>
               </View>
               <MaterialCommunityIcons name="chevron-right" size={20} color="#fff" />
             </TouchableOpacity>
           )}
-        </View>
+        </Card>
 
         {/* Status timeline or Invoice */}
         {isDelivered ? (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Invoice Details</Text>
-            <View style={styles.invoiceCard}>
+            <SectionLabel>Invoice Details</SectionLabel>
+            <Card size="lg" borderColor={C.successLight} shadow="cardMd">
               <View style={styles.invoiceHeader}>
                 <MaterialCommunityIcons name="file-document-check" size={32} color={C.success} />
-                <View style={{ flex: 1 }}>
+                <View style={styles.flex1}>
                   <Text style={styles.invoiceTitle}>Order Delivered Successfully</Text>
                   <Text style={styles.invoiceDate}>{formatDate(order.created_at)}</Text>
                 </View>
               </View>
-              <View style={styles.invoiceDivider} />
+              <Divider spacing={0} style={styles.invoiceDivider} />
               <View style={styles.invoiceRow}>
                 <Text style={styles.invoiceLabel}>Invoice Number</Text>
                 <Text style={styles.invoiceValue}>{order.order_number || order.id.slice(0, 8).toUpperCase()}</Text>
@@ -433,24 +461,25 @@ export default function OrderDetailScreen() {
               </View>
               <View style={styles.invoiceRow}>
                 <Text style={styles.invoiceLabel}>Payment Status</Text>
-                <Text style={[styles.invoiceValue, { color: order.payment_status === "paid" ? C.success : C.warning }]}>
+                <Text style={[styles.invoiceValue, order.payment_status === "paid" ? styles.paidText : styles.pendingText]}>
                   {order.payment_status === "paid" ? "Paid" : "Pending"}
                 </Text>
               </View>
               <TouchableOpacity
                 style={styles.viewInvoiceBtn}
-                activeOpacity={0.85}
+                activeOpacity={0.8}
+                accessibilityRole="button"
                 onPress={() => router.push(`/order/invoice/${order.id}` as any)}
               >
                 <MaterialCommunityIcons name="file-document-outline" size={18} color="#fff" />
                 <Text style={styles.viewInvoiceBtnText}>View Tax Invoice</Text>
                 <MaterialCommunityIcons name="chevron-right" size={18} color="#fff" />
               </TouchableOpacity>
-            </View>
+            </Card>
           </View>
         ) : !isCancelled ? (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Order Status</Text>
+            <SectionLabel>Order Status</SectionLabel>
             <View style={styles.timeline}>
               {ORDER_TIMELINE.map((step, index) => {
                 const isDone = currentStatusIndex >= index;
@@ -481,8 +510,8 @@ export default function OrderDetailScreen() {
                       <Text
                         style={[
                           styles.timelineLabel,
-                          isDone && { color: C.text, fontWeight: "700" },
-                          isActive && { color: C.primary },
+                          isDone && styles.timelineLabelDone,
+                          isActive && styles.timelineLabelActive,
                         ]}
                       >
                         {step.label}
@@ -497,26 +526,32 @@ export default function OrderDetailScreen() {
             </View>
           </View>
         ) : (
-          <View style={styles.cancelledBanner}>
+          <Card size="lg" bg={C.dangerLight} borderColor="#fca5a5" style={styles.cancelledBanner}>
             <MaterialCommunityIcons name="close-circle-outline" size={24} color={C.danger} />
-            <View style={{ flex: 1 }}>
+            <View style={styles.flex1}>
               <Text style={styles.cancelledTitle}>Order Cancelled</Text>
               <Text style={styles.cancelledSub}>This order was not fulfilled.</Text>
             </View>
-          </View>
+          </Card>
         )}
 
         {/* Items */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Items Ordered</Text>
-          <View style={styles.itemsCard}>
+          <SectionLabel>Items Ordered</SectionLabel>
+          <Card size="lg" padded={false}>
+            {!order.items?.length ? (
+              <View style={styles.itemsEmpty}>
+                <MaterialCommunityIcons name="package-variant" size={20} color={C.textLight} />
+                <Text style={styles.itemsEmptyText}>No items to show</Text>
+              </View>
+            ) : null}
             {order.items?.map((item, i) => (
               <View
                 key={i}
                 style={[styles.itemRow, i < order.items!.length - 1 && styles.itemRowBorder]}
               >
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.itemName}>{item.name}</Text>
+                <View style={styles.flex1}>
+                  <Text style={styles.itemName} numberOfLines={2}>{item.name}</Text>
                   <Text style={styles.itemUnit}>₹{item.price} / {item.unit}</Text>
                 </View>
                 <View style={styles.itemRight}>
@@ -527,7 +562,7 @@ export default function OrderDetailScreen() {
                 </View>
               </View>
             ))}
-          </View>
+          </Card>
         </View>
 
         {/* Bill — reconstructs the fee breakdown from the fixed
@@ -536,8 +571,8 @@ export default function OrderDetailScreen() {
             live checkout screen's own display convention. Coupon Discount
             and Tip come straight from the order record when present. */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Bill Summary</Text>
-          <View style={styles.billCard}>
+          <SectionLabel>Bill Summary</SectionLabel>
+          <Card size="lg" style={styles.billCard}>
             <BillLine label="Subtotal" value={`₹${(order.subtotal ?? 0).toFixed(2)}`} />
             <BillLine label="Platform Fee" value={`₹${PLATFORM_FEE.toFixed(2)}`} />
             <BillLine label="Handling Charges" value={`₹${HANDLING_FEE.toFixed(2)}`} />
@@ -548,19 +583,19 @@ export default function OrderDetailScreen() {
             {!!order.tip_amount && (
               <BillLine label="Delivery Partner Tip" value={`₹${order.tip_amount.toFixed(2)}`} />
             )}
-            <View style={styles.billDivider} />
+            <Divider spacing={4} />
             <BillLine
               label={order.payment_status === "paid" ? "Total Paid" : "Total Payable"}
               value={`₹${order.order_total.toFixed(2)}`}
               bold
             />
-          </View>
+          </Card>
         </View>
       </ScrollView>
 
       {RazorpayUI}
       <PaymentProcessingOverlay phase={paymentPhase} />
-    </SafeAreaView>
+    </Screen>
   );
 }
 
@@ -581,46 +616,54 @@ function BillLine({
   );
 }
 
+/** Loading placeholder mirroring the meta card + two sections below it. */
+function OrderDetailSkeleton() {
+  return (
+    <View accessibilityRole="progressbar" accessibilityLabel="Loading order details">
+      <Card size="lg" style={styles.metaCard}>
+        <View style={styles.metaRow}>
+          <View style={styles.flex1}>
+            <Skeleton width={120} height={18} />
+            <Skeleton width={90} height={12} style={styles.skeletonGap} />
+          </View>
+          <Skeleton width={84} height={28} radius={12} />
+        </View>
+        <Skeleton height={12} />
+        <Skeleton width="80%" height={12} />
+        <Skeleton width="60%" height={12} />
+        <Skeleton height={48} radius={12} />
+      </Card>
+      <View style={styles.section}>
+        <Skeleton width={90} height={11} style={styles.skeletonLabel} />
+        <Card size="lg" style={styles.skeletonCard} />
+      </View>
+      <View style={styles.section}>
+        <Skeleton width={90} height={11} style={styles.skeletonLabel} />
+        <Card size="lg" style={styles.skeletonCard} />
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
+  flex1: { flex: 1 },
 
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: C.card,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  backBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: C.bgSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerTitle: { color: C.text, fontSize: 18, fontWeight: "800" },
-  autoRefreshIndicator: {
+  headerSlot: {
     width: 38,
     height: 38,
     alignItems: "center",
     justifyContent: "center",
   },
 
-  scrollContent: { paddingBottom: 40 },
+  scrollContent: { paddingBottom: layout.scrollBottom },
 
-  centerState: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 12,
-    padding: 32,
-  },
-  notFoundText: { color: C.text, fontSize: 16, fontWeight: "700" },
-  backLink: { color: C.primary, fontSize: 14, fontWeight: "600" },
+  // Skeleton
+  skeletonGap: { marginTop: 6 },
+  skeletonLabel: { marginBottom: 8, marginLeft: 2 },
+  skeletonCard: { height: 120 },
+
+  backLinkBtn: { minHeight: 44, marginTop: 4, backgroundColor: C.card },
+  backLinkText: { color: C.primary },
 
   payBanner: {
     flexDirection: "row",
@@ -629,25 +672,13 @@ const styles = StyleSheet.create({
     margin: 16,
     marginBottom: 0,
     padding: 14,
-    borderRadius: 16,
-    backgroundColor: C.warningLight,
-    borderWidth: 1,
-    borderColor: "#fcd34d",
-  },
-  payBannerIconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: C.card,
-    alignItems: "center",
-    justifyContent: "center",
   },
   payBannerTitle: {
     color: "#92400e",
     fontSize: 14,
-    fontWeight: "800",
+    fontFamily: "PlusJakartaSans_800ExtraBold",
   },
-  payBannerSub: {
+  payBannerSub: { fontFamily: "PlusJakartaSans_400Regular",
     color: "#92400e",
     fontSize: 12,
     marginTop: 2,
@@ -657,56 +688,55 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
+    minHeight: 44,
     backgroundColor: C.warning,
     paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 10,
+    paddingVertical: 12,
+    borderRadius: 12,
     shadowColor: C.warning,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 4,
     elevation: 3,
   },
-  payBannerBtnText: {
+  payBannerBtnDisabled: { opacity: 0.6 },
+  payBannerBtnText: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: "#fff",
     fontSize: 13,
-    fontWeight: "800",
   },
 
   metaCard: {
-    backgroundColor: C.card,
     margin: 16,
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: C.border,
     gap: 12,
   },
   metaRow: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 10,
+    gap: 12,
   },
-  orderNum: { color: C.text, fontSize: 17, fontWeight: "800" },
-  orderDate: { color: C.textSub, fontSize: 12, marginTop: 3 },
+  orderNum: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 17, fontVariant: ["tabular-nums"] },
+  orderDate: { fontFamily: "PlusJakartaSans_700Bold", color: C.textSub, fontSize: 12, marginTop: 4 },
   statusBadge: {
-    paddingHorizontal: 10,
+    flexShrink: 0,
+    gap: 6,
     paddingVertical: 6,
-    borderRadius: 10,
+    borderRadius: 12,
   },
-  statusText: { fontSize: 12, fontWeight: "700" },
+  statusText: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 12 },
   infoRow: {
     flexDirection: "row",
     alignItems: "flex-start",
     gap: 8,
   },
-  infoText: { color: C.textSub, fontSize: 13, flex: 1, lineHeight: 19 },
+  infoIcon: { marginTop: 2 },
+  infoText: { fontFamily: "PlusJakartaSans_400Regular", color: C.textSub, fontSize: 13, flex: 1, lineHeight: 19 },
+  paidText: { color: C.success },
+  pendingText: { color: C.warning },
 
   liveTrackBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    marginTop: 4,
     backgroundColor: C.primary,
     paddingHorizontal: 14,
     paddingVertical: 12,
@@ -729,29 +759,22 @@ const styles = StyleSheet.create({
     height: 12,
     borderRadius: 6,
     backgroundColor: "#fff",
-    opacity: 0.35,
   },
   liveTrackDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#fff" },
-  liveTrackTitle: { color: "#fff", fontSize: 14, fontWeight: "800" },
-  liveTrackSub: { color: "rgba(255,255,255,0.85)", fontSize: 11.5, marginTop: 2 },
+  liveTrackTitle: { fontFamily: "PlusJakartaSans_800ExtraBold", color: "#fff", fontSize: 14 },
+  liveTrackSub: { fontFamily: "PlusJakartaSans_800ExtraBold", color: "rgba(255,255,255,0.85)", fontSize: 12, marginTop: 2 },
 
-  section: { paddingHorizontal: 16, marginBottom: 16 },
-  sectionTitle: {
-    color: C.text,
-    fontSize: 15,
-    fontWeight: "800",
-    marginBottom: 12,
-  },
+  section: { paddingHorizontal: 16, marginBottom: 20 },
 
   timeline: { gap: 0 },
-  timelineRow: { flexDirection: "row", gap: 14 },
+  timelineRow: { flexDirection: "row", gap: 12 },
   timelineLeft: { alignItems: "center", width: 32 },
   timelineDot: {
     width: 32,
     height: 32,
     borderRadius: 10,
     backgroundColor: C.bgSoft,
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: C.border,
     alignItems: "center",
     justifyContent: "center",
@@ -774,20 +797,21 @@ const styles = StyleSheet.create({
     width: 2,
     backgroundColor: C.border,
     marginVertical: 2,
-    minHeight: 28,
+    minHeight: 24,
   },
   timelineLineDone: { backgroundColor: C.primary },
   timelineContent: {
     flex: 1,
-    paddingBottom: 28,
+    paddingBottom: 24,
     justifyContent: "center",
   },
-  timelineLabel: { color: C.textLight, fontSize: 14 },
-  timelineActiveHint: {
+  timelineLabel: { fontFamily: "PlusJakartaSans_700Bold", color: C.textLight, fontSize: 14 },
+  timelineLabelDone: { color: C.text },
+  timelineLabelActive: { color: C.primary },
+  timelineActiveHint: { fontFamily: "PlusJakartaSans_700Bold",
     color: C.primary,
     fontSize: 11,
-    fontWeight: "700",
-    marginTop: 3,
+    marginTop: 4,
   },
 
   cancelledBanner: {
@@ -795,64 +819,41 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
     marginHorizontal: 16,
-    marginBottom: 16,
-    backgroundColor: C.dangerLight,
-    borderRadius: 14,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: "#fca5a5",
+    marginBottom: 20,
   },
-  cancelledTitle: { color: C.danger, fontSize: 15, fontWeight: "800" },
-  cancelledSub: { color: C.danger, fontSize: 13, marginTop: 2, opacity: 0.8 },
+  cancelledTitle: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.danger, fontSize: 15 },
+  cancelledSub: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.danger, fontSize: 13, marginTop: 2, opacity: 0.8 },
 
-  invoiceCard: {
-    backgroundColor: C.card,
-    borderRadius: 16,
-    borderWidth: 1.5,
-    borderColor: C.successLight,
-    padding: 18,
-    shadowColor: C.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 3,
-  },
   invoiceHeader: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 14,
+    gap: 12,
     marginBottom: 16,
   },
-  invoiceTitle: {
+  invoiceTitle: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: C.success,
     fontSize: 16,
-    fontWeight: "800",
   },
-  invoiceDate: {
+  invoiceDate: { fontFamily: "PlusJakartaSans_400Regular",
     color: C.textSub,
     fontSize: 12,
-    marginTop: 3,
+    marginTop: 4,
   },
-  invoiceDivider: {
-    height: 1,
-    backgroundColor: C.border,
-    marginBottom: 14,
-  },
+  invoiceDivider: { marginBottom: 16 },
   invoiceRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 12,
   },
-  invoiceLabel: {
+  invoiceLabel: { fontFamily: "PlusJakartaSans_600SemiBold",
     color: C.textSub,
     fontSize: 14,
-    fontWeight: "600",
   },
-  invoiceValue: {
+  invoiceValue: { fontFamily: "PlusJakartaSans_700Bold",
     color: C.text,
     fontSize: 14,
-    fontWeight: "700",
+    fontVariant: ["tabular-nums"],
   },
   viewInvoiceBtn: {
     flexDirection: "row",
@@ -870,46 +871,32 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 4,
   },
-  viewInvoiceBtnText: {
+  viewInvoiceBtnText: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: "#fff",
     fontSize: 14,
-    fontWeight: "800",
     flex: 1,
     textAlign: "center",
   },
 
-  itemsCard: {
-    backgroundColor: C.card,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: C.border,
-    overflow: "hidden",
-  },
+  itemsEmpty: { alignItems: "center", gap: 6, paddingVertical: 20 },
+  itemsEmptyText: { fontFamily: "PlusJakartaSans_700Bold", color: C.textSub, fontSize: 13 },
   itemRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     padding: 14,
     gap: 10,
   },
   itemRowBorder: { borderBottomWidth: 1, borderBottomColor: C.border },
-  itemName: { color: C.text, fontSize: 14, fontWeight: "600" },
-  itemUnit: { color: C.textSub, fontSize: 12, marginTop: 2 },
+  itemName: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.text, fontSize: 14 },
+  itemUnit: { fontFamily: "PlusJakartaSans_700Bold", color: C.textSub, fontSize: 12, marginTop: 2 },
   itemRight: { alignItems: "flex-end", gap: 2 },
-  itemQty: { color: C.textSub, fontSize: 12 },
-  itemTotal: { color: C.primary, fontSize: 14, fontWeight: "800" },
+  itemQty: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.textSub, fontSize: 12 },
+  itemTotal: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.primary, fontSize: 14, fontVariant: ["tabular-nums"] },
 
-  billCard: {
-    backgroundColor: C.card,
-    borderRadius: 14,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: C.border,
-    gap: 10,
-  },
+  billCard: { gap: 12 },
   billRow: { flexDirection: "row", justifyContent: "space-between" },
-  billLabel: { color: C.textSub, fontSize: 14 },
-  billLabelBold: { color: C.text, fontWeight: "800", fontSize: 15 },
-  billValue: { color: C.text, fontSize: 14, fontWeight: "500" },
-  billValueBold: { color: C.primary, fontWeight: "900", fontSize: 16 },
-  billDivider: { height: 1, backgroundColor: C.border, marginVertical: 4 },
+  billLabel: { fontFamily: "PlusJakartaSans_500Medium", color: C.textSub, fontSize: 14 },
+  billLabelBold: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 14 },
+  billValue: { fontFamily: "PlusJakartaSans_500Medium", color: C.text, fontSize: 14, fontVariant: ["tabular-nums"] },
+  billValueBold: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.primary, fontSize: 16 },
 });

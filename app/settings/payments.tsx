@@ -1,19 +1,17 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
-    ActivityIndicator,
     Alert,
     FlatList,
     RefreshControl,
     StyleSheet,
     Text,
-    TouchableOpacity,
     View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 
+import { Badge, Card, IconWrap, Screen, ScreenHeader, Skeleton } from "../../components/ui";
 import { C } from "../../constants/colors";
+import { text } from "../../constants/ui";
 import { useAuth } from "../../context/AuthContext";
 import { getUserOrders } from "../../lib/orderService";
 
@@ -61,33 +59,21 @@ export default function PaymentsScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safe}>
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Payments</Text>
-          <View style={{ width: 38 }} />
-        </View>
-        <ActivityIndicator size="large" color={C.primary} style={{ marginTop: 40 }} />
-      </SafeAreaView>
+      <Screen>
+        <ScreenHeader title="Payments" />
+        <PaymentsSkeleton />
+      </Screen>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Payments</Text>
-        <View style={{ width: 38 }} />
-      </View>
+    <Screen>
+      <ScreenHeader title="Payments" />
 
       <FlatList
         data={payments}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+        contentContainerStyle={styles.list}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -98,14 +84,44 @@ export default function PaymentsScreen() {
         }
         ListEmptyComponent={
           <View style={styles.empty}>
-            <MaterialCommunityIcons name="credit-card-outline" size={56} color={C.textLight} />
+            <IconWrap
+              size={72}
+              circle
+              bg={C.bgSoft}
+              icon="credit-card-outline"
+              iconSize={36}
+              iconColor={C.textLight}
+            />
             <Text style={styles.emptyTitle}>No payments yet</Text>
             <Text style={styles.emptyText}>Your payment history will appear here</Text>
           </View>
         }
         renderItem={({ item }) => <PaymentCard payment={item} />}
       />
-    </SafeAreaView>
+    </Screen>
+  );
+}
+
+/** Four placeholder cards mirroring PaymentCard's geometry while the first fetch is in flight. */
+function PaymentsSkeleton() {
+  return (
+    <View style={styles.list}>
+      {[0, 1, 2, 3].map((i) => (
+        <Card key={i} shadow="card" style={styles.card}>
+          <View style={styles.cardTop}>
+            <View style={styles.skeletonLines}>
+              <Skeleton width="40%" height={15} />
+              <Skeleton width="55%" height={12} />
+            </View>
+            <Skeleton width={60} height={22} radius={999} />
+          </View>
+          <View style={styles.cardBottom}>
+            <Skeleton width="35%" height={13} />
+            <Skeleton width="20%" height={17} />
+          </View>
+        </Card>
+      ))}
+    </View>
   );
 }
 
@@ -116,23 +132,28 @@ function PaymentCard({ payment }: { payment: Payment }) {
     " · " + d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
 
   return (
-    <View style={styles.card}>
+    <Card shadow="card" style={styles.card}>
       <View style={styles.cardTop}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.orderCode}>#{payment.order_code}</Text>
-          <Text style={styles.date}>{dateStr}</Text>
-        </View>
-        <View style={[styles.badge, { backgroundColor: paid ? C.successLight : C.warningLight }]}>
-          <Text style={[styles.badgeText, { color: paid ? C.success : C.warning }]}>
-            {paid ? "PAID" : "PENDING"}
+        <View style={styles.cardTopText}>
+          <Text style={styles.orderCode} numberOfLines={1} ellipsizeMode="middle">
+            #{payment.order_code}
           </Text>
+          <Text style={styles.date} numberOfLines={1}>{dateStr}</Text>
         </View>
+        <Badge
+          label={paid ? "PAID" : "PENDING"}
+          bg={paid ? C.successLight : C.warningLight}
+          color={paid ? C.success : C.warning}
+          pill
+          style={styles.badge}
+          textStyle={styles.badgeText}
+        />
       </View>
       <View style={styles.cardBottom}>
         <View style={styles.methodPill}>
           <MaterialCommunityIcons
             name={payment.payment_method === "cod" ? "cash" : "qrcode-scan"}
-            size={13}
+            size={14}
             color={C.textSub}
           />
           <Text style={styles.method}>
@@ -141,59 +162,34 @@ function PaymentCard({ payment }: { payment: Payment }) {
         </View>
         <Text style={styles.amount}>₹{payment.total_amount.toFixed(2)}</Text>
       </View>
-    </View>
+    </Card>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
+  list: { padding: 16, paddingBottom: 40, flexGrow: 1 },
 
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: C.card,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  backBtn: {
-    width: 38, height: 38, borderRadius: 12,
-    backgroundColor: C.bgSoft, alignItems: "center", justifyContent: "center",
-  },
-  headerTitle: { flex: 1, textAlign: "center", color: C.text, fontSize: 18, fontWeight: "800" },
-
-  card: {
-    backgroundColor: C.card,
-    borderRadius: 14,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: C.border,
-    marginBottom: 10,
-    shadowColor: C.shadow,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 2,
-  },
-  cardTop: { flexDirection: "row", alignItems: "flex-start", gap: 10, marginBottom: 12 },
+  card: { marginBottom: 12 },
+  cardTop: { flexDirection: "row", alignItems: "flex-start", gap: 12, marginBottom: 12 },
+  cardTopText: { flex: 1, flexShrink: 1 },
   cardBottom: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
-    paddingTop: 10, borderTopWidth: 1, borderTopColor: C.border,
+    paddingTop: 12, borderTopWidth: 1, borderTopColor: C.border,
   },
 
-  orderCode: { color: C.text, fontWeight: "800", fontSize: 15 },
-  date: { color: C.textSub, fontSize: 12, marginTop: 3 },
+  orderCode: { ...text.cardTitle },
+  date: { ...text.rowSubtitle, marginTop: 4 },
 
-  methodPill: { flexDirection: "row", alignItems: "center", gap: 5 },
-  method: { color: C.textSub, fontSize: 13 },
-  amount: { color: C.primary, fontSize: 17, fontWeight: "900" },
+  methodPill: { flexDirection: "row", alignItems: "center", gap: 6 },
+  method: { ...text.rowValue },
+  amount: { color: C.primary, fontSize: 16, fontFamily: "PlusJakartaSans_800ExtraBold" },
 
-  badge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
-  badgeText: { fontSize: 11, fontWeight: "800" },
+  badge: { paddingVertical: 4, flexShrink: 0 },
+  badgeText: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 11, letterSpacing: 0.4 },
 
-  empty: { alignItems: "center", marginTop: 80, gap: 8 },
-  emptyTitle: { color: C.text, fontSize: 16, fontWeight: "700" },
-  emptyText: { color: C.textSub, fontSize: 14 },
+  skeletonLines: { flex: 1, gap: 6 },
+
+  empty: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10, paddingBottom: 48 },
+  emptyTitle: { ...text.emptyTitle },
+  emptyText: { ...text.emptyText },
 });

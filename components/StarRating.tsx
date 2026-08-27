@@ -44,11 +44,21 @@ export default function StarRating({
     );
   }
 
+  const accessibilityLabel = `Rated ${snapped} out of 5${
+    typeof reviewCount === "number" && reviewCount > 0 ? `, ${reviewCount} reviews` : ""
+  }`;
+
   return (
-    <View style={styles.wrap}>
-      <View style={styles.starsRow}>{stars}</View>
+    <View style={styles.wrap} accessible accessibilityLabel={accessibilityLabel}>
+      <View
+        style={styles.starsRow}
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+      >
+        {stars}
+      </View>
       {typeof reviewCount === "number" && reviewCount > 0 ? (
-        <Text style={styles.reviewText}>({reviewCount})</Text>
+        <Text style={styles.reviewText} numberOfLines={1}>({reviewCount})</Text>
       ) : null}
     </View>
   );
@@ -63,12 +73,12 @@ const styles = StyleSheet.create({
   starsRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 1,
+    gap: 2,
   },
   reviewText: {
     color: C.textSub,
     fontSize: 12,
-    fontWeight: "600",
+    fontFamily: "PlusJakartaSans_600SemiBold",
   },
 });
 

@@ -99,7 +99,7 @@ export function PaymentProcessingOverlay({ phase }: Props) {
         // Swallow Android back-press while a payment is in flight.
       }}
     >
-      <View style={styles.backdrop}>
+      <View style={styles.backdrop} accessibilityViewIsModal>
         <View style={styles.card}>
           <View style={styles.iconWrap}>
             <Animated.View
@@ -108,7 +108,9 @@ export function PaymentProcessingOverlay({ phase }: Props) {
             <MaterialCommunityIcons name={content.icon} size={40} color={C.primary} />
           </View>
 
-          <Text style={styles.title}>{content.title}</Text>
+          <Text style={styles.title} accessibilityRole="header" accessibilityLiveRegion="polite">
+            {content.title}
+          </Text>
           <Text style={styles.subtitle}>{content.subtitle}</Text>
 
           <ActivityIndicator size="small" color={C.primary} style={styles.spinner} />
@@ -135,12 +137,12 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 360,
     backgroundColor: C.card,
-    borderRadius: 22,
-    paddingHorizontal: 26,
+    borderRadius: 20,
+    paddingHorizontal: 24,
     paddingTop: 32,
-    paddingBottom: 22,
+    paddingBottom: 24,
     alignItems: 'center',
-    shadowColor: '#000',
+    shadowColor: C.shadow,
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.18,
     shadowRadius: 24,
@@ -153,7 +155,7 @@ const styles = StyleSheet.create({
     backgroundColor: C.primaryXLight,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 18,
+    marginBottom: 16,
   },
   iconHalo: {
     position: 'absolute',
@@ -165,17 +167,17 @@ const styles = StyleSheet.create({
   title: {
     color: C.text,
     fontSize: 18,
-    fontWeight: '800',
+    fontFamily: 'PlusJakartaSans_800ExtraBold',
     textAlign: 'center',
     marginBottom: 8,
   },
-  subtitle: {
+  subtitle: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: C.textSub,
-    fontSize: 13.5,
-    lineHeight: 19,
+    fontSize: 14,
+    lineHeight: 20,
     textAlign: 'center',
   },
-  spinner: { marginTop: 18, marginBottom: 14 },
+  spinner: { marginTop: 16, marginBottom: 16 },
   secureRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -186,5 +188,5 @@ const styles = StyleSheet.create({
     width: '100%',
     justifyContent: 'center',
   },
-  secureText: { color: C.textSub, fontSize: 11.5, fontWeight: '600' },
+  secureText: { color: C.textSub, fontSize: 12, fontFamily: 'PlusJakartaSans_600SemiBold' },
 });

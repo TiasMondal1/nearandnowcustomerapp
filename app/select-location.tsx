@@ -13,8 +13,19 @@ import {
     TouchableOpacity,
     View
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import {
+  Badge,
+  EmptyState,
+  IconWrap,
+  PrimaryButton,
+  Screen,
+  ScreenHeader,
+  SectionLabel,
+  Skeleton,
+  SkeletonText,
+} from "../components/ui";
 import { useAuth } from "../context/AuthContext";
 import { useLocation } from "../context/LocationContext";
 import {
@@ -26,7 +37,6 @@ import { logError } from "../lib/logError";
 
 const T = {
   green: "#2D7A4F",
-  greenLight: "#3DA668",
   greenXLight: "#EAF6EE",
   cream: "#FAFAF7",
   sand: "#F3F1EB",
@@ -34,10 +44,15 @@ const T = {
   barkMid: "#6B5744",
   barkLight: "#A89282",
   white: "#FFFFFF",
-  red: "#D94F3D",
+  pink: "#E91E63",
   cardBorder: "rgba(60,47,30,0.08)",
-  shadow: "rgba(45,122,79,0.12)",
 };
+
+// WhatsApp brand green — only for the WhatsApp glyph on the request row.
+const WHATSAPP_GREEN = "#25D366";
+
+// Placeholder cards shown while the first address list loads.
+const SKELETON_ROWS = [0, 1, 2];
 
 type AddressWithDistance = SavedAddress & {
   distance?: number;
@@ -76,6 +91,7 @@ const getAddressIcon = (
 export default function SelectLocationScreen() {
   const { userId } = useAuth();
   const { location: activeLocation, setLocation } = useLocation();
+  const insets = useSafeAreaInsets();
 
   const [addresses, setAddresses] = useState<SavedAddress[]>([]);
   // `loading` means "we haven't rendered anything yet" — once the cache paints
@@ -262,19 +278,23 @@ export default function SelectLocationScreen() {
       <TouchableOpacity
         style={[styles.addressCard, isSelected && styles.addressCardSelected]}
         onPress={() => handleSelectAddress(item)}
-        activeOpacity={0.7}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityState={{ selected: isSelected }}
       >
-        <View style={styles.addressIconWrap}>
+        <IconWrap size={40} bg={T.sand} style={styles.addressIconWrap}>
           <MaterialCommunityIcons
             name={getAddressIcon(item.label)}
-            size={24}
+            size={20}
             color={isSelected ? T.green : T.barkMid}
           />
-        </View>
+        </IconWrap>
 
         <View style={styles.addressContent}>
           <View style={styles.addressHeader}>
-            <Text style={styles.addressLabel}>{item.label}</Text>
+            <Text style={styles.addressLabel} numberOfLines={1}>
+              {item.label}
+            </Text>
             {item.distance != null && (
               <Text style={styles.distanceText}>
                 • {item.distance < 1
@@ -283,9 +303,15 @@ export default function SelectLocationScreen() {
               </Text>
             )}
             {item.is_default && (
-              <View style={styles.defaultBadge}>
-                <Text style={styles.defaultBadgeText}>Selected</Text>
-              </View>
+              <Badge
+                size="sm"
+                pill
+                bg={T.green}
+                color={T.white}
+                label="Selected"
+                style={styles.defaultBadge}
+                textStyle={styles.defaultBadgeText}
+              />
             )}
           </View>
 
@@ -294,25 +320,33 @@ export default function SelectLocationScreen() {
           </Text>
 
           {item.landmark && (
-            <Text style={styles.landmarkText} numberOfLines={1}>
+            <View style={styles.landmarkRow}>
               <MaterialCommunityIcons name="map-marker-outline" size={12} color={T.barkLight} />
-              {" "}{item.landmark}
-            </Text>
+              <Text style={styles.landmarkText} numberOfLines={1}>
+                {item.landmark}
+              </Text>
+            </View>
           )}
         </View>
 
         <View style={styles.addressActions}>
           <TouchableOpacity
-            style={styles.shareBtn}
+            style={styles.cardActionBtn}
             onPress={() => handleShareAddress(item)}
-            hitSlop={8}
+            hitSlop={6}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Share address"
           >
             <MaterialCommunityIcons name="share-variant" size={18} color={T.barkLight} />
           </TouchableOpacity>
           <TouchableOpacity
-            style={styles.moreBtn}
+            style={styles.cardActionBtn}
             onPress={() => router.push(`/location/edit?id=${item.id}`)}
-            hitSlop={8}
+            hitSlop={6}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Edit address"
           >
             <MaterialCommunityIcons name="dots-vertical" size={18} color={T.barkLight} />
           </TouchableOpacity>
@@ -329,24 +363,20 @@ export default function SelectLocationScreen() {
   );
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top"]}>
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => {
-            if (router.canGoBack()) {
-              router.back();
-            } else {
-              router.replace("/(tabs)/home");
-            }
-          }}
-          activeOpacity={0.7}
-        >
-          <MaterialCommunityIcons name="chevron-left" size={28} color={T.bark} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Select Location</Text>
-        <View style={{ width: 40 }} />
-      </View>
+    <Screen bg={T.cream} edges={["top"]}>
+      <ScreenHeader
+        title="Select Location"
+        onBack={() => {
+          if (router.canGoBack()) {
+            router.back();
+          } else {
+            router.replace("/(tabs)/home");
+          }
+        }}
+        backProps={{ bg: T.sand, color: T.bark }}
+        titleStyle={styles.headerTitle}
+        style={styles.header}
+      />
 
       <View style={styles.searchContainer}>
         <View style={styles.searchBar}>
@@ -357,9 +387,16 @@ export default function SelectLocationScreen() {
             placeholderTextColor={T.barkLight}
             value={searchQuery}
             onChangeText={setSearchQuery}
+            returnKeyType="search"
           />
           {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery("")}>
+            <TouchableOpacity
+              onPress={() => setSearchQuery("")}
+              hitSlop={12}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Clear search"
+            >
               <MaterialCommunityIcons name="close-circle" size={18} color={T.barkLight} />
             </TouchableOpacity>
           )}
@@ -370,81 +407,126 @@ export default function SelectLocationScreen() {
         <TouchableOpacity
           style={styles.quickActionBtn}
           onPress={handleUseCurrentLocation}
-          activeOpacity={0.8}
+          activeOpacity={0.7}
           disabled={fetchingCurrentLocation}
+          accessibilityRole="button"
         >
-          <MaterialCommunityIcons name="crosshairs-gps" size={20} color="#E91E63" />
-          <Text style={[styles.quickActionText, { color: "#E91E63" }]}>
+          <MaterialCommunityIcons name="crosshairs-gps" size={20} color={T.pink} />
+          <Text style={[styles.quickActionText, styles.quickActionTextAccent]}>
             Use my Current Location
           </Text>
-          {fetchingCurrentLocation && (
-            <ActivityIndicator size="small" color="#E91E63" style={{ marginLeft: 8 }} />
-          )}
+          <View style={styles.quickActionTrailing}>
+            {fetchingCurrentLocation && (
+              <ActivityIndicator size="small" color={T.pink} />
+            )}
+          </View>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.quickActionBtn}
           onPress={handleAddNewAddress}
-          activeOpacity={0.8}
+          activeOpacity={0.7}
+          accessibilityRole="button"
         >
-          <MaterialCommunityIcons name="plus" size={20} color="#E91E63" />
-          <Text style={[styles.quickActionText, { color: "#E91E63" }]}>
+          <MaterialCommunityIcons name="plus" size={20} color={T.pink} />
+          <Text style={[styles.quickActionText, styles.quickActionTextAccent]}>
             Add New Address
           </Text>
-          <MaterialCommunityIcons name="chevron-right" size={20} color={T.barkLight} />
+          <View style={styles.quickActionTrailing}>
+            <MaterialCommunityIcons name="chevron-right" size={20} color={T.barkLight} />
+          </View>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={styles.quickActionBtn}
+          style={[styles.quickActionBtn, styles.quickActionBtnLast]}
           onPress={handleRequestFromFriend}
-          activeOpacity={0.8}
+          activeOpacity={0.7}
+          accessibilityRole="button"
         >
-          <MaterialCommunityIcons name="whatsapp" size={20} color="#25D366" />
-          <Text style={[styles.quickActionText, { color: T.bark }]}>
+          <MaterialCommunityIcons name="whatsapp" size={20} color={WHATSAPP_GREEN} />
+          <Text style={styles.quickActionText}>
             Request address from friend
           </Text>
-          <MaterialCommunityIcons name="chevron-right" size={20} color={T.barkLight} />
+          <View style={styles.quickActionTrailing}>
+            <MaterialCommunityIcons name="chevron-right" size={20} color={T.barkLight} />
+          </View>
         </TouchableOpacity>
       </View>
 
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Saved Addresses</Text>
+        <SectionLabel style={styles.sectionTitle}>Saved Addresses</SectionLabel>
       </View>
 
       {loading ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={T.green} />
-          <Text style={styles.loadingText}>Loading addresses...</Text>
+        <View
+          style={styles.skeletonList}
+          accessible
+          accessibilityLabel="Loading addresses..."
+        >
+          {SKELETON_ROWS.map((i) => (
+            <View key={i} style={styles.addressCard}>
+              <Skeleton
+                width={40}
+                height={40}
+                radius={12}
+                color={T.sand}
+                style={styles.addressIconWrap}
+              />
+              <View style={styles.addressContent}>
+                <Skeleton
+                  width="40%"
+                  height={16}
+                  color={T.sand}
+                  style={styles.skeletonLabel}
+                />
+                <SkeletonText
+                  lines={2}
+                  lineHeight={12}
+                  gap={6}
+                  width="85%"
+                  lastLineWidth="60%"
+                  color={T.sand}
+                />
+              </View>
+            </View>
+          ))}
         </View>
       ) : filteredAddresses.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <MaterialCommunityIcons name="map-marker-off" size={48} color={T.barkLight} />
-          <Text style={styles.emptyTitle}>
-            {searchQuery ? "No addresses found" : "No saved addresses"}
-          </Text>
-          <Text style={styles.emptyText}>
-            {searchQuery
+        <EmptyState
+          fill
+          icon="map-marker-off"
+          iconSize={48}
+          iconColor={T.barkLight}
+          title={searchQuery ? "No addresses found" : "No saved addresses"}
+          text={
+            searchQuery
               ? "Try a different search term"
-              : "Add your first address to get started"}
-          </Text>
+              : "Add your first address to get started"
+          }
+          titleStyle={styles.emptyTitle}
+          textStyle={styles.emptyText}
+        >
           {!searchQuery && (
-            <TouchableOpacity
-              style={styles.emptyBtn}
+            <PrimaryButton
+              size="sm"
+              icon="plus"
+              label="Add Address"
               onPress={handleAddNewAddress}
-              activeOpacity={0.8}
-            >
-              <MaterialCommunityIcons name="plus" size={18} color={T.white} />
-              <Text style={styles.emptyBtnText}>Add Address</Text>
-            </TouchableOpacity>
+              style={styles.emptyBtn}
+              textStyle={styles.emptyBtnText}
+            />
           )}
-        </View>
+        </EmptyState>
       ) : (
         <FlatList
           data={filteredAddresses}
           renderItem={renderAddressItem}
           keyExtractor={(item) => item.id}
           extraData={listExtraData}
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={[
+            styles.listContent,
+            { paddingBottom: 20 + insets.bottom },
+          ]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           initialNumToRender={8}
@@ -453,55 +535,41 @@ export default function SelectLocationScreen() {
           removeClippedSubviews
         />
       )}
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: T.cream,
-  },
   header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: T.white,
-    borderBottomWidth: 1,
     borderBottomColor: T.cardBorder,
   },
-  backBtn: {
-    width: 40,
-    height: 40,
-    alignItems: "center",
-    justifyContent: "center",
-  },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: "700",
     color: T.bark,
   },
   searchContainer: {
     paddingHorizontal: 16,
     paddingVertical: 12,
     backgroundColor: T.white,
+    borderBottomWidth: 1,
+    borderBottomColor: T.cardBorder,
   },
   searchBar: {
     flexDirection: "row",
     alignItems: "center",
+    // Fixed height: identical bar on iOS/Android (matches select-map).
+    height: 44,
     backgroundColor: T.sand,
     borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    gap: 10,
+    paddingHorizontal: 16,
+    gap: 12,
   },
   searchInput: {
     flex: 1,
+    height: "100%",
+    paddingVertical: 0,
     fontSize: 15,
     color: T.bark,
-    fontWeight: "500",
+    fontFamily: "PlusJakartaSans_500Medium",
   },
   quickActions: {
     backgroundColor: T.white,
@@ -511,58 +579,62 @@ const styles = StyleSheet.create({
   quickActionBtn: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingVertical: 16,
     gap: 12,
     borderBottomWidth: 1,
     borderBottomColor: T.cardBorder,
   },
-  quickActionText: {
+  quickActionBtnLast: {
+    borderBottomWidth: 0,
+  },
+  quickActionText: { fontFamily: "PlusJakartaSans_600SemiBold",
     flex: 1,
     fontSize: 15,
-    fontWeight: "600",
     color: T.bark,
+  },
+  quickActionTextAccent: {
+    color: T.pink,
+  },
+  // Fixed trailing slot so the chevrons / spinner share one right edge.
+  quickActionTrailing: {
+    width: 20,
+    alignItems: "flex-end",
   },
   sectionHeader: {
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: T.cream,
+    paddingHorizontal: 16,
+    paddingTop: 16,
   },
   sectionTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: T.bark,
-    letterSpacing: -0.2,
+    color: T.barkMid,
+    paddingHorizontal: 0,
   },
   listContent: {
     paddingHorizontal: 16,
     paddingBottom: 20,
   },
+  skeletonList: {
+    paddingHorizontal: 16,
+  },
+  skeletonLabel: {
+    marginBottom: 8,
+  },
   addressCard: {
     flexDirection: "row",
     backgroundColor: T.white,
-    borderRadius: 16,
+    borderRadius: 14,
     padding: 16,
     marginBottom: 12,
+    // 2px so the selected state (T.green) reads clearly; the hairline tint
+    // gives unselected cards an edge on both platforms without a shadow.
     borderWidth: 2,
-    borderColor: "transparent",
-    shadowColor: T.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
+    borderColor: T.cardBorder,
   },
   addressCardSelected: {
     borderColor: T.green,
     backgroundColor: T.greenXLight,
   },
   addressIconWrap: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: T.sand,
-    alignItems: "center",
-    justifyContent: "center",
     marginRight: 12,
   },
   addressContent: {
@@ -574,95 +646,60 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     gap: 6,
   },
-  addressLabel: {
+  addressLabel: { fontFamily: "PlusJakartaSans_700Bold",
+    flexShrink: 1,
     fontSize: 16,
-    fontWeight: "700",
     color: T.bark,
   },
-  distanceText: {
+  distanceText: { fontFamily: "PlusJakartaSans_600SemiBold",
     fontSize: 12,
-    fontWeight: "600",
     color: T.barkLight,
   },
   defaultBadge: {
-    backgroundColor: T.green,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 8,
+    alignSelf: "center",
   },
   defaultBadgeText: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: T.white,
     textTransform: "uppercase",
   },
-  addressText: {
+  addressText: { fontFamily: "PlusJakartaSans_500Medium",
     fontSize: 14,
     color: T.barkMid,
     lineHeight: 20,
     marginBottom: 4,
   },
-  landmarkText: {
+  landmarkRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  landmarkText: { fontFamily: "PlusJakartaSans_500Medium",
+    flex: 1,
     fontSize: 12,
     color: T.barkLight,
-    fontWeight: "500",
   },
   addressActions: {
     flexDirection: "column",
-    gap: 8,
+    gap: 4,
     marginLeft: 8,
   },
-  shareBtn: {
-    padding: 4,
-  },
-  moreBtn: {
-    padding: 4,
-  },
-  loadingContainer: {
-    flex: 1,
+  cardActionBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 60,
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 14,
-    color: T.barkLight,
-    fontWeight: "500",
-  },
-  emptyContainer: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 40,
-    paddingVertical: 60,
   },
   emptyTitle: {
-    fontSize: 18,
-    fontWeight: "700",
     color: T.bark,
-    marginTop: 16,
-    marginBottom: 8,
   },
   emptyText: {
-    fontSize: 14,
     color: T.barkLight,
-    textAlign: "center",
-    lineHeight: 20,
   },
   emptyBtn: {
-    flexDirection: "row",
-    alignItems: "center",
     backgroundColor: T.green,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 24,
-    marginTop: 20,
-    gap: 8,
+    marginTop: 10,
   },
-  emptyBtnText: {
+  emptyBtnText: { fontFamily: "PlusJakartaSans_700Bold",
     fontSize: 15,
-    fontWeight: "700",
-    color: T.white,
   },
 });

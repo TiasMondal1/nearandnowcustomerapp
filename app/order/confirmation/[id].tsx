@@ -1,4 +1,5 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Image } from "expo-image";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -10,13 +11,23 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRazorpay } from "@codearcade/expo-razorpay";
 
+import {
+    Card,
+    Divider,
+    IconButton,
+    PrimaryButton,
+    Screen,
+    Skeleton,
+    SkeletonCircle,
+} from "../../../components/ui";
 import { C } from "../../../constants/colors";
 import { PLATFORM_FEE, HANDLING_FEE } from "../../../constants/fees";
 import { useAuth } from "../../../context/AuthContext";
 import { useCart } from "../../../context/CartContext";
+import { cdnImage } from "../../../lib/imageUrl";
 import { getOrderById, type Order } from "../../../lib/orderService";
 import { logError } from "../../../lib/logError";
 import { logSilentFailure } from "../../../lib/logSilentFailure";
@@ -56,6 +67,7 @@ export default function OrderConfirmationScreen() {
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const progressAnim = useRef(new Animated.Value(1)).current;
+  const insets = useSafeAreaInsets();
 
   // Load order details
   useEffect(() => {
@@ -338,46 +350,78 @@ export default function OrderConfirmationScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safe}>
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={C.primary} />
-          <Text style={styles.loadingText}>Loading order details...</Text>
+      <Screen edges={["left", "right", "bottom"]}>
+        <View
+          style={[styles.successHeader, { paddingTop: 32 + insets.top }]}
+          accessible
+          accessibilityLabel="Loading order details"
+        >
+          <SkeletonCircle size={64} color={C.card} style={styles.successIconWrap} />
+          <Skeleton width={230} height={22} color={C.card} />
+          <Skeleton width={120} height={14} color={C.card} style={styles.skelGap8} />
+          <Skeleton width={260} height={12} color={C.card} style={styles.skelGap8} />
         </View>
-      </SafeAreaView>
+
+        <Card style={styles.skeletonCard}>
+          <View style={styles.timerHeader}>
+            <SkeletonCircle size={24} />
+            <View style={styles.flex1}>
+              <Skeleton width="60%" height={14} />
+              <Skeleton width="85%" height={12} style={styles.skelGap6} />
+            </View>
+          </View>
+          <View style={styles.timerDisplay}>
+            <Skeleton width={120} height={44} radius={10} />
+            <Skeleton width={72} height={12} style={styles.skelGap8} />
+          </View>
+          <Skeleton height={6} radius={3} />
+        </Card>
+
+        <Card style={styles.skeletonCard}>
+          <View style={styles.loadingRow}>
+            <ActivityIndicator size="small" color={C.primary} />
+            <Text style={styles.loadingText}>Loading order details...</Text>
+          </View>
+        </Card>
+      </Screen>
     );
   }
 
   if (!order || loadError) {
     return (
-      <SafeAreaView style={styles.safe}>
+      <Screen>
         <View style={styles.center}>
           <MaterialCommunityIcons name="alert-circle-outline" size={48} color={C.textLight} />
           <Text style={styles.loadingText}>
             {loadError || "Couldn't load your order details."}
           </Text>
-          <TouchableOpacity
-            style={styles.retryBtn}
+          <PrimaryButton
+            size="sm"
+            label="Try Again"
             onPress={() => setRetryTick((n) => n + 1)}
-            activeOpacity={0.85}
+          />
+          <TouchableOpacity
+            onPress={() => router.replace("/orders")}
+            activeOpacity={0.7}
+            style={styles.retryLink}
+            hitSlop={{ top: 4, bottom: 4 }}
+            accessibilityRole="button"
           >
-            <Text style={styles.retryBtnText}>Try Again</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => router.replace("/orders")} activeOpacity={0.7}>
             <Text style={styles.retryLinkText}>Go to My Orders</Text>
           </TouchableOpacity>
         </View>
-      </SafeAreaView>
+      </Screen>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <Screen edges={["left", "right", "bottom"]}>
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
-        {/* Success Header */}
-        <View style={styles.successHeader}>
+        {/* Success Header — runs under the status bar; the top inset is paid here instead of by the SafeAreaView */}
+        <View style={[styles.successHeader, { paddingTop: 32 + insets.top }]}>
           <View style={styles.successIconWrap}>
             <MaterialCommunityIcons name="check-circle" size={64} color={C.success} />
           </View>
@@ -392,10 +436,10 @@ export default function OrderConfirmationScreen() {
 
         {/* Add More Timer Card */}
         {!timerExpired ? (
-          <View style={styles.timerCard}>
+          <Card borderColor={C.primary} style={styles.timerCard}>
             <View style={styles.timerHeader}>
               <MaterialCommunityIcons name="clock-fast" size={24} color={timerColor} />
-              <View style={{ flex: 1 }}>
+              <View style={styles.flex1}>
                 <Text style={styles.timerTitle}>Want to add more items?</Text>
                 <Text style={styles.timerSub}>
                   Add items now and they&apos;ll be delivered with this order!
@@ -425,20 +469,20 @@ export default function OrderConfirmationScreen() {
             </View>
 
             {cartItems.length > 0 && (
-              <TouchableOpacity
-                style={styles.goToCartBtn}
-                activeOpacity={0.85}
+              <PrimaryButton
+                size="sm"
+                icon="cart"
+                label={`Go to Cart (${cartItems.length} items)`}
                 onPress={handleGoToCart}
-              >
-                <MaterialCommunityIcons name="cart" size={18} color="#fff" />
-                <Text style={styles.goToCartText}>
-                  Go to Cart ({cartItems.length} items)
-                </Text>
-              </TouchableOpacity>
+                fullWidth
+                shadow
+                style={styles.goToCartBtn}
+                textStyle={styles.goToCartText}
+              />
             )}
-          </View>
+          </Card>
         ) : (
-          <View style={styles.timerExpiredCard}>
+          <Card bg={C.bgSoft} style={styles.timerExpiredCard}>
             {addItemsPhase === "processing" ? (
               <>
                 <ActivityIndicator size="small" color={C.primary} />
@@ -480,7 +524,7 @@ export default function OrderConfirmationScreen() {
                 </View>
               </>
             )}
-          </View>
+          </Card>
         )}
         {RazorpayUI}
 
@@ -493,15 +537,40 @@ export default function OrderConfirmationScreen() {
             </Text>
 
             {loadingSuggestions ? (
-              <ActivityIndicator
-                size="small"
-                color={C.primary}
-                style={{ marginTop: 20 }}
-              />
+              <View style={styles.suggestionsGrid} accessible accessibilityLabel="Loading suggestions">
+                {[0, 1, 2].map((i) => (
+                  <Card key={i} style={styles.suggestionCard}>
+                    <Skeleton width={44} height={44} radius={10} />
+                    <View style={styles.suggestionInfo}>
+                      <Skeleton width="60%" height={14} />
+                      <Skeleton width="30%" height={12} style={styles.skelGap6} />
+                    </View>
+                    <Skeleton width={40} height={40} radius={12} />
+                  </Card>
+                ))}
+              </View>
+            ) : suggestedProducts.length === 0 ? (
+              <View style={styles.suggestionsEmpty}>
+                <MaterialCommunityIcons name="basket-outline" size={18} color={C.textLight} />
+                <Text style={styles.suggestionsEmptyText}>No suggestions right now</Text>
+              </View>
             ) : (
               <View style={styles.suggestionsGrid}>
                 {suggestedProducts.map((product) => (
-                  <View key={product.id} style={styles.suggestionCard}>
+                  <Card key={product.id} style={styles.suggestionCard}>
+                    {product.image_url ? (
+                      <Image
+                        source={{ uri: cdnImage(product.image_url, 120) }}
+                        style={styles.suggestionThumb}
+                        contentFit="contain"
+                        transition={120}
+                        cachePolicy="memory-disk"
+                      />
+                    ) : (
+                      <View style={[styles.suggestionThumb, styles.suggestionThumbEmpty]}>
+                        <MaterialCommunityIcons name="image-off-outline" size={18} color={C.textLight} />
+                      </View>
+                    )}
                     <View style={styles.suggestionInfo}>
                       <Text style={styles.suggestionName} numberOfLines={2}>
                         {product.name}
@@ -513,14 +582,18 @@ export default function OrderConfirmationScreen() {
                         )}
                       </Text>
                     </View>
-                    <TouchableOpacity
-                      style={styles.addBtn}
-                      activeOpacity={0.85}
+                    <IconButton
+                      icon="plus"
+                      size={40}
+                      iconSize={18}
+                      bg={C.primary}
+                      color={C.card}
+                      shadow="primarySm"
+                      accessibilityLabel={`Add ${product.name} to cart`}
                       onPress={() => handleAddToCart(product)}
-                    >
-                      <MaterialCommunityIcons name="plus" size={18} color="#fff" />
-                    </TouchableOpacity>
-                  </View>
+                      style={styles.addBtn}
+                    />
+                  </Card>
                 ))}
               </View>
             )}
@@ -531,7 +604,7 @@ export default function OrderConfirmationScreen() {
         <View style={styles.orderSummary}>
           <Text style={styles.sectionTitle}>Order Summary</Text>
 
-          <View style={styles.summaryCard}>
+          <Card style={styles.summaryCard}>
             {order?.items?.slice(0, 5).map((item, idx) => (
               <View
                 key={idx}
@@ -541,7 +614,7 @@ export default function OrderConfirmationScreen() {
                 ]}
               >
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.summaryItemName}>{item.name}</Text>
+                  <Text style={styles.summaryItemName} numberOfLines={2}>{item.name}</Text>
                   <Text style={styles.summaryItemUnit}>
                     ₹{item.price} × {formatQuantityDisplay(item.quantity)}
                   </Text>
@@ -557,7 +630,7 @@ export default function OrderConfirmationScreen() {
               </Text>
             )}
 
-            <View style={styles.summaryDivider} />
+            <Divider spacing={12} />
 
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Subtotal</Text>
@@ -597,62 +670,69 @@ export default function OrderConfirmationScreen() {
                 ₹{(order?.order_total ?? 0).toFixed(2)}
               </Text>
             </View>
-          </View>
+          </Card>
         </View>
 
         {/* Action Buttons */}
         <View style={styles.actionButtons}>
-          <TouchableOpacity
-            style={[styles.actionButton, styles.trackOrderBtn]}
-            activeOpacity={0.85}
+          <PrimaryButton
+            size="sm"
+            icon="map-marker-path"
+            iconSize={20}
+            label="Track Order"
             onPress={handleTrackOrder}
-          >
-            <MaterialCommunityIcons name="map-marker-path" size={20} color="#fff" />
-            <Text style={styles.actionButtonText}>Track Order</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.actionButton, styles.invoicePreviewBtn]}
-            activeOpacity={0.85}
+            shadow
+            style={styles.actionButton}
+            textStyle={styles.actionButtonText}
+          />
+          <PrimaryButton
+            size="sm"
+            variant="success"
+            icon="file-document-outline"
+            iconSize={20}
+            label="View Invoice"
             onPress={() => router.push(`/order/invoice/${id}` as any)}
-          >
-            <MaterialCommunityIcons name="file-document-outline" size={20} color="#fff" />
-            <Text style={styles.actionButtonText}>View Invoice</Text>
-          </TouchableOpacity>
+            shadow
+            style={styles.actionButton}
+            textStyle={styles.actionButtonText}
+          />
         </View>
 
         {/* Delivery Info */}
         <View style={styles.deliveryInfo}>
-          <MaterialCommunityIcons name="information-outline" size={18} color={C.textSub} />
+          <MaterialCommunityIcons
+            name="information-outline"
+            size={18}
+            color={C.textSub}
+            style={styles.deliveryInfoIcon}
+          />
           <Text style={styles.deliveryInfoText}>
             You&apos;ll receive a 4-digit PIN once your order is dispatched. Share this PIN
             with the delivery partner to confirm delivery.
           </Text>
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
+  flex1: { flex: 1 },
   center: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     gap: 12,
+    paddingHorizontal: 32,
   },
-  loadingText: { color: C.textSub, fontSize: 14, textAlign: "center", paddingHorizontal: 32 },
-  retryBtn: {
-    backgroundColor: C.primary,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 12,
-    marginTop: 4,
-  },
-  retryBtnText: { color: "#fff", fontSize: 14, fontWeight: "700" },
-  retryLinkText: { color: C.primary, fontSize: 13, fontWeight: "600", marginTop: 4 },
+  loadingText: { fontFamily: "PlusJakartaSans_500Medium", color: C.textSub, fontSize: 14, textAlign: "center" },
+  loadingRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
+  retryLink: { paddingVertical: 10, paddingHorizontal: 16 },
+  retryLinkText: { color: C.primary, fontSize: 13, fontFamily: "PlusJakartaSans_600SemiBold" },
   scrollContent: { paddingBottom: 40 },
+  skeletonCard: { marginHorizontal: 16, marginTop: 16, padding: 16 },
+  skelGap6: { marginTop: 6 },
+  skelGap8: { marginTop: 8 },
 
   // Success Header
   successHeader: {
@@ -664,20 +744,18 @@ const styles = StyleSheet.create({
   successIconWrap: {
     marginBottom: 16,
   },
-  successTitle: {
+  successTitle: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: "#065f46",
     fontSize: 22,
-    fontWeight: "900",
     textAlign: "center",
   },
-  orderNumber: {
+  orderNumber: { fontFamily: "PlusJakartaSans_700Bold",
     color: "#065f46",
     fontSize: 14,
-    fontWeight: "700",
     marginTop: 8,
     opacity: 0.8,
   },
-  successSub: {
+  successSub: { fontFamily: "PlusJakartaSans_400Regular",
     color: "#065f46",
     fontSize: 14,
     textAlign: "center",
@@ -686,31 +764,26 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 
-  // Timer Card
+  // Timer Card (Card primitive + C.primary 1px border for emphasis)
   timerCard: {
     margin: 16,
-    padding: 18,
-    backgroundColor: C.card,
-    borderRadius: 18,
-    borderWidth: 2,
-    borderColor: C.primary,
+    padding: 16,
     shadowColor: C.primary,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
+    shadowOpacity: 0.08,
     shadowRadius: 8,
-    elevation: 5,
+    elevation: 3,
   },
   timerHeader: {
     flexDirection: "row",
     alignItems: "flex-start",
     gap: 12,
   },
-  timerTitle: {
+  timerTitle: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: C.text,
     fontSize: 16,
-    fontWeight: "800",
   },
-  timerSub: {
+  timerSub: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: C.textSub,
     fontSize: 13,
     marginTop: 4,
@@ -720,15 +793,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginVertical: 20,
   },
-  timerText: {
+  timerText: { fontFamily: "PlusJakartaSans_800ExtraBold",
     fontSize: 48,
-    fontWeight: "900",
     fontVariant: ["tabular-nums"],
   },
-  timerLabel: {
+  timerLabel: { fontFamily: "PlusJakartaSans_600SemiBold",
     color: C.textSub,
     fontSize: 13,
-    fontWeight: "600",
     marginTop: 4,
   },
   progressBarWrap: {
@@ -742,44 +813,28 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   goToCartBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    backgroundColor: C.primary,
     paddingVertical: 14,
-    borderRadius: 12,
     marginTop: 16,
-    shadowColor: C.primary,
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.15,
     shadowRadius: 6,
     elevation: 4,
   },
-  goToCartText: {
-    color: "#fff",
-    fontSize: 15,
-    fontWeight: "800",
-  },
+  goToCartText: { fontFamily: "PlusJakartaSans_800ExtraBold" },
 
   // Timer Expired
   timerExpiredCard: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 14,
+    gap: 12,
     margin: 16,
     padding: 16,
-    backgroundColor: C.bgSoft,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: C.border,
   },
-  timerExpiredTitle: {
+  timerExpiredTitle: { fontFamily: "PlusJakartaSans_700Bold",
     color: C.text,
-    fontSize: 15,
-    fontWeight: "700",
+    fontSize: 14,
   },
-  timerExpiredSub: {
+  timerExpiredSub: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: C.textSub,
     fontSize: 13,
     marginTop: 2,
@@ -790,61 +845,63 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     marginBottom: 8,
   },
-  sectionTitle: {
+  sectionTitle: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: C.text,
-    fontSize: 17,
-    fontWeight: "800",
+    fontSize: 16,
   },
-  sectionSub: {
+  sectionSub: { fontFamily: "PlusJakartaSans_500Medium",
     color: C.textSub,
     fontSize: 13,
     marginTop: 4,
   },
   suggestionsGrid: {
-    marginTop: 14,
-    gap: 10,
+    marginTop: 12,
+    gap: 12,
   },
   suggestionCard: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: C.card,
-    padding: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: C.border,
     gap: 12,
+  },
+  suggestionThumb: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: C.bgSoft,
+  },
+  suggestionThumbEmpty: {
+    alignItems: "center",
+    justifyContent: "center",
   },
   suggestionInfo: {
     flex: 1,
   },
-  suggestionName: {
+  suggestionName: { fontFamily: "PlusJakartaSans_700Bold",
     color: C.text,
     fontSize: 14,
-    fontWeight: "700",
   },
-  suggestionPrice: {
+  suggestionPrice: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: C.primary,
     fontSize: 14,
-    fontWeight: "800",
     marginTop: 4,
   },
-  suggestionUnit: {
+  suggestionUnit: { fontFamily: "PlusJakartaSans_600SemiBold",
     color: C.textSub,
     fontSize: 12,
-    fontWeight: "600",
   },
-  addBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: C.primary,
+  addBtn: { shadowOpacity: 0.15 },
+  suggestionsEmpty: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    shadowColor: C.primary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 3,
+    gap: 10,
+    marginTop: 12,
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: C.bgSoft,
+  },
+  suggestionsEmptyText: { fontFamily: "PlusJakartaSans_600SemiBold",
+    color: C.textSub,
+    fontSize: 12,
   },
 
   // Order Summary
@@ -853,12 +910,8 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   summaryCard: {
-    backgroundColor: C.card,
-    borderRadius: 16,
     padding: 16,
     marginTop: 12,
-    borderWidth: 1,
-    borderColor: C.border,
   },
   summaryItem: {
     flexDirection: "row",
@@ -869,45 +922,38 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: C.border,
   },
-  summaryItemName: {
+  summaryItemName: { fontFamily: "PlusJakartaSans_600SemiBold",
     color: C.text,
     fontSize: 14,
-    fontWeight: "600",
   },
-  summaryItemUnit: {
+  summaryItemUnit: { fontFamily: "PlusJakartaSans_700Bold",
     color: C.textSub,
     fontSize: 12,
     marginTop: 2,
   },
-  summaryItemTotal: {
+  summaryItemTotal: { fontFamily: "PlusJakartaSans_700Bold",
     color: C.text,
     fontSize: 14,
-    fontWeight: "700",
+    marginLeft: 12,
+    flexShrink: 0,
   },
-  moreItems: {
+  moreItems: { fontFamily: "PlusJakartaSans_600SemiBold",
     color: C.textSub,
     fontSize: 12,
-    fontStyle: "italic",
     paddingVertical: 8,
-  },
-  summaryDivider: {
-    height: 1,
-    backgroundColor: C.border,
-    marginVertical: 12,
   },
   summaryRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     marginBottom: 8,
   },
-  summaryLabel: {
+  summaryLabel: { fontFamily: "PlusJakartaSans_600SemiBold",
     color: C.textSub,
     fontSize: 14,
   },
-  summaryValue: {
+  summaryValue: { fontFamily: "PlusJakartaSans_600SemiBold",
     color: C.text,
     fontSize: 14,
-    fontWeight: "600",
   },
   totalRow: {
     marginTop: 4,
@@ -916,18 +962,16 @@ const styles = StyleSheet.create({
     borderTopColor: C.border,
     marginBottom: 0,
   },
-  totalLabel: {
+  totalLabel: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: C.text,
     fontSize: 16,
-    fontWeight: "800",
   },
-  totalValue: {
+  totalValue: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: C.primary,
     fontSize: 18,
-    fontWeight: "900",
   },
 
-  // Action Buttons
+  // Action Buttons (overrides on PrimaryButton size="sm")
   actionButtons: {
     flexDirection: "row",
     gap: 12,
@@ -936,45 +980,30 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
     paddingVertical: 16,
-    borderRadius: 14,
+    paddingHorizontal: 12,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.15,
     shadowRadius: 8,
-    elevation: 5,
+    elevation: 3,
   },
-  trackOrderBtn: {
-    backgroundColor: C.primary,
-    shadowColor: C.primary,
-  },
-  invoicePreviewBtn: {
-    backgroundColor: C.success,
-    shadowColor: C.success,
-  },
-  actionButtonText: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "800",
-  },
+  actionButtonText: { fontFamily: "PlusJakartaSans_800ExtraBold" },
 
   // Delivery Info
   deliveryInfo: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 10,
+    gap: 12,
     marginHorizontal: 16,
     marginTop: 16,
-    padding: 14,
+    padding: 16,
     backgroundColor: C.infoLight,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: "#93c5fd",
   },
-  deliveryInfoText: {
+  deliveryInfoIcon: { marginTop: 1 },
+  deliveryInfoText: { fontFamily: "PlusJakartaSans_400Regular",
     flex: 1,
     color: "#1e40af",
     fontSize: 13,

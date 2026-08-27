@@ -33,13 +33,15 @@ import {
 } from "react-native";
 import Animated, {
     FadeInUp,
+    FadeOutDown,
     useAnimatedStyle,
     useSharedValue,
     withSpring,
 } from "react-native-reanimated";
-import { SafeAreaView } from "react-native-safe-area-context";
 
 import ProfileMenu from "../../components/ProfileMenu";
+import { IconWrap, Screen, Skeleton } from "../../components/ui";
+import { HIT_SLOP } from "../../constants/ui";
 import { useAuth } from "../../context/AuthContext";
 import { useCart, useCartItemMap, type CartItem } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
@@ -66,22 +68,21 @@ const T = {
   greenLight: "#3DA668",
   greenXLight: "#EAF6EE",
   greenGlow: "rgba(45,122,79,0.18)",
+  greenBorder: "rgba(45,122,79,0.2)",
   cream: "#FAFAF7",
   sand: "#F3F1EB",
   bark: "#3C2F1E",
-  barkMid: "#6B5744",
   barkLight: "#A89282",
   white: "#FFFFFF",
-  red: "#D94F3D",
-  redLight: "#FCE9E7",
-  card: "#FFFFFF",
   cardBorder: "rgba(60,47,30,0.08)",
-  shadow: "rgba(45,122,79,0.12)",
   shadowDark: "rgba(0,0,0,0.10)",
-  badge: "#FF6B35",
-  imageBg: "#F7F5EF",
   skeletonLo: "#EFEDE7",
   skeletonHi: "#F7F5EF",
+  // Terracotta deal accent — mirrors C.deal/dealDark/dealLight in constants/colors.ts.
+  // Use ONLY for commercial-benefit signals (discounts, savings) — never errors/CTAs.
+  deal: "#EA580C",
+  dealDark: "#C2410C",
+  dealLight: "#FFEDD5",
 };
 
 const FALLBACK_ICONS = [
@@ -113,6 +114,13 @@ const SECTION_VISIBLE_PRODUCTS = 6;
 /** Number of cards rendered per row in the home grid. */
 const ROW_COUNT = 3;
 
+/** Lifts the 22px qty buttons to a 44px target; horizontal slop stays 6 so − and + never overlap inside the 68px box. */
+const QTY_HIT_SLOP = { top: 11, bottom: 11, left: 6, right: 6 };
+/** Lifts the ~24px ADD button to a 44px target. */
+const ADD_HIT_SLOP = { top: 10, bottom: 10, left: 4, right: 4 };
+/** Address pressable is ~35px tall; slop it to 44+ without moving the layout. */
+const ADDRESS_HIT_SLOP = { top: 8, bottom: 8 };
+
 /**
  * Typed discriminated-union of home-feed list items. FlashList virtualizes the
  * outer list, so off-screen sections / rows are unmounted from the native view
@@ -136,7 +144,7 @@ type HomeListItem =
     };
 
 
-/** A tiny 1×1 transparent pixel used as the image placeholder while the real product loads. */
+/** Neutral blurhash rendered as the image placeholder while the real product image loads. */
 const PLACEHOLDER_BLURHASH = "L6PZfSi_.AyE_3t7t7R**0o#DgR4";
 
 // ─── Product Card (Blinkit / Instamart style) ───────────────────────────────
@@ -194,6 +202,7 @@ const ProductCard = React.memo(
             onPressIn={handlePressIn}
             onPressOut={handlePressOut}
             onPress={handlePress}
+            accessibilityRole="button"
           >
             <View style={styles.imageWrap}>
               {p.image_url ? (
@@ -211,7 +220,7 @@ const ProductCard = React.memo(
                 <View style={styles.imagePlaceholder}>
                   <MaterialCommunityIcons
                     name="image-off-outline"
-                    size={28}
+                    size={24}
                     color={T.barkLight}
                   />
                 </View>
@@ -235,8 +244,8 @@ const ProductCard = React.memo(
               {p.unit ? (
                 <View style={styles.unitPill}>
                   <MaterialCommunityIcons
-                    name="clock-fast"
-                    size={9}
+                    name="package-variant-closed"
+                    size={10}
                     color={T.green}
                   />
                   <Text style={styles.unitPillText} numberOfLines={1}>
@@ -251,7 +260,12 @@ const ProductCard = React.memo(
 
               <View style={styles.priceAddRow}>
                 <View style={styles.priceCol}>
-                  <Text style={styles.priceValue}>₹{p.price}</Text>
+                  <Text
+                    style={[styles.priceValue, hasDiscount && styles.priceValueDeal]}
+                    numberOfLines={1}
+                  >
+                    ₹{p.price}
+                  </Text>
                   {hasDiscount && (
                     <Text style={styles.originalPrice}>₹{p.original_price}</Text>
                   )}
@@ -264,7 +278,9 @@ const ProductCard = React.memo(
                         style={styles.qtyBtn}
                         onPress={handleMinus}
                         activeOpacity={0.75}
-                        hitSlop={6}
+                        hitSlop={QTY_HIT_SLOP}
+                        accessibilityRole="button"
+                        accessibilityLabel="Decrease quantity"
                       >
                         <MaterialCommunityIcons
                           name="minus"
@@ -277,7 +293,9 @@ const ProductCard = React.memo(
                         style={styles.qtyBtn}
                         onPress={handlePlus}
                         activeOpacity={0.75}
-                        hitSlop={6}
+                        hitSlop={QTY_HIT_SLOP}
+                        accessibilityRole="button"
+                        accessibilityLabel="Increase quantity"
                       >
                         <MaterialCommunityIcons
                           name="plus"
@@ -289,8 +307,11 @@ const ProductCard = React.memo(
                   ) : (
                     <TouchableOpacity
                       style={styles.addBtn}
-                      activeOpacity={0.82}
+                      activeOpacity={0.8}
                       onPress={handleAdd}
+                      hitSlop={ADD_HIT_SLOP}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Add ${p.name}`}
                     >
                       <Text style={styles.addText}>ADD</Text>
                     </TouchableOpacity>
@@ -338,8 +359,9 @@ const CategoryTile = React.memo(function CategoryTile({
       style={styles.catTile}
       activeOpacity={0.8}
       onPress={onPress}
+      accessibilityRole="button"
     >
-      <View style={[styles.catTileIconWrap, { backgroundColor: tint }]}>
+      <IconWrap size={68} radius={20} bg={tint} style={styles.catTileIconWrap}>
         {item.image_url ? (
           <ExpoImage
             source={{ uri: cdnImage(item.image_url, 180) }}
@@ -347,6 +369,7 @@ const CategoryTile = React.memo(function CategoryTile({
             contentFit="cover"
             cachePolicy="memory-disk"
             transition={100}
+            placeholder={PLACEHOLDER_BLURHASH}
             recyclingKey={item.id}
             priority="low"
           />
@@ -357,7 +380,7 @@ const CategoryTile = React.memo(function CategoryTile({
             color={T.green}
           />
         )}
-      </View>
+      </IconWrap>
       <Text style={styles.catTileLabel} numberOfLines={2}>
         {item.name}
       </Text>
@@ -370,15 +393,22 @@ const SectionHeader = React.memo(function SectionHeader({
   title,
   subtitle,
   onSeeAll,
+  accentColor,
 }: {
   title: string;
   subtitle?: string;
   onSeeAll?: () => void;
+  accentColor?: string;
 }) {
   return (
     <View style={styles.sectionHeader}>
-      <View style={styles.sectionTitleAccent} />
-      <View style={{ flex: 1 }}>
+      <View
+        style={[
+          styles.sectionTitleAccent,
+          accentColor ? { backgroundColor: accentColor } : null,
+        ]}
+      />
+      <View style={styles.sectionTitleCol}>
         <Text style={styles.sectionTitle} numberOfLines={1}>
           {title}
         </Text>
@@ -392,8 +422,9 @@ const SectionHeader = React.memo(function SectionHeader({
         <TouchableOpacity
           onPress={onSeeAll}
           activeOpacity={0.7}
-          style={styles.seeAllBtn}
-          hitSlop={6}
+          style={styles.chip}
+          hitSlop={HIT_SLOP}
+          accessibilityRole="button"
         >
           <Text style={styles.seeAllText}>See all</Text>
           <MaterialCommunityIcons
@@ -437,8 +468,18 @@ const FrequentlyBoughtSection = React.memo(function FrequentlyBoughtSection({
 
   if (!data.length) return null;
   return (
-    <View style={styles.section}>
-      <SectionHeader title={title} subtitle="Quick reorder" />
+    <View style={styles.freqShelf}>
+      {/* Warm terracotta wash marks the deals shelf — same hue as the discount
+          flags at 6% opacity, fading into the feed. Non-interactive. */}
+      <LinearGradient
+        colors={["rgba(234,88,12,0)", "rgba(234,88,12,0.07)", "rgba(234,88,12,0)"]}
+        locations={[0, 0.22, 1]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0, y: 1 }}
+        style={StyleSheet.absoluteFillObject}
+        pointerEvents="none"
+      />
+      <SectionHeader title={title} subtitle="Quick reorder" accentColor={T.deal} />
       <FlatList
         data={data}
         keyExtractor={keyExtractor}
@@ -460,35 +501,19 @@ const keyExtractor = (p: Product) => p.id;
 // ─── Skeleton card (shown during cold boot instead of blank screen) ─────────
 const SkeletonCard = React.memo(function SkeletonCard() {
   return (
-    <View style={[styles.cardOuter, { opacity: 0.92 }]}>
-      <View style={[styles.card, { borderColor: "transparent" }]}>
-        <View style={[styles.imageWrap, { backgroundColor: T.skeletonHi }]}>
-          <View style={{ height: 96 }} />
+    <View style={[styles.cardOuter, styles.skeletonCardOuter]}>
+      <View style={[styles.card, styles.skeletonCard]}>
+        <View style={styles.imageWrap}>
+          {/* 96 mirrors styles.image height so the skeleton card matches the real card */}
+          <Skeleton height={96} radius={8} color={T.skeletonHi} />
         </View>
         <View style={styles.cardBody}>
-          <View style={[styles.skeletonLine, { width: "40%", height: 10 }]} />
-          <View
-            style={[
-              styles.skeletonLine,
-              { width: "90%", marginTop: 8, height: 10 },
-            ]}
-          />
-          <View
-            style={[
-              styles.skeletonLine,
-              { width: "70%", marginTop: 5, height: 10 },
-            ]}
-          />
-          <View style={styles.priceAddRow}>
-            <View
-              style={[styles.skeletonLine, { width: "30%", height: 14 }]}
-            />
-            <View
-              style={[
-                styles.skeletonLine,
-                { width: 46, height: 24, borderRadius: 8 },
-              ]}
-            />
+          <Skeleton width="40%" height={10} color={T.skeletonLo} />
+          <Skeleton width="90%" height={10} color={T.skeletonLo} style={styles.skeletonMt8} />
+          <Skeleton width="70%" height={10} color={T.skeletonLo} style={styles.skeletonMt6} />
+          <View style={[styles.priceAddRow, styles.skeletonMt8]}>
+            <Skeleton width="30%" height={14} color={T.skeletonLo} />
+            <Skeleton width={46} height={24} radius={8} color={T.skeletonLo} />
           </View>
         </View>
       </View>
@@ -498,16 +523,18 @@ const SkeletonCard = React.memo(function SkeletonCard() {
 
 function SkeletonHomeFeed() {
   return (
-    <View style={styles.section}>
+    <View>
       <View style={styles.sectionHeader}>
-        <View style={{ flex: 1 }}>
-          <View style={[styles.skeletonLine, { width: 120, height: 16 }]} />
-          <View
-            style={[
-              styles.skeletonLine,
-              { width: 80, height: 10, marginTop: 6 },
-            ]}
-          />
+        <Skeleton
+          width={4}
+          height={18}
+          radius={2}
+          color={T.skeletonLo}
+          style={styles.skeletonAccent}
+        />
+        <View style={styles.sectionTitleCol}>
+          <Skeleton width={120} height={16} color={T.skeletonLo} />
+          <Skeleton width={80} height={10} color={T.skeletonLo} style={styles.skeletonMt6} />
         </View>
       </View>
       <View style={styles.gridWrap}>
@@ -1071,16 +1098,19 @@ export default function HomeScreen() {
             <View style={styles.stickyWrap}>
               <TouchableOpacity
                 style={styles.searchBar}
-                activeOpacity={0.88}
+                activeOpacity={0.8}
                 onPress={() => router.push("../support/search")}
+                accessibilityRole="search"
+                accessibilityLabel="Search products"
               >
-                <View style={styles.searchIconWrap}>
-                  <MaterialCommunityIcons
-                    name="magnify"
-                    size={19}
-                    color={T.green}
-                  />
-                </View>
+                <IconWrap
+                  size={30}
+                  radius={10}
+                  bg={T.greenXLight}
+                  icon="magnify"
+                  iconSize={19}
+                  iconColor={T.green}
+                />
                 <Text style={styles.searchPlaceholder}>
                   Search groceries, dairy, snacks…
                 </Text>
@@ -1147,9 +1177,10 @@ export default function HomeScreen() {
             <TouchableOpacity
               style={styles.seeAllBar}
               onPress={item.onPress}
-              activeOpacity={0.85}
+              activeOpacity={0.8}
+              accessibilityRole="button"
             >
-              <Text style={styles.seeAllBarText}>
+              <Text style={styles.seeAllBarText} numberOfLines={1}>
                 See all products in {item.categoryName}
               </Text>
               <MaterialCommunityIcons
@@ -1173,20 +1204,25 @@ export default function HomeScreen() {
         case "empty":
           return (
             <View style={styles.empty}>
-              <View style={styles.emptyIconWrap}>
-                <MaterialCommunityIcons
-                  name={item.icon}
-                  size={40}
-                  color={T.green}
-                />
-              </View>
-              <Text style={styles.emptyTitle}>{item.title}</Text>
+              <IconWrap
+                size={80}
+                circle
+                bg={T.greenXLight}
+                icon={item.icon}
+                iconSize={40}
+                iconColor={T.green}
+                style={styles.emptyIconWrap}
+              />
+              <Text style={styles.emptyTitle} numberOfLines={2}>
+                {item.title}
+              </Text>
               <Text style={styles.emptyText}>{item.message}</Text>
               {item.cta && (
                 <TouchableOpacity
                   style={styles.emptyBtn}
                   onPress={item.cta.onPress}
-                  activeOpacity={0.85}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
                 >
                   <LinearGradient
                     colors={[T.greenLight, T.green]}
@@ -1213,7 +1249,7 @@ export default function HomeScreen() {
   // ── Loading (skeleton, not spinner) ──────────────────────────────────────
   if (loading) {
     return (
-      <SafeAreaView style={styles.safe} edges={["top"]}>
+      <Screen bg={T.cream} edges={["top"]}>
         <AddressBarBlock
           liveAddress={liveAddress}
           location={location}
@@ -1224,21 +1260,16 @@ export default function HomeScreen() {
           onProfilePress={() => setShowProfileMenu(true)}
         />
         <View style={styles.stickyWrap}>
-          <View style={[styles.searchBar, { backgroundColor: T.skeletonHi }]}>
-            <View
-              style={{
-                width: 30,
-                height: 30,
-                borderRadius: 10,
-                backgroundColor: T.skeletonLo,
-              }}
-            />
-            <View
-              style={[styles.skeletonLine, { width: "60%", height: 12 }]}
-            />
+          <View style={[styles.searchBar, styles.searchBarSkeleton]}>
+            <Skeleton width={30} height={30} radius={10} color={T.skeletonLo} />
+            <Skeleton width="60%" height={12} color={T.skeletonLo} />
           </View>
         </View>
-        <ScrollView showsVerticalScrollIndicator={false}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+        >
           <SkeletonHomeFeed />
           <SkeletonHomeFeed />
         </ScrollView>
@@ -1246,13 +1277,13 @@ export default function HomeScreen() {
           visible={showProfileMenu}
           onClose={() => setShowProfileMenu(false)}
         />
-      </SafeAreaView>
+      </Screen>
     );
   }
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
-    <SafeAreaView style={styles.safe} edges={["top"]}>
+    <Screen bg={T.cream} edges={["top"]}>
       <FlashList
         ref={listRef}
         data={listData}
@@ -1288,6 +1319,7 @@ export default function HomeScreen() {
       {hasCart && (
         <Animated.View
           entering={FadeInUp.duration(340).springify()}
+          exiting={FadeOutDown.duration(220)}
           style={styles.cartBar}
           pointerEvents="box-none"
         >
@@ -1295,8 +1327,10 @@ export default function HomeScreen() {
             onPress={() => router.push("/support/checkout")}
             style={({ pressed }) => [
               styles.cartPill,
-              pressed && { transform: [{ scale: 0.97 }], opacity: 0.95 },
+              pressed && styles.cartPillPressed,
             ]}
+            accessibilityRole="button"
+            accessibilityLabel={`View cart, ${totalQty} ${totalQty === 1 ? "item" : "items"}`}
           >
             <LinearGradient
               colors={[T.greenLight, T.green]}
@@ -1304,13 +1338,13 @@ export default function HomeScreen() {
               end={{ x: 1, y: 1 }}
               style={styles.cartPillGradient}
             >
-              <View style={styles.cartQtyBubble}>
+              <View style={[styles.cartCircle, styles.cartQtyBubble]}>
                 <Text style={styles.cartQtyText}>{totalQty}</Text>
               </View>
               <Text style={styles.cartPillLabel}>
                 {totalQty === 1 ? "item in cart" : "items in cart"}
               </Text>
-              <View style={styles.cartArrowWrap}>
+              <View style={styles.cartCircle}>
                 <MaterialCommunityIcons
                   name="arrow-right"
                   size={16}
@@ -1326,7 +1360,7 @@ export default function HomeScreen() {
         visible={showProfileMenu}
         onClose={() => setShowProfileMenu(false)}
       />
-    </SafeAreaView>
+    </Screen>
   );
 }
 
@@ -1384,22 +1418,41 @@ const AddressBarBlock = React.memo(function AddressBarBlock({
 
   return (
     <View style={styles.addressBarBg}>
+      {/* Soft fresh-green wash, identical to checkout's header so tabs and
+          checkout share one visual language. Watermark leaf echoes the feed's
+          end-stamp motif; both layers are non-interactive. */}
+      <LinearGradient
+        colors={[T.greenXLight, T.white]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0, y: 1 }}
+        style={StyleSheet.absoluteFillObject}
+        pointerEvents="none"
+      />
+      <View style={styles.headerLeafWrap} pointerEvents="none">
+        <MaterialCommunityIcons name="leaf" size={110} color={T.green} />
+      </View>
       <View style={styles.appBar}>
         <Pressable
-          style={{ flex: 1 }}
+          style={({ pressed }) => [
+            styles.addressPressable,
+            pressed && styles.pressed,
+          ]}
           onPress={() => router.push("/select-location")}
           android_ripple={{ color: "rgba(45,122,79,0.08)", borderless: false }}
+          hitSlop={ADDRESS_HIT_SLOP}
+          accessibilityRole="button"
+          accessibilityLabel="Change delivery address"
         >
           <View style={styles.deliveryLabelRow}>
             <View style={styles.deliveryDot} />
-            <Text style={styles.deliveryLabelText}>
+            <Text style={styles.deliveryLabelText} numberOfLines={1}>
               {locationLabel ?? "Delivery to"}
             </Text>
             {locationFetching && (
               <ActivityIndicator
                 size="small"
                 color={T.green}
-                style={{ marginLeft: 4, transform: [{ scale: 0.75 }] }}
+                style={styles.locationSpinner}
               />
             )}
           </View>
@@ -1417,9 +1470,11 @@ const AddressBarBlock = React.memo(function AddressBarBlock({
 
         <View style={styles.headerActions}>
           <TouchableOpacity
-            style={styles.walletBtn}
+            style={styles.chip}
             activeOpacity={0.8}
             onPress={() => router.push("/wallet" as any)}
+            hitSlop={HIT_SLOP}
+            accessibilityRole="button"
           >
             <MaterialCommunityIcons name="wallet-outline" size={15} color={T.green} />
             <Text style={styles.walletText}>Wallet</Text>
@@ -1431,6 +1486,8 @@ const AddressBarBlock = React.memo(function AddressBarBlock({
               onPressOut={onPressOut}
               onPress={onProfilePress}
               style={styles.profileBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Account menu"
             >
               <LinearGradient
                 colors={[T.greenLight, T.green]}
@@ -1454,28 +1511,39 @@ const AddressBarBlock = React.memo(function AddressBarBlock({
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: T.cream },
-
   flashListContent: { paddingBottom: 150 },
   productRow: {
     flexDirection: "row",
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     justifyContent: "space-between",
     columnGap: 8,
     marginBottom: 12,
   },
 
   // ── Skeleton helpers ─────────────────────────────────────────────────────
-  skeletonLine: {
-    backgroundColor: T.skeletonLo,
-    borderRadius: 6,
-  },
+  skeletonCardOuter: { opacity: 0.92 },
+  skeletonCard: { borderColor: "transparent" },
+  skeletonAccent: { marginRight: 2 },
+  skeletonMt8: { marginTop: 8 },
+  skeletonMt6: { marginTop: 6 },
+  pressed: { opacity: 0.7 },
 
   // ── Address bar block (scrolls away) ─────────────────────────────────────
   addressBarBg: {
     backgroundColor: T.white,
     borderBottomWidth: 1,
     borderBottomColor: T.cardBorder,
+    overflow: "hidden", // clips the watermark leaf; no shadow here, so safe on Android
+  },
+  freqShelf: {
+    paddingBottom: 4,
+  },
+  headerLeafWrap: {
+    position: "absolute",
+    right: -26,
+    top: -34,
+    opacity: 0.07,
+    transform: [{ rotate: "-24deg" }],
   },
   appBar: {
     flexDirection: "row",
@@ -1485,11 +1553,12 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
     gap: 12,
   },
+  addressPressable: { flex: 1, borderRadius: 10 },
   deliveryLabelRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    marginBottom: 2,
+    marginBottom: 4,
   },
   deliveryDot: {
     width: 8,
@@ -1500,13 +1569,14 @@ const styles = StyleSheet.create({
   deliveryLabelText: {
     fontSize: 11,
     color: T.green,
-    fontWeight: "800",
+    fontFamily: "PlusJakartaSans_800ExtraBold",
     letterSpacing: 0.5,
     textTransform: "uppercase",
+    flexShrink: 1,
   },
-  deliveryAddressText: {
+  locationSpinner: { marginLeft: 4, transform: [{ scale: 0.75 }] },
+  deliveryAddressText: { fontFamily: "PlusJakartaSans_700Bold",
     fontSize: 15,
-    fontWeight: "700",
     color: T.bark,
     letterSpacing: -0.2,
     flex: 1,
@@ -1515,21 +1585,21 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    maxWidth: "95%",
   },
   headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
-  walletBtn: {
+  /** Shared green chip (Wallet, See all). */
+  chip: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
+    gap: 4,
     paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 20,
+    paddingVertical: 6,
+    borderRadius: 999,
     backgroundColor: T.greenXLight,
-    borderWidth: 1.5,
-    borderColor: "rgba(45,122,79,0.2)",
+    borderWidth: 1,
+    borderColor: T.greenBorder,
   },
-  walletText: { fontSize: 12, fontWeight: "800", color: T.green },
+  walletText: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 12, color: T.green },
   profileBtn: { padding: 3 },
   profileAvatar: {
     width: 40,
@@ -1548,8 +1618,10 @@ const styles = StyleSheet.create({
   stickyWrap: {
     backgroundColor: T.cream,
     paddingHorizontal: 16,
-    paddingBottom: 10,
-    paddingTop: 2,
+    paddingBottom: 12,
+    paddingTop: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: T.cardBorder,
   },
 
   // ── Search bar ────────────────────────────────────────────────────────────
@@ -1569,31 +1641,28 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 3,
   },
-  searchIconWrap: {
-    width: 30,
-    height: 30,
-    borderRadius: 10,
-    backgroundColor: T.greenXLight,
-    alignItems: "center",
-    justifyContent: "center",
+  searchBarSkeleton: {
+    backgroundColor: T.skeletonHi,
+    borderColor: "transparent",
+    shadowOpacity: 0,
+    elevation: 0,
   },
-  searchPlaceholder: {
+  searchPlaceholder: { fontFamily: "PlusJakartaSans_500Medium",
     color: T.barkLight,
     fontSize: 14,
     flex: 1,
-    fontWeight: "500",
   },
 
-  // ── Section (generic wrapper) ────────────────────────────────────────────
-  section: { marginTop: 16 },
+  // ── Section header ───────────────────────────────────────────────────────
   sectionHeader: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 18,
+    paddingHorizontal: 16,
     paddingTop: 20,
     marginBottom: 12,
     gap: 10,
   },
+  sectionTitleCol: { flex: 1 },
   sectionTitleAccent: {
     width: 4,
     height: 18,
@@ -1601,42 +1670,28 @@ const styles = StyleSheet.create({
     backgroundColor: T.green,
     marginRight: 2,
   },
-  sectionTitle: {
+  sectionTitle: { fontFamily: "PlusJakartaSans_800ExtraBold",
     fontSize: 17,
     color: T.bark,
-    fontWeight: "900",
     letterSpacing: -0.3,
   },
-  sectionSub: {
+  sectionSub: { fontFamily: "PlusJakartaSans_500Medium",
     fontSize: 11.5,
     color: T.barkLight,
-    fontWeight: "500",
     marginTop: 2,
   },
-  seeAllBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 2,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 20,
-    backgroundColor: T.greenXLight,
-    borderWidth: 1,
-    borderColor: "rgba(45,122,79,0.2)",
-  },
-  seeAllText: {
+  seeAllText: { fontFamily: "PlusJakartaSans_800ExtraBold",
     fontSize: 12,
     color: T.green,
-    fontWeight: "800",
     letterSpacing: 0.2,
   },
 
-  horizontalListContent: { paddingHorizontal: 14, gap: 10 },
+  horizontalListContent: { paddingHorizontal: 16, gap: 8 },
 
   gridWrap: {
     flexDirection: "row",
     flexWrap: "wrap",
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     justifyContent: "space-between",
     rowGap: 12,
   },
@@ -1646,61 +1701,48 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-    marginHorizontal: 14,
-    marginTop: 10,
+    marginHorizontal: 16,
     paddingVertical: 10,
-    borderRadius: 12,
+    borderRadius: 14,
     backgroundColor: T.white,
     borderWidth: 1.5,
     borderColor: "rgba(45,122,79,0.25)",
     borderStyle: "dashed",
   },
-  seeAllBarText: {
+  seeAllBarText: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: T.green,
     fontSize: 13,
-    fontWeight: "800",
     letterSpacing: 0.2,
+    flexShrink: 1,
   },
 
   // ── Shop-by-category tile grid ───────────────────────────────────────────
   catTileGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     justifyContent: "flex-start",
   },
   catTile: {
     width: "25%",
     alignItems: "center",
     paddingHorizontal: 4,
-    paddingVertical: 10,
-    gap: 6,
+    paddingVertical: 12,
+    gap: 8,
   },
-  catTileIconWrap: {
-    width: 68,
-    height: 68,
-    borderRadius: 20,
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
-    shadowColor: T.shadowDark,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    elevation: 2,
-  },
+  // Clips the cover image to the IconWrap's 20px radius; the tinted bg is the only depth cue.
+  catTileIconWrap: { overflow: "hidden" },
   catTileImg: { width: "100%", height: "100%" },
-  catTileLabel: {
+  catTileLabel: { fontFamily: "PlusJakartaSans_700Bold",
     fontSize: 11,
     color: T.bark,
-    fontWeight: "700",
     textAlign: "center",
     letterSpacing: 0.1,
     lineHeight: 14,
   },
 
   endStamp: {
-    marginTop: 28,
+    marginTop: 24,
     alignSelf: "center",
     flexDirection: "row",
     alignItems: "center",
@@ -1710,30 +1752,26 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     backgroundColor: T.greenXLight,
     borderWidth: 1,
-    borderColor: "rgba(45,122,79,0.18)",
+    borderColor: T.greenGlow,
   },
-  endStampText: {
+  endStampText: { fontFamily: "PlusJakartaSans_700Bold",
     fontSize: 12,
     color: T.green,
-    fontWeight: "700",
     letterSpacing: 0.2,
   },
 
   // ── Product card ──────────────────────────────────────────────────────────
   cardOuter: { width: "31.8%" },
   cardOuterHorizontal: { width: 132 },
+  // overflow:hidden clips iOS layer shadows, so the card relies on its 1px border for
+  // definition — identical on both platforms.
   card: {
     flex: 1,
-    backgroundColor: T.card,
+    backgroundColor: T.white,
     borderRadius: 14,
     overflow: "hidden",
     borderWidth: 1,
     borderColor: T.cardBorder,
-    shadowColor: T.shadowDark,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.4,
-    shadowRadius: 4,
-    elevation: 2,
   },
   cardOutOfStock: { opacity: 0.62 },
   imageWrap: {
@@ -1754,30 +1792,23 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 0,
     left: 0,
-    backgroundColor: T.green,
+    backgroundColor: T.deal,
     paddingHorizontal: 6,
     paddingVertical: 3,
     borderBottomRightRadius: 8,
     borderTopLeftRadius: 14,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: T.green,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3,
-    elevation: 2,
   },
-  discountFlagText: {
+  discountFlagText: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: T.white,
     fontSize: 10,
-    fontWeight: "900",
     lineHeight: 11,
     letterSpacing: 0.2,
   },
-  discountFlagOff: {
+  discountFlagOff: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: T.white,
     fontSize: 7.5,
-    fontWeight: "800",
     lineHeight: 9,
     letterSpacing: 0.8,
   },
@@ -1788,36 +1819,33 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  outOfStockText: {
+  outOfStockText: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: T.white,
     fontSize: 11,
-    fontWeight: "800",
     letterSpacing: 0.6,
   },
 
-  cardBody: { padding: 8, paddingTop: 7 },
+  cardBody: { padding: 8 },
   unitPill: {
     flexDirection: "row",
     alignItems: "center",
     alignSelf: "flex-start",
-    gap: 3,
+    gap: 4,
     paddingHorizontal: 5,
     paddingVertical: 2,
-    borderRadius: 4,
+    borderRadius: 6,
     backgroundColor: T.greenXLight,
-    marginBottom: 5,
+    marginBottom: 4,
   },
-  unitPillText: {
+  unitPillText: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: T.green,
     fontSize: 9,
-    fontWeight: "800",
     letterSpacing: 0.2,
   },
-  productName: {
+  productName: { fontFamily: "PlusJakartaSans_700Bold",
     fontSize: 11.5,
     color: T.bark,
     lineHeight: 14.5,
-    fontWeight: "700",
     minHeight: 29,
     marginBottom: 6,
   },
@@ -1828,18 +1856,19 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   priceCol: { flexShrink: 1 },
-  priceValue: {
+  priceValue: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: T.bark,
     fontSize: 13,
-    fontWeight: "900",
     letterSpacing: -0.3,
     lineHeight: 15,
   },
-  originalPrice: {
+  priceValueDeal: {
+    color: T.dealDark,
+  },
+  originalPrice: { fontFamily: "PlusJakartaSans_500Medium",
     color: T.barkLight,
     fontSize: 10,
     textDecorationLine: "line-through",
-    fontWeight: "500",
     marginTop: 1,
   },
   addBtn: {
@@ -1853,10 +1882,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  addText: {
+  addText: { fontFamily: "PlusJakartaSans_800ExtraBold",
     fontSize: 11.5,
     color: T.green,
-    fontWeight: "900",
     letterSpacing: 0.8,
   },
   soldOutBtn: {
@@ -1867,10 +1895,9 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: T.cardBorder,
   },
-  soldOutText: {
+  soldOutText: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: T.barkLight,
     fontSize: 10.5,
-    fontWeight: "800",
     letterSpacing: 0.4,
   },
   qtyBox: {
@@ -1891,50 +1918,41 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     backgroundColor: T.green,
   },
-  qtyValue: {
+  qtyValue: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: T.white,
     fontSize: 12,
-    fontWeight: "900",
     minWidth: 14,
     textAlign: "center",
   },
 
   // ── Empty state ───────────────────────────────────────────────────────────
   empty: {
-    marginTop: 40,
+    marginTop: 48,
     alignItems: "center",
-    paddingHorizontal: 28,
-    gap: 10,
+    paddingHorizontal: 32,
+    gap: 12,
   },
   emptyIconWrap: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: T.greenXLight,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 4,
     borderWidth: 1.5,
     borderColor: "rgba(45,122,79,0.15)",
   },
-  emptyTitle: {
+  emptyTitle: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: T.bark,
     fontSize: 17,
-    fontWeight: "800",
-    marginTop: 4,
     letterSpacing: -0.2,
+    textAlign: "center",
   },
-  emptyText: {
+  emptyText: { fontFamily: "PlusJakartaSans_500Medium",
     color: T.barkLight,
     fontSize: 14,
     textAlign: "center",
     lineHeight: 21,
-    fontWeight: "500",
   },
+  // Solid bg + no overflow:hidden here so the iOS shadow renders; the gradient clips itself.
   emptyBtn: {
-    marginTop: 10,
+    marginTop: 8,
     borderRadius: 14,
-    overflow: "hidden",
+    backgroundColor: T.green,
     shadowColor: T.green,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.28,
@@ -1945,10 +1963,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    paddingVertical: 13,
-    paddingHorizontal: 26,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 14,
+    overflow: "hidden",
   },
-  emptyBtnText: { color: T.white, fontWeight: "800", fontSize: 14 },
+  emptyBtnText: { fontFamily: "PlusJakartaSans_800ExtraBold", color: T.white, fontSize: 14 },
 
   // ── Cart pill ─────────────────────────────────────────────────────────────
   cartBar: {
@@ -1960,32 +1980,36 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 24,
   },
+  // Solid bg + no overflow:hidden so the iOS shadow renders (it was clipped before);
+  // elevation 14 is the Android stacking order above the tab bar — keep it.
   cartPill: {
     alignSelf: "center",
     borderRadius: 999,
-    overflow: "hidden",
+    backgroundColor: T.green,
     shadowColor: T.green,
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.42,
-    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
     elevation: 14,
   },
+  cartPillPressed: { transform: [{ scale: 0.97 }], opacity: 0.95 },
   cartPillGradient: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 9,
-    paddingLeft: 9,
-    paddingRight: 9,
+    paddingVertical: 8,
+    paddingLeft: 8,
+    paddingRight: 8,
     gap: 10,
     borderWidth: 1.5,
     borderColor: "rgba(255,255,255,0.35)",
     borderRadius: 999,
+    overflow: "hidden",
   },
-  cartQtyBubble: {
+  /** White 30px circle used for both the qty bubble and the arrow. */
+  cartCircle: {
     minWidth: 30,
     height: 30,
-    paddingHorizontal: 8,
-    borderRadius: 15,
+    borderRadius: 999,
     backgroundColor: T.white,
     alignItems: "center",
     justifyContent: "center",
@@ -1995,29 +2019,15 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
-  cartQtyText: {
+  cartQtyBubble: { paddingHorizontal: 8 },
+  cartQtyText: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: T.green,
     fontSize: 14,
-    fontWeight: "900",
     letterSpacing: 0.2,
   },
-  cartPillLabel: {
+  cartPillLabel: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: T.white,
     fontSize: 14,
-    fontWeight: "800",
     letterSpacing: 0.3,
-  },
-  cartArrowWrap: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: T.white,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.18,
-    shadowRadius: 4,
-    elevation: 3,
   },
 });

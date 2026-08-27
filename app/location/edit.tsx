@@ -9,13 +9,20 @@ import {
     StyleSheet,
     Text,
     TextInput,
-    TouchableOpacity,
     View,
 } from "react-native";
 import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
-import { SafeAreaView } from "react-native-safe-area-context";
 
+import {
+  Card,
+  PrimaryButton,
+  Screen,
+  ScreenHeader,
+  Skeleton,
+  SkeletonText,
+} from "../../components/ui";
 import { C } from "../../constants/colors";
+import { text } from "../../constants/ui";
 import { useAuth } from "../../context/AuthContext";
 import { useLocation } from "../../context/LocationContext";
 import { getUserAddresses, updateAddress } from "../../lib/addressService";
@@ -195,22 +202,49 @@ export default function EditLocationScreen() {
     }
   };
 
-  if (loading) return null;
+  if (loading) {
+    // Same chrome as the loaded screen, but never mount MapView/Marker here:
+    // region is still (0,0) until the address fetch completes.
+    return (
+      <Screen>
+        <ScreenHeader title="Edit address" />
+        <View style={styles.container}>
+          <Text style={styles.subtitle}>
+            Move the pin to your exact delivery location
+          </Text>
+          <Skeleton height={240} radius={16} style={styles.skeletonMap} />
+          <Card style={styles.addressBox}>
+            <SkeletonText lines={2} lineHeight={11} lastLineWidth="70%" />
+          </Card>
+          <Skeleton height={52} radius={16} style={styles.saveBtn} />
+        </View>
+      </Screen>
+    );
+  }
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <Screen>
+      <ScreenHeader title="Edit address" />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={{ flex: 1 }}
       >
-        <ScrollView contentContainerStyle={styles.container}>
-          <Text style={styles.title}>Edit address</Text>
+        <ScrollView
+          contentContainerStyle={styles.container}
+          showsVerticalScrollIndicator={false}
+        >
+          <Text style={styles.subtitle}>
+            Move the pin to your exact delivery location
+          </Text>
 
           <View style={styles.mapWrap}>
             <MapView
               provider={PROVIDER_GOOGLE}
               style={StyleSheet.absoluteFill}
               region={region}
+              loadingEnabled
+              loadingIndicatorColor={C.primary}
+              loadingBackgroundColor={C.bgSoft}
             >
               <Marker
                 coordinate={coords}
@@ -221,6 +255,7 @@ export default function EditLocationScreen() {
                   setRegion((r) => ({ ...r, latitude, longitude }));
                   reverseGeocode(latitude, longitude);
                 }}
+                anchor={{ x: 0.5, y: 1 }}
               >
                 <MaterialCommunityIcons
                   name="map-marker"
@@ -231,7 +266,7 @@ export default function EditLocationScreen() {
             </MapView>
           </View>
 
-          <View style={styles.addressBox}>
+          <Card style={styles.addressBox}>
             <TextInput
               style={styles.addressInput}
               value={formattedAddress}
@@ -241,60 +276,45 @@ export default function EditLocationScreen() {
               placeholder="Address"
               placeholderTextColor={C.textLight}
             />
-          </View>
+          </Card>
 
-          <TouchableOpacity
-            style={[styles.saveBtn, saving && { opacity: 0.6 }]}
+          <PrimaryButton
+            size="lg"
+            shadow
+            label={saving ? "Saving…" : "Update address"}
             onPress={handleSave}
             disabled={saving}
-          >
-            <Text style={styles.saveText}>
-              {saving ? "Saving…" : "Update address"}
-            </Text>
-          </TouchableOpacity>
+            style={styles.saveBtn}
+          />
         </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
-  container: { padding: 20, paddingBottom: 40 },
-  title: { fontSize: 22, fontWeight: "800", color: C.text },
+  container: { padding: 16, paddingBottom: 40 },
+  subtitle: { ...text.body, marginBottom: 16 },
 
   mapWrap: {
-    height: 220,
+    height: 240,
     borderRadius: 16,
     overflow: "hidden",
     borderWidth: 1,
     borderColor: C.border,
-    marginTop: 16,
   },
+  skeletonMap: { borderWidth: 1, borderColor: C.border },
 
-  addressBox: {
-    marginTop: 14,
-    padding: 14,
-    backgroundColor: C.card,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: C.border,
-  },
+  addressBox: { marginTop: 16 },
 
   addressInput: {
-    fontSize: 13,
+    fontSize: 14,
     color: C.text,
     lineHeight: 22,
-    minHeight: 44,
-    maxHeight: 96,
+    minHeight: 50,
+    maxHeight: 80,
+    fontFamily: "PlusJakartaSans_500Medium",
   },
 
-  saveBtn: {
-    marginTop: 26,
-    backgroundColor: C.primary,
-    borderRadius: 14,
-    paddingVertical: 15,
-    alignItems: "center",
-  },
-  saveText: { color: "#fff", fontSize: 15, fontWeight: "700" },
+  saveBtn: { marginTop: 24 },
 });

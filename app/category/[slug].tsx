@@ -3,7 +3,6 @@ import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-    ActivityIndicator,
     InteractionManager,
     RefreshControl,
     StyleSheet,
@@ -12,9 +11,10 @@ import {
     View,
 } from "react-native";
 import { Image } from "expo-image";
-import { SafeAreaView } from "react-native-safe-area-context";
 
+import { BackButton, EmptyState, Screen, ScreenHeader, Skeleton } from "../../components/ui";
 import { C } from "../../constants/colors";
+import { opacity, shadow } from "../../constants/ui";
 import { getCategoryBySlug, type Category } from "../../lib/categoryService";
 import { useCart, useCartItemMap } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
@@ -34,6 +34,10 @@ const FALLBACK_ICONS = [
   "cup", "sack", "face-woman-shimmer", "home-outline"
 ];
 
+// Extra reach for the ADD button so the effective target clears 44pt.
+const ADD_HIT_SLOP = { top: 4, bottom: 4 };
+const SKELETON_CARDS = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+
 type ProductCardProps = {
   item: ServiceProduct;
   cartQty: number;
@@ -50,8 +54,10 @@ const ProductCard = React.memo(function ProductCard({ item, cartQty, onAdd, onUp
   return (
     <View style={[styles.card, !item.in_stock && styles.cardOutOfStock]}>
       <TouchableOpacity
-        activeOpacity={0.9}
+        activeOpacity={opacity.pressCard}
         onPress={() => router.push(`../product/${item.id}`)}
+        accessibilityRole="button"
+        accessibilityLabel={item.name}
       >
         {item.image_url ? (
           <Image
@@ -87,7 +93,7 @@ const ProductCard = React.memo(function ProductCard({ item, cartQty, onAdd, onUp
           {hasDiscount && (
             <Text style={styles.originalPrice}>₹{item.original_price}</Text>
           )}
-          <Text style={styles.unit}>{item.unit}</Text>
+          <Text style={styles.unit} numberOfLines={1}>{item.unit}</Text>
         </View>
 
         <View style={styles.ratingWrap}>
@@ -97,17 +103,35 @@ const ProductCard = React.memo(function ProductCard({ item, cartQty, onAdd, onUp
         {item.in_stock ? (
           cartQty > 0 ? (
             <View style={styles.qtyRow}>
-              <TouchableOpacity style={styles.qtyBtn} onPress={() => onUpdateQty(item.id, -1)}>
-                <Text style={styles.qtyBtnText}>−</Text>
+              <TouchableOpacity
+                style={styles.qtyBtn}
+                onPress={() => onUpdateQty(item.id, -1)}
+                hitSlop={6}
+                activeOpacity={opacity.pressIcon}
+                accessibilityRole="button"
+                accessibilityLabel="Decrease quantity"
+              >
+                <MaterialCommunityIcons name="minus" size={16} color="#fff" />
               </TouchableOpacity>
               <Text style={styles.qtyText}>{cartQty}</Text>
-              <TouchableOpacity style={styles.qtyBtn} onPress={() => onUpdateQty(item.id, 1)}>
-                <Text style={styles.qtyBtnText}>+</Text>
+              <TouchableOpacity
+                style={styles.qtyBtn}
+                onPress={() => onUpdateQty(item.id, 1)}
+                hitSlop={6}
+                activeOpacity={opacity.pressIcon}
+                accessibilityRole="button"
+                accessibilityLabel="Increase quantity"
+              >
+                <MaterialCommunityIcons name="plus" size={16} color="#fff" />
               </TouchableOpacity>
             </View>
           ) : (
             <TouchableOpacity
               style={styles.addBtn}
+              hitSlop={ADD_HIT_SLOP}
+              activeOpacity={opacity.pressCta}
+              accessibilityRole="button"
+              accessibilityLabel={`Add ${item.name}`}
               onPress={() =>
                 onAdd({
                   product_id: item.id,
@@ -224,18 +248,10 @@ export default function CategorySlugScreen() {
 
   if (!category && !loading) {
     return (
-      <SafeAreaView style={styles.safe}>
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Category</Text>
-          <View style={{ width: 38 }} />
-        </View>
-        <View style={styles.center}>
-          <Text style={styles.errorText}>Category not found</Text>
-        </View>
-      </SafeAreaView>
+      <Screen>
+        <ScreenHeader title="Category" />
+        <EmptyState fill iconWrap icon="tag-off-outline" title="Category not found" />
+      </Screen>
     );
   }
 
@@ -243,17 +259,18 @@ export default function CategorySlugScreen() {
   const categoryIcon = category?.icon || FALLBACK_ICONS[0];
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <Screen>
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
-        </TouchableOpacity>
+        <BackButton />
 
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        <View style={styles.headerTitleWrap}>
           {category?.image_url ? (
-            <Image 
-              source={{ uri: category.image_url }} 
+            <Image
+              source={{ uri: cdnImage(category.image_url, 48) }}
               style={styles.headerImage}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              transition={120}
             />
           ) : (
             <MaterialCommunityIcons
@@ -262,30 +279,44 @@ export default function CategorySlugScreen() {
               color={categoryColor}
             />
           )}
-          <Text style={styles.headerTitle}>{category?.name || "Category"}</Text>
+          <Text style={styles.headerTitle} numberOfLines={1} accessibilityRole="header">
+            {category?.name || "Category"}
+          </Text>
         </View>
 
-        <View style={{ width: 38 }} />
+        <View style={styles.headerSpacer} />
       </View>
 
       {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={categoryColor} />
-          <Text style={styles.loadingText}>Loading products...</Text>
+        <View
+          style={styles.skeletonGrid}
+          accessible
+          accessibilityRole="progressbar"
+          accessibilityLabel="Loading products..."
+        >
+          {SKELETON_CARDS.map((i) => (
+            <View key={i} style={styles.card}>
+              <View style={styles.image} />
+              <View style={styles.cardBody}>
+                <Skeleton width="90%" height={12} color={C.border} />
+                <Skeleton width="60%" height={12} color={C.border} style={styles.skeletonGap} />
+                <Skeleton width="45%" height={14} color={C.border} style={styles.skeletonGap} />
+                <Skeleton width="100%" height={40} radius={10} color={C.bgSoft} style={styles.skeletonBtn} />
+              </View>
+            </View>
+          ))}
         </View>
       ) : error ? (
-        <View style={styles.center}>
-          <MaterialCommunityIcons name="alert-circle-outline" size={56} color={C.danger} />
-          <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity style={styles.retryBtn} onPress={() => fetchData()}>
-            <Text style={styles.retryText}>Retry</Text>
-          </TouchableOpacity>
-        </View>
+        <EmptyState
+          fill
+          icon="alert-circle-outline"
+          iconSize={48}
+          iconColor={C.danger}
+          title={error}
+          action={{ label: "Retry", onPress: () => fetchData() }}
+        />
       ) : isEmpty ? (
-        <View style={styles.center}>
-          <MaterialCommunityIcons name="package-variant-closed-remove" size={56} color={C.textLight} />
-          <Text style={styles.emptyText}>No products available</Text>
-        </View>
+        <EmptyState fill iconWrap icon="package-variant-closed-remove" title="No products available" />
       ) : (
         <FlashList
           data={products}
@@ -304,13 +335,11 @@ export default function CategorySlugScreen() {
           }
         />
       )}
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
-
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -321,83 +350,86 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: C.border,
   },
-  backBtn: {
-    width: 38, 
-    height: 38, 
-    borderRadius: 12,
-    backgroundColor: C.bgSoft, 
-    alignItems: "center", 
+  headerTitleWrap: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
     justifyContent: "center",
+    gap: 8,
+    marginHorizontal: 8,
   },
-  headerTitle: { color: C.text, fontSize: 17, fontWeight: "800" },
+  headerTitle: { color: C.text, fontSize: 18, fontFamily: "PlusJakartaSans_800ExtraBold", flexShrink: 1 },
   headerImage: {
     width: 24,
     height: 24,
     borderRadius: 12,
   },
+  headerSpacer: { width: 38 },
 
-  list: { 
-    padding: 16, 
+  list: {
+    padding: 16,
     paddingBottom: 120,
   },
+
+  // Loading skeleton — mirrors the 3-column grid (list padding + 32% cards)
+  skeletonGrid: {
+    flex: 1,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    padding: 16,
+    overflow: "hidden",
+  },
+  skeletonGap: { marginTop: 6 },
+  skeletonBtn: { marginTop: 8 },
 
   card: {
     width: "32%",
     backgroundColor: C.card,
-    borderRadius: 16,
+    borderRadius: 14,
     overflow: "hidden",
     borderWidth: 1,
     borderColor: C.border,
-    shadowColor: C.shadow,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 5,
-    marginBottom: 4,
+    ...shadow.card,
+    marginBottom: 8,
   },
 
-  cardOutOfStock: { 
+  cardOutOfStock: {
     opacity: 0.65,
   },
 
-  cardBody: { 
-    padding: 12,
+  cardBody: {
+    padding: 10,
   },
 
   image: {
-    width: "100%", 
-    height: 140, 
+    width: "100%",
+    aspectRatio: 1,
     backgroundColor: C.bgSoft,
   },
 
   imagePlaceholder: {
-    width: "100%", 
-    height: 140, 
-    borderRadius: 12,
+    width: "100%",
+    aspectRatio: 1,
     backgroundColor: C.bgSoft,
-    alignItems: "center", 
+    alignItems: "center",
     justifyContent: "center",
   },
 
   discountBadge: {
     position: "absolute",
-    top: 10,
-    left: 10,
-    backgroundColor: C.danger,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3,
-    elevation: 4,
+    top: 8,
+    left: 8,
+    backgroundColor: C.deal, // deal accent, not error-red — discounts are good news
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 6,
   },
 
-  discountText: { 
-    color: "#fff", 
-    fontSize: 11, 
-    fontWeight: "900", 
+  discountText: { fontFamily: "PlusJakartaSans_800ExtraBold",
+    color: "#fff",
+    fontSize: 11,
     letterSpacing: 0.3,
   },
 
@@ -412,86 +444,78 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 
-  outOfStockText: {
+  outOfStockText: { fontFamily: "PlusJakartaSans_800ExtraBold",
     color: "#fff",
     fontSize: 12,
-    fontWeight: "800",
     letterSpacing: 0.5,
   },
 
-  name: { 
-    color: C.text, 
-    fontSize: 14, 
-    fontWeight: "600",
-    lineHeight: 19,
-    minHeight: 38,
-    marginBottom: 8,
+  name: { fontFamily: "PlusJakartaSans_600SemiBold",
+    color: C.text,
+    fontSize: 12,
+    lineHeight: 16,
+    minHeight: 32,
+    marginBottom: 6,
   },
 
   priceRow: {
     flexDirection: "row",
     alignItems: "baseline",
-    gap: 6,
+    gap: 4,
     marginBottom: 6,
-    flexWrap: "wrap",
   },
 
-  price: { 
-    color: C.primary, 
-    fontSize: 15, 
-    fontWeight: "800",
+  price: { fontFamily: "PlusJakartaSans_800ExtraBold",
+    color: C.primary,
+    fontSize: 14,
   },
 
-  originalPrice: {
+  originalPrice: { fontFamily: "PlusJakartaSans_500Medium",
     color: C.textLight,
-    fontSize: 13,
+    fontSize: 11,
     textDecorationLine: "line-through",
-    fontWeight: "500",
   },
 
-  unit: { 
-    color: C.textSub, 
-    fontSize: 12, 
-    fontWeight: "500",
+  unit: { fontFamily: "PlusJakartaSans_500Medium",
+    color: C.textSub,
+    fontSize: 11,
+    flexShrink: 1,
   },
 
   ratingWrap: {
-    marginBottom: 4,
+    marginBottom: 6,
   },
 
   addBtn: {
     alignSelf: "stretch",
     backgroundColor: C.primary,
+    minHeight: 40,
     paddingVertical: 10,
     borderRadius: 10,
     alignItems: "center",
-    shadowColor: C.primary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 3,
+    justifyContent: "center",
   },
 
-  addText: { 
-    color: "#fff", 
-    fontWeight: "800", 
+  addText: { fontFamily: "PlusJakartaSans_800ExtraBold",
+    color: "#fff",
     fontSize: 13,
     letterSpacing: 0.8,
   },
 
   soldOutBtn: {
     borderRadius: 10,
+    minHeight: 40,
     paddingVertical: 10,
     backgroundColor: C.bgSoft,
     alignItems: "center",
+    justifyContent: "center",
     borderWidth: 1.5,
     borderColor: C.border,
   },
 
-  soldOutText: { 
-    color: C.textSub, 
-    fontSize: 13, 
-    fontWeight: "700",
+  soldOutText: { fontFamily: "PlusJakartaSans_700Bold",
+    color: C.textSub,
+    fontSize: 13,
   },
 
   qtyRow: {
@@ -502,68 +526,23 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1.5,
     borderColor: C.primaryLight,
-    paddingHorizontal: 5,
-    paddingVertical: 5,
+    paddingHorizontal: 4,
+    paddingVertical: 4,
   },
 
   qtyBtn: {
-    width: 30,
-    height: 30,
+    width: 32,
+    height: 32,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 8,
     backgroundColor: C.primary,
   },
 
-  qtyBtnText: { 
-    color: "#fff", 
-    fontSize: 18, 
-    fontWeight: "900",
-  },
-
-  qtyText: {
-    color: C.primary, 
-    fontSize: 14, 
-    fontWeight: "700",
-    minWidth: 20, 
+  qtyText: { fontFamily: "PlusJakartaSans_700Bold",
+    color: C.primary,
+    fontSize: 14,
+    minWidth: 20,
     textAlign: "center",
-  },
-
-  center: { 
-    flex: 1, 
-    justifyContent: "center", 
-    alignItems: "center",
-    gap: 12,
-  },
-
-  loadingText: {
-    color: C.textSub,
-    fontSize: 14,
-  },
-
-  errorText: { 
-    color: C.danger, 
-    fontWeight: "700",
-    fontSize: 15,
-  },
-
-  emptyText: { 
-    color: C.textSub, 
-    fontWeight: "600",
-    fontSize: 15,
-  },
-
-  retryBtn: {
-    marginTop: 12,
-    backgroundColor: C.primary,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 12,
-  },
-
-  retryText: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 14,
   },
 });
