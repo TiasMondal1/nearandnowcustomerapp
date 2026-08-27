@@ -44,7 +44,9 @@ yarn-error.*
 google-service-account.json
 *.keystore
 *.jks
+*.properties
 credentials.json
+credentials/
 service-account*.json
 
 # typescript

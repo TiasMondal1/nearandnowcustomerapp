@@ -3,6 +3,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
+    Alert,
     Dimensions,
     ScrollView,
     StyleSheet,
@@ -19,15 +20,21 @@ import { useCart } from "../../context/CartContext";
 import { cdnImage } from "../../lib/imageUrl";
 import { getProductById, type Product } from "../../lib/productService";
 import { formatQuantityDisplay } from "../../lib/quantityFormat";
+import { apiFetch } from "../../lib/apiClient";
+import { logSilentFailure } from "../../lib/logSilentFailure";
+import { useAuth } from "../../context/AuthContext";
 
 const { width } = Dimensions.get("window");
 
 export default function ProductDetailsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { addItem, items, incrementQty } = useCart();
+  const { isAuthenticated } = useAuth();
 
   const [loading, setLoading] = useState(true);
   const [product, setProduct] = useState<Product | null>(null);
+  const [inWishlist, setInWishlist] = useState(false);
+  const [wishlistBusy, setWishlistBusy] = useState(false);
 
   const cartItem = items.find((i) => i.product_id === product?.id);
 
@@ -54,6 +61,41 @@ export default function ProductDetailsScreen() {
       setProduct(null);
     } finally {
       if (myId === requestIdRef.current) setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!id || !isAuthenticated) return;
+    let cancelled = false;
+    apiFetch<{ success: boolean; inWishlist: boolean }>(`/api/wishlist/check/${id}`)
+      .then((res) => { if (!cancelled) setInWishlist(res.inWishlist); })
+      .catch((err) => logSilentFailure("Check wishlist status", err));
+    return () => { cancelled = true; };
+  }, [id, isAuthenticated]);
+
+  const toggleWishlist = async () => {
+    if (!product || wishlistBusy) return;
+    if (!isAuthenticated) {
+      Alert.alert("Sign in required", "Please log in to save items to your wishlist.", [
+        { text: "Cancel", style: "cancel" },
+        { text: "Log In", onPress: () => router.push("/phone") },
+      ]);
+      return;
+    }
+    const next = !inWishlist;
+    setInWishlist(next); // optimistic — reverted on failure below
+    setWishlistBusy(true);
+    try {
+      if (next) {
+        await apiFetch("/api/wishlist", { method: "POST", body: JSON.stringify({ productId: product.id }) });
+      } else {
+        await apiFetch(`/api/wishlist/${product.id}`, { method: "DELETE" });
+      }
+    } catch (err) {
+      logSilentFailure("Toggle wishlist", err);
+      setInWishlist(!next);
+    } finally {
+      setWishlistBusy(false);
     }
   };
 
@@ -94,6 +136,13 @@ export default function ProductDetailsScreen() {
             <Text style={styles.oosTagText}>Out of Stock</Text>
           </View>
         )}
+        <TouchableOpacity onPress={toggleWishlist} disabled={wishlistBusy} style={styles.wishlistBtn}>
+          <MaterialCommunityIcons
+            name={inWishlist ? "heart" : "heart-outline"}
+            size={22}
+            color={inWishlist ? C.danger : C.textSub}
+          />
+        </TouchableOpacity>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 140 }}>
@@ -252,6 +301,14 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   oosTagText: { color: C.danger, fontSize: 11, fontWeight: "700" },
+  wishlistBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: C.bgSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 
   imageWrap: { position: "relative", backgroundColor: C.bgSoft },
   heroImage: { width, height: 280 },
