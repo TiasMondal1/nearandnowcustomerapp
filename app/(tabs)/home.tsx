@@ -45,8 +45,9 @@ import { useCart, useCartItemMap, type CartItem } from "../../context/CartContex
 import { useLocation } from "../../context/LocationContext";
 import { getAllCategories, type Category } from "../../lib/categoryService";
 import { cdnImage } from "../../lib/imageUrl";
-import { getUserOrders } from "../../lib/orderService";
+import { getUserOrders, readUserOrdersCache, type Order } from "../../lib/orderService";
 import { logSilentFailure } from "../../lib/logSilentFailure";
+import { TERMINAL_STATUSES, getStatusMeta } from "../../constants/orderStatus";
 import {
     getCountForCategoryName,
     getMemoryHomeCache,
@@ -121,6 +122,7 @@ const ROW_COUNT = 3;
  */
 type HomeListItem =
   | { kind: "search" }
+  | { kind: "activeOrders"; orders: Order[] }
   | { kind: "freqBought"; title: string; products: Product[] }
   | { kind: "catTileGrid"; categories: Category[] }
   | { kind: "sectionHeader"; title: string; subtitle?: string; onSeeAll?: () => void }
@@ -455,6 +457,62 @@ const FrequentlyBoughtSection = React.memo(function FrequentlyBoughtSection({
   );
 });
 
+// ─── Active orders banner ────────────────────────────────────────────────────
+// Sits above every other home section — an order in flight is the most
+// actionable thing on the screen. Capped-height + internal scroll (rather
+// than growing the card list unbounded) so two-plus active orders never push
+// the rest of the home feed further down than a single order would.
+const ACTIVE_ORDERS_MAX_HEIGHT = 220;
+
+const ActiveOrdersSection = React.memo(function ActiveOrdersSection({
+  orders,
+}: {
+  orders: Order[];
+}) {
+  if (!orders.length) return null;
+  return (
+    <View style={styles.activeOrdersWrap}>
+      <ScrollView
+        nestedScrollEnabled
+        showsVerticalScrollIndicator={false}
+        style={orders.length > 2 ? { maxHeight: ACTIVE_ORDERS_MAX_HEIGHT } : undefined}
+      >
+        {orders.map((order) => (
+          <ActiveOrderCard key={order.id} order={order} />
+        ))}
+      </ScrollView>
+    </View>
+  );
+});
+
+const ActiveOrderCard = React.memo(function ActiveOrderCard({ order }: { order: Order }) {
+  const meta = getStatusMeta(order.order_status);
+  const handlePress = useCallback(() => {
+    router.push(`/order/track/${order.id}` as any);
+  }, [order.id]);
+
+  return (
+    <TouchableOpacity
+      style={styles.activeOrderCard}
+      onPress={handlePress}
+      activeOpacity={0.85}
+    >
+      <View style={[styles.activeOrderPulseWrap]}>
+        <View style={[styles.activeOrderPulseDot, { backgroundColor: meta.color }]} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.activeOrderTitle} numberOfLines={1}>
+          {order.order_number ? `Order ${order.order_number}` : "Your order is on its way"}
+        </Text>
+        <Text style={[styles.activeOrderStatus, { color: meta.color }]} numberOfLines={1}>
+          {meta.label}
+        </Text>
+      </View>
+      <MaterialCommunityIcons name="chevron-right" size={20} color={T.green} />
+    </TouchableOpacity>
+  );
+});
+
 const keyExtractor = (p: Product) => p.id;
 
 // ─── Skeleton card (shown during cold boot instead of blank screen) ─────────
@@ -536,6 +594,7 @@ export default function HomeScreen() {
     Record<string, Product[]>
   >(initialCache?.productsByCategory ?? {});
   const [userTopProductIds, setUserTopProductIds] = useState<string[]>([]);
+  const [activeOrders, setActiveOrders] = useState<Order[]>([]);
 
   const [activeCategory, setActiveCategory] = useState("All");
   const [refreshing, setRefreshing] = useState(false);
@@ -799,12 +858,34 @@ export default function HomeScreen() {
     };
   }, []);
 
+  // ── Active orders banner: instant cache paint, then background refresh ────
+  // A stale-while-revalidate read of the same order-history cache the
+  // deferred effect below also warms — the cache read is cheap (AsyncStorage)
+  // so it runs immediately rather than waiting on InteractionManager, letting
+  // the banner appear on first paint instead of popping in a beat later.
+  useEffect(() => {
+    if (!userId) {
+      setActiveOrders([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const cached = await readUserOrdersCache(userId);
+      if (cancelled || !cached) return;
+      setActiveOrders(cached.filter((o) => !(TERMINAL_STATUSES as string[]).includes(o.order_status)));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
   // ── Build user's "frequently bought" list from past orders ────────────────
   // Also deferred: this hits Supabase to read up to 50 historical orders to
   // compute popularity. It feeds the "Frequently bought" carousel which is
   // *below* the fold on first paint, so there's no reason to block the
   // initial render on it. Falling back to "bought by other customers" while
-  // this loads is the desired UX anyway.
+  // this loads is the desired UX anyway. The same fetch also refreshes the
+  // active-orders banner above, so there's only ever one network round trip.
   useEffect(() => {
     if (!userId) return;
     let cancelled = false;
@@ -813,6 +894,7 @@ export default function HomeScreen() {
       try {
         const orders = await getUserOrders(userId);
         if (cancelled) return;
+        setActiveOrders(orders.filter((o) => !(TERMINAL_STATUSES as string[]).includes(o.order_status)));
         const counts: Record<string, number> = {};
         for (const order of orders) {
           for (const it of order.items || []) {
@@ -826,7 +908,7 @@ export default function HomeScreen() {
           .map(([id]) => id);
         setUserTopProductIds(ids);
       } catch {
-        /* fall back silently to "bought by others" */
+        /* fall back silently to "bought by others"; active orders keep showing the cached view */
       }
     });
     return () => {
@@ -943,6 +1025,10 @@ export default function HomeScreen() {
     const out: HomeListItem[] = [{ kind: "search" }];
 
     if (activeCategory === "All") {
+      if (activeOrders.length > 0) {
+        out.push({ kind: "activeOrders", orders: activeOrders });
+      }
+
       if (frequentlyBought.products.length > 0) {
         out.push({
           kind: "freqBought",
@@ -1053,6 +1139,7 @@ export default function HomeScreen() {
     return out;
   }, [
     activeCategory,
+    activeOrders,
     frequentlyBought,
     categoriesWithProducts,
     productsByCategory,
@@ -1087,6 +1174,9 @@ export default function HomeScreen() {
               </TouchableOpacity>
             </View>
           );
+
+        case "activeOrders":
+          return <ActiveOrdersSection orders={item.orders} />;
 
         case "freqBought":
           return (
@@ -1335,6 +1425,8 @@ const homeListKeyExtractor = (item: HomeListItem, index: number): string => {
   switch (item.kind) {
     case "search":
       return "search";
+    case "activeOrders":
+      return "activeOrders";
     case "freqBought":
       return "freq";
     case "catTileGrid":
@@ -1550,6 +1642,45 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 10,
     paddingTop: 2,
+  },
+
+  // ── Active orders banner ─────────────────────────────────────────────────
+  activeOrdersWrap: {
+    paddingHorizontal: 16,
+    paddingTop: 4,
+  },
+  activeOrderCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    backgroundColor: T.greenXLight,
+    borderWidth: 1,
+    borderColor: "rgba(45,122,79,0.18)",
+    marginBottom: 8,
+  },
+  activeOrderPulseWrap: {
+    width: 10,
+    height: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  activeOrderPulseDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  activeOrderTitle: {
+    fontSize: 13.5,
+    fontWeight: "800",
+    color: T.bark,
+  },
+  activeOrderStatus: {
+    fontSize: 12,
+    fontWeight: "600",
+    marginTop: 2,
   },
 
   // ── Search bar ────────────────────────────────────────────────────────────
