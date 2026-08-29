@@ -11,7 +11,17 @@ import {
     View,
 } from "react-native";
 
-import { Screen, Skeleton } from "../../components/ui";
+import { LinearGradient } from "expo-linear-gradient";
+
+import {
+    DoodleBackdrop,
+    GRID_PANEL_DOODLES,
+    PAGE_WALLPAPER_DOODLES,
+    Screen,
+    Skeleton,
+    SoftPanel,
+    TAB_HEADER_DOODLES,
+} from "../../components/ui";
 import {
     CATEGORY_GROUPS,
     DEFAULT_GROUP,
@@ -32,6 +42,8 @@ import { getAllActiveProductIds } from "../../lib/storeService";
 const T = {
   green: "#2D7A4F",
   greenXLight: "#EAF6EE",
+  // Header-band gradient top stop — same as home's T.greenWash.
+  greenWash: "#D6EDE0",
   greenBorder: "rgba(45,122,79,0.15)",
   cream: "#FAFAF7",
   bark: "#3C2F1E",
@@ -100,6 +112,16 @@ const CategoryTile = React.memo(function CategoryTile({
 const Header = React.memo(function Header() {
   return (
     <View style={styles.header}>
+      {/* Same decorated band as home's address bar: green wash + grocery
+          line-art, both non-interactive. */}
+      <LinearGradient
+        colors={[T.greenWash, T.white]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0, y: 1 }}
+        style={StyleSheet.absoluteFillObject}
+        pointerEvents="none"
+      />
+      <DoodleBackdrop doodles={TAB_HEADER_DOODLES} />
       <Text style={styles.title} accessibilityRole="header">Categories</Text>
       <Text style={styles.subtitle}>Browse everything we carry</Text>
     </View>
@@ -228,6 +250,7 @@ export default function CategoriesScreen() {
   if (loading) {
     return (
       <Screen bg={T.cream} edges={["top"]}>
+        <DoodleBackdrop doodles={PAGE_WALLPAPER_DOODLES} baseOpacity={0.05} />
         <Header />
         <View
           style={styles.skeletonWrap}
@@ -259,6 +282,9 @@ export default function CategoriesScreen() {
 
   return (
     <Screen bg={T.cream} edges={["top"]}>
+      {/* Fixed wallpaper: the tiles sit straight on the cream ground, so the
+          faint glyphs show in the margins between them. */}
+      <DoodleBackdrop doodles={PAGE_WALLPAPER_DOODLES} baseOpacity={0.05} />
       <Header />
 
       <ScrollView
@@ -289,6 +315,10 @@ export default function CategoriesScreen() {
                 <Text style={styles.sectionTitle} accessibilityRole="header">{group.title}</Text>
               </View>
               <View style={styles.grid}>
+                {/* Rounded green wash grounds each group's tile field as a
+                    container box — same treatment as home's shop-by-category. */}
+                <SoftPanel style={styles.gridPanel} />
+                <DoodleBackdrop doodles={GRID_PANEL_DOODLES} baseOpacity={0.07} />
                 {items.map((it) => (
                   <CategoryTile key={it.id} item={it} onPress={handleTilePress} />
                 ))}
@@ -364,6 +394,9 @@ const styles = StyleSheet.create({
   },
 
   grid: { flexDirection: "row", flexWrap: "wrap" },
+  // Slight negative insets pull the panel border outside the tiles' own
+  // padding so the box wraps the whole field (sectionWrap's padding gives room).
+  gridPanel: { top: -6, bottom: 0, left: -2, right: -2 },
 
   tile: {
     width: "25%",

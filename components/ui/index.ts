@@ -29,3 +29,11 @@ export {
 export { Divider, type DividerProps } from "./Divider";
 export { IconWrap, defaultIconWrapRadius, defaultIconWrapIconSize, type IconWrapProps } from "./IconWrap";
 export { BottomDock, type BottomDockProps } from "./BottomDock";
+export {
+  DoodleBackdrop,
+  SoftPanel,
+  TAB_HEADER_DOODLES,
+  PAGE_WALLPAPER_DOODLES,
+  GRID_PANEL_DOODLES,
+  type DoodleSpec,
+} from "./DoodleBackdrop";

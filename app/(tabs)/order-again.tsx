@@ -15,7 +15,18 @@ import {
     type PressableStateCallbackType,
 } from "react-native";
 
-import { IconWrap, PrimaryButton, Screen, Skeleton } from "../../components/ui";
+import { LinearGradient } from "expo-linear-gradient";
+
+import {
+    DoodleBackdrop,
+    IconWrap,
+    PAGE_WALLPAPER_DOODLES,
+    PrimaryButton,
+    Screen,
+    Skeleton,
+    SoftPanel,
+    TAB_HEADER_DOODLES,
+} from "../../components/ui";
 import { C } from "../../constants/colors";
 import {
     CATEGORY_GROUPS,
@@ -45,6 +56,8 @@ const T = {
   // Terracotta deal accent — mirrors C.deal in constants/colors.ts; deals only.
   deal: "#EA580C",
   greenXLight: "#EAF6EE",
+  // Header-band gradient top stop — same as home's T.greenWash.
+  greenWash: "#D6EDE0",
   greenBorder: "rgba(45,122,79,0.15)",
   white: "#FFFFFF",
   bg: "#F7F6F2",
@@ -533,6 +546,7 @@ export default function OrderAgainScreen() {
   if (!userId) {
     return (
       <Screen bg={T.bg} edges={["top"]}>
+        <DoodleBackdrop doodles={PAGE_WALLPAPER_DOODLES} baseOpacity={0.05} />
         <Header />
         <View style={styles.emptyWrap}>
           <IconWrap
@@ -614,6 +628,7 @@ export default function OrderAgainScreen() {
   if (!loading && (orders?.length === 0 || displayItems.length === 0)) {
     return (
       <Screen bg={T.bg} edges={["top"]}>
+        <DoodleBackdrop doodles={PAGE_WALLPAPER_DOODLES} baseOpacity={0.05} />
         <Header />
         <View style={styles.emptyWrap}>
           <IconWrap
@@ -664,6 +679,9 @@ export default function OrderAgainScreen() {
         {/* ── Previously Ordered ─────────────────────────────────────── */}
         {topItems.length > 0 && (
           <View style={styles.section}>
+            {/* Rounded green wash grounds the hero carousel as a container
+                box — same zoning as home's shop-by-category panel. */}
+            <SoftPanel style={styles.sectionPanel} />
             <SectionHeader
               title="Previously Ordered"
               subtitle="Your go-to items, ready to add"
@@ -686,6 +704,7 @@ export default function OrderAgainScreen() {
         {/* ── Categories you ordered from ───────────────────────────── */}
         {chips.length > 0 && (
           <View style={styles.section}>
+            <SoftPanel style={styles.sectionPanel} />
             <SectionHeader
               title="Categories you ordered from"
               subtitle={`${chips.length} categor${chips.length !== 1 ? "ies" : "y"}`}
@@ -734,6 +753,9 @@ export default function OrderAgainScreen() {
 
         {/* ── Full grid of all previously bought ───────────────────── */}
         <View style={styles.section}>
+          {/* Tall section: extra-faint wallpaper glyphs show through the
+              gutters between the grid cards. */}
+          <DoodleBackdrop doodles={PAGE_WALLPAPER_DOODLES} baseOpacity={0.04} />
           <SectionHeader
             title="All Previously Bought"
             subtitle={`${displayItems.length} item${displayItems.length !== 1 ? "s" : ""}`}
@@ -782,6 +804,16 @@ export default function OrderAgainScreen() {
 const Header = React.memo(function Header() {
   return (
     <View style={styles.header}>
+      {/* Same decorated band as home's address bar: green wash + grocery
+          line-art, both non-interactive. */}
+      <LinearGradient
+        colors={[T.greenWash, T.white]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0, y: 1 }}
+        style={StyleSheet.absoluteFillObject}
+        pointerEvents="none"
+      />
+      <DoodleBackdrop doodles={TAB_HEADER_DOODLES} />
       <View>
         <Text style={styles.headerTitle} accessibilityRole="header">Order Again</Text>
         <Text style={styles.headerSub}>Your favourites, one tap away</Text>
@@ -817,6 +849,7 @@ const styles = StyleSheet.create({
     backgroundColor: T.white,
     borderBottomWidth: 1,
     borderBottomColor: T.cardBorder,
+    overflow: "hidden", // clips the doodle glyphs; no shadow here, so safe on Android
   },
   headerTitle: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 22, color: T.bark, letterSpacing: -0.4 },
   headerSub: { fontFamily: "PlusJakartaSans_500Medium", fontSize: 12, color: T.barkLight, marginTop: 2 },
@@ -874,7 +907,10 @@ const styles = StyleSheet.create({
     backgroundColor: T.white,
     borderTopWidth: 8,
     borderTopColor: T.bg,
+    overflow: "hidden", // clips the SoftPanel / doodle layers; sections carry no shadow
   },
+  // Wraps header + carousel inside the white section band as one rounded box.
+  sectionPanel: { top: 10, bottom: 10 },
   sectionHeaderRow: {
     paddingHorizontal: 16,
     marginBottom: 16,

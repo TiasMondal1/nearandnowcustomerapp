@@ -40,7 +40,17 @@ import Animated, {
 } from "react-native-reanimated";
 
 import ProfileMenu from "../../components/ProfileMenu";
-import { IconWrap, Screen, Skeleton } from "../../components/ui";
+import {
+    DoodleBackdrop,
+    GRID_PANEL_DOODLES,
+    IconWrap,
+    PAGE_WALLPAPER_DOODLES,
+    Screen,
+    Skeleton,
+    SoftPanel,
+    TAB_HEADER_DOODLES,
+    type DoodleSpec,
+} from "../../components/ui";
 import { HIT_SLOP } from "../../constants/ui";
 import { useAuth } from "../../context/AuthContext";
 import { useCart, useCartItemMap, type CartItem } from "../../context/CartContext";
@@ -68,6 +78,9 @@ const T = {
   green: "#2D7A4F",
   greenLight: "#3DA668",
   greenXLight: "#EAF6EE",
+  // Header-band gradient top stop — one step deeper than greenXLight so the
+  // top of the screen reads as a deliberate brand surface, not a faded white.
+  greenWash: "#D6EDE0",
   greenGlow: "rgba(45,122,79,0.18)",
   greenBorder: "rgba(45,122,79,0.2)",
   cream: "#FAFAF7",
@@ -96,6 +109,29 @@ const FALLBACK_ICONS = [
   "food-apple-outline",
   "basket-outline",
 ];
+
+// ─── Grocery line-art backdrop (Blinkit-style) ───────────────────────────────
+// Shared scatters + layer component live in components/ui/DoodleBackdrop.tsx;
+// only home-specific scatters are defined here.
+
+/** Thin sticky-search band — a few small glyphs peeking around the white card
+ *  so the surface still reads as part of the header once it sticks. */
+const SEARCH_DOODLES: DoodleSpec[] = [
+  { icon: "fruit-cherries", size: 16, top: 2, left: 3, rotate: "-16deg" },
+  { icon: "carrot", size: 16, bottom: -5, left: "32%", rotate: "24deg" },
+  { icon: "food-apple-outline", size: 14, top: -2, right: "27%", rotate: "-12deg" },
+  { icon: "leaf", size: 18, bottom: -3, right: 6, rotate: "20deg" },
+];
+
+/** Frequently-bought shelf — snacky glyphs in the shelf's own terracotta so
+ *  the deals zone keeps its one-hue identity. */
+const FREQ_DOODLES: DoodleSpec[] = [
+  { icon: "cookie-outline", size: 22, top: 4, right: 14, rotate: "16deg" },
+  { icon: "ice-cream", size: 20, top: 34, right: "22%", rotate: "-14deg" },
+  { icon: "muffin", size: 20, bottom: 10, left: 10, rotate: "-18deg" },
+  { icon: "food-croissant", size: 22, top: 8, left: "38%", rotate: "22deg" },
+];
+
 
 /**
  * Module-level cache of the last reverse-geocoded "live address". When the
@@ -481,6 +517,7 @@ const FrequentlyBoughtSection = React.memo(function FrequentlyBoughtSection({
         style={StyleSheet.absoluteFillObject}
         pointerEvents="none"
       />
+      <DoodleBackdrop doodles={FREQ_DOODLES} color={T.deal} baseOpacity={0.06} />
       <SectionHeader title={title} subtitle="Quick reorder" accentColor={T.deal} />
       <FlatList
         data={data}
@@ -1183,6 +1220,7 @@ export default function HomeScreen() {
         case "search":
           return (
             <View style={styles.stickyWrap}>
+              <DoodleBackdrop doodles={SEARCH_DOODLES} />
               <TouchableOpacity
                 style={styles.searchBar}
                 activeOpacity={0.8}
@@ -1222,6 +1260,10 @@ export default function HomeScreen() {
         case "catTileGrid":
           return (
             <View style={styles.catTileGrid}>
+              {/* Soft rounded panel grounds the tile field on the cream bg —
+                  same zoning idea as the freq shelf's terracotta wash. */}
+              <SoftPanel />
+              <DoodleBackdrop doodles={GRID_PANEL_DOODLES} baseOpacity={0.07} />
               {item.categories.map((c, i) => (
                 <CategoryTile
                   key={c.id}
@@ -1340,6 +1382,7 @@ export default function HomeScreen() {
   if (loading) {
     return (
       <Screen bg={T.cream} edges={["top"]}>
+        <DoodleBackdrop doodles={PAGE_WALLPAPER_DOODLES} baseOpacity={0.05} />
         <AddressBarBlock
           liveAddress={liveAddress}
           location={location}
@@ -1350,6 +1393,7 @@ export default function HomeScreen() {
           onProfilePress={() => setShowProfileMenu(true)}
         />
         <View style={styles.stickyWrap}>
+          <DoodleBackdrop doodles={SEARCH_DOODLES} />
           <View style={[styles.searchBar, styles.searchBarSkeleton]}>
             <Skeleton width={30} height={30} radius={10} color={T.skeletonLo} />
             <Skeleton width="60%" height={12} color={T.skeletonLo} />
@@ -1374,6 +1418,9 @@ export default function HomeScreen() {
   // ── Render ───────────────────────────────────────────────────────────────
   return (
     <Screen bg={T.cream} edges={["top"]}>
+      {/* Fixed wallpaper: the list scrolls over it, opaque cards mask most of
+          it, and only the cream gutters reveal the faint glyphs. */}
+      <DoodleBackdrop doodles={PAGE_WALLPAPER_DOODLES} baseOpacity={0.05} />
       <FlashList
         ref={listRef}
         data={listData}
@@ -1510,19 +1557,19 @@ const AddressBarBlock = React.memo(function AddressBarBlock({
 
   return (
     <View style={styles.addressBarBg}>
-      {/* Soft fresh-green wash, identical to checkout's header so tabs and
-          checkout share one visual language. Watermark leaf echoes the feed's
-          end-stamp motif; both layers are non-interactive. */}
+      {/* Fresh-green wash fading into the cream sticky-search band below, with
+          scattered grocery line-art over it — the top of the screen reads as
+          one continuous branded surface instead of a flat white bar. Both
+          layers are non-interactive. */}
       <LinearGradient
-        colors={[T.greenXLight, T.white]}
+        colors={[T.greenWash, T.greenXLight, T.cream]}
+        locations={[0, 0.55, 1]}
         start={{ x: 0, y: 0 }}
         end={{ x: 0, y: 1 }}
         style={StyleSheet.absoluteFillObject}
         pointerEvents="none"
       />
-      <View style={styles.headerLeafWrap} pointerEvents="none">
-        <MaterialCommunityIcons name="leaf" size={110} color={T.green} />
-      </View>
+      <DoodleBackdrop doodles={TAB_HEADER_DOODLES} />
       <View style={styles.appBar}>
         <Pressable
           style={({ pressed }) => [
@@ -1622,27 +1669,21 @@ const styles = StyleSheet.create({
 
   // ── Address bar block (scrolls away) ─────────────────────────────────────
   addressBarBg: {
-    backgroundColor: T.white,
-    borderBottomWidth: 1,
-    borderBottomColor: T.cardBorder,
-    overflow: "hidden", // clips the watermark leaf; no shadow here, so safe on Android
+    // Gradient fades to T.cream and the sticky search band below is also
+    // cream, so no divider here — the hairline under the search band is the
+    // single separator for the whole header surface.
+    backgroundColor: T.cream,
+    overflow: "hidden", // clips the doodle glyphs; no shadow here, so safe on Android
   },
   freqShelf: {
     paddingBottom: 4,
-  },
-  headerLeafWrap: {
-    position: "absolute",
-    right: -26,
-    top: -34,
-    opacity: 0.07,
-    transform: [{ rotate: "-24deg" }],
   },
   appBar: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 12,
+    paddingTop: 14,
+    paddingBottom: 14,
     gap: 12,
   },
   addressPressable: { flex: 1, borderRadius: 10 },
@@ -1714,6 +1755,9 @@ const styles = StyleSheet.create({
     paddingTop: 4,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: T.cardBorder,
+    // Sticky cell: clip the doodle glyphs so nothing paints over the feed
+    // scrolling underneath once the band is stuck to the top.
+    overflow: "hidden",
   },
 
   // ── Active orders banner ─────────────────────────────────────────────────
