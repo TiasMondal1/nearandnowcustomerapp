@@ -106,6 +106,12 @@ export default function ProfileMenu({ visible, onClose }: ProfileMenuProps) {
                 onPress={() => handleNavigation("/location")}
               />
               <MenuItem
+                icon="heart-outline"
+                title="My Wishlist"
+                subtitle="Products you've saved"
+                onPress={() => handleNavigation("/wishlist")}
+              />
+              <MenuItem
                 icon="wallet-outline"
                 title="Payment Settings"
                 subtitle="UPI, cards & refunds"

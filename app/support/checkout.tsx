@@ -63,6 +63,19 @@ const ROW_HIT_SLOP = { top: 8, bottom: 8 };
 const TEXT_BTN_HIT_SLOP = { top: 10, bottom: 10, left: 12, right: 12 };
 const LINK_HIT_SLOP = { top: 8, bottom: 8, left: 0, right: 12 };
 
+/**
+ * Every payment path (COD, wallet, Razorpay) lands here once the order is
+ * genuinely committed. Replacing checkout with home *before* pushing
+ * confirmation — rather than replacing checkout with confirmation directly —
+ * means whatever screen sits below confirmation/track in the stack is always
+ * home, so backing out of tracking lands on home (with its active-orders
+ * banner) instead of wherever checkout happened to be pushed from.
+ */
+function goToOrderConfirmation(orderId: string) {
+  router.replace("/(tabs)/home");
+  router.push(`/order/confirmation/${orderId}` as any);
+}
+
 export default function CheckoutScreen() {
   const { items, isHydrated, appliedCoupon, removeCoupon, discount, isCouponEligible, clearCart, addItem, incrementQty } = useCart();
   const { user, customer } = useAuth();
@@ -356,7 +369,7 @@ export default function CheckoutScreen() {
         navigatingAwayRef.current = true;
         clearCart();
         // Navigate to order confirmation page with 40-second add-more window
-        router.replace(`/order/confirmation/${created.id}` as any);
+        goToOrderConfirmation(created.id);
         return created;
       } catch (err: unknown) {
         const message =
@@ -478,7 +491,7 @@ export default function CheckoutScreen() {
           markOrderPlaced().catch((err) => logSilentFailure("Mark order-placed flag", err));
           navigatingAwayRef.current = true;
           clearCart();
-          router.replace(`/order/confirmation/${internalOrder.id}` as any);
+          goToOrderConfirmation(internalOrder.id);
         } catch (err: unknown) {
           // Wallet debit is atomic (either fully succeeds or fully fails, no
           // ambiguous in-flight state like a Razorpay webhook) — safe to void
@@ -538,7 +551,7 @@ export default function CheckoutScreen() {
         navigatingAwayRef.current = true;
         clearCart();
         // Navigate to order confirmation page with 40-second add-more window
-        router.replace(`/order/confirmation/${internalOrder.id}` as any);
+        goToOrderConfirmation(internalOrder.id);
         return;
       }
 

@@ -24,7 +24,16 @@ const path = require("path");
 // every build, not just leave push notifications broken. Guard it so the
 // field only activates once the real file (from Firebase console — see
 // FCM_PUSH_NOTIFICATIONS_SETUP.md) is actually placed here.
-const googleServicesFilePath = path.join(__dirname, "google-services.json");
+// EAS Build uploads only git-tracked files, and google-services.json is
+// (deliberately) gitignored — so a cloud build never actually has the local
+// copy, even when one sits in this folder. An EAS "file" environment
+// variable (GOOGLE_SERVICES_JSON) is EAS's documented answer: it's synced
+// into the build regardless of gitignore, and EAS points this env var at
+// wherever it placed the file on the build machine. Prefer that path; fall
+// back to the local file for `expo prebuild`/local builds where no such env
+// var exists.
+const googleServicesFilePath =
+  process.env.GOOGLE_SERVICES_JSON || path.join(__dirname, "google-services.json");
 const hasGoogleServicesFile = fs.existsSync(googleServicesFilePath);
 
 const googleMapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || "";
@@ -79,7 +88,10 @@ module.exports = {
       // registration silently fails (falls into the token-failed catch in
       // hooks/usePushNotifications.dev.ts) even though everything else looks configured.
       // Only set once the file actually exists — see guard comment above.
-      ...(hasGoogleServicesFile ? { googleServicesFile: "./google-services.json" } : {}),
+      // Use the resolved path directly (not a hardcoded relative string):
+      // when it comes from EAS's GOOGLE_SERVICES_JSON file env var it's an
+      // absolute path elsewhere on the build machine, not relative to this file.
+      ...(hasGoogleServicesFile ? { googleServicesFile: googleServicesFilePath } : {}),
       versionCode: 3,
       permissions: [
         "android.permission.ACCESS_FINE_LOCATION",

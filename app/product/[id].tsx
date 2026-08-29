@@ -2,6 +2,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
+    Alert,
     LayoutAnimation,
     ScrollView,
     StyleSheet,
@@ -16,6 +17,7 @@ import {
     Badge,
     BottomDock,
     EmptyState,
+    IconButton,
     PrimaryButton,
     Screen,
     ScreenHeader,
@@ -26,13 +28,19 @@ import { useCart } from "../../context/CartContext";
 import { cdnImage } from "../../lib/imageUrl";
 import { getProductById, type Product } from "../../lib/productService";
 import { formatQuantityDisplay } from "../../lib/quantityFormat";
+import { apiFetch } from "../../lib/apiClient";
+import { logSilentFailure } from "../../lib/logSilentFailure";
+import { useAuth } from "../../context/AuthContext";
 
 export default function ProductDetailsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { addItem, items, incrementQty } = useCart();
+  const { isAuthenticated } = useAuth();
 
   const [loading, setLoading] = useState(true);
   const [product, setProduct] = useState<Product | null>(null);
+  const [inWishlist, setInWishlist] = useState(false);
+  const [wishlistBusy, setWishlistBusy] = useState(false);
 
   const cartItem = items.find((i) => i.product_id === product?.id);
 
@@ -59,6 +67,41 @@ export default function ProductDetailsScreen() {
       setProduct(null);
     } finally {
       if (myId === requestIdRef.current) setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!id || !isAuthenticated) return;
+    let cancelled = false;
+    apiFetch<{ success: boolean; inWishlist: boolean }>(`/api/wishlist/check/${id}`)
+      .then((res) => { if (!cancelled) setInWishlist(res.inWishlist); })
+      .catch((err) => logSilentFailure("Check wishlist status", err));
+    return () => { cancelled = true; };
+  }, [id, isAuthenticated]);
+
+  const toggleWishlist = async () => {
+    if (!product || wishlistBusy) return;
+    if (!isAuthenticated) {
+      Alert.alert("Sign in required", "Please log in to save items to your wishlist.", [
+        { text: "Cancel", style: "cancel" },
+        { text: "Log In", onPress: () => router.push("/phone") },
+      ]);
+      return;
+    }
+    const next = !inWishlist;
+    setInWishlist(next); // optimistic — reverted on failure below
+    setWishlistBusy(true);
+    try {
+      if (next) {
+        await apiFetch("/api/wishlist", { method: "POST", body: JSON.stringify({ productId: product.id }) });
+      } else {
+        await apiFetch(`/api/wishlist/${product.id}`, { method: "DELETE" });
+      }
+    } catch (err) {
+      logSilentFailure("Toggle wishlist", err);
+      setInWishlist(!next);
+    } finally {
+      setWishlistBusy(false);
     }
   };
 
@@ -112,9 +155,19 @@ export default function ProductDetailsScreen() {
         onBack={() => router.back()}
         titleStyle={styles.headerTitle}
         right={
-          !product.in_stock ? (
-            <Badge tone="danger" label="Out of Stock" style={styles.oosTag} textStyle={styles.oosTagText} />
-          ) : undefined
+          <View style={styles.headerRight}>
+            {!product.in_stock && (
+              <Badge tone="danger" label="Out of Stock" style={styles.oosTag} textStyle={styles.oosTagText} />
+            )}
+            <IconButton
+              icon={inWishlist ? "heart" : "heart-outline"}
+              onPress={toggleWishlist}
+              disabled={wishlistBusy}
+              color={inWishlist ? C.danger : C.textSub}
+              bg="transparent"
+              accessibilityLabel={inWishlist ? "Remove from wishlist" : "Add to wishlist"}
+            />
+          </View>
         }
       />
 
@@ -275,6 +328,7 @@ const styles = StyleSheet.create({
   // Product names are long — left-aligned, one line, slightly smaller than the
   // 18/800 screen-title scale.
   headerTitle: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 16 },
+  headerRight: { flexDirection: "row", alignItems: "center", gap: 4 },
   oosTag: { paddingVertical: 4, alignSelf: "center" },
   oosTagText: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 11 },
 

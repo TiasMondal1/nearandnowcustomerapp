@@ -385,6 +385,22 @@ export default function TrackOrderScreen() {
           )}
         </Card>
 
+        {/* ─── Delivered: prompt to rate the order ─────────────────────────── */}
+        {status === "order_delivered" && !isCancelled && (
+          <TouchableOpacity
+            style={styles.rateCard}
+            activeOpacity={0.8}
+            onPress={() => router.push(`/order/rate/${id}` as any)}
+          >
+            <MaterialCommunityIcons name="star-outline" size={22} color={C.primary} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rateCardTitle}>Rate your order</Text>
+              <Text style={styles.rateCardText}>Let us know how the products you got were.</Text>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={20} color={C.textLight} />
+          </TouchableOpacity>
+        )}
+
         {/* ─── Pending at store: no stores have accepted yet ──────────────────── */}
         {noStoreAcceptedYet && (
           <Card size="lg" style={styles.infoCard}>
@@ -1058,6 +1074,21 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   infoCardText: { fontFamily: "PlusJakartaSans_400Regular", flex: 1, color: C.textSub, fontSize: 13, lineHeight: 19 },
+
+  rateCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginHorizontal: 16,
+    marginTop: 12,
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: C.primaryXLight,
+    borderWidth: 1,
+    borderColor: C.primaryLight,
+  },
+  rateCardTitle: { color: C.text, fontSize: 14, fontWeight: "700" },
+  rateCardText: { color: C.textSub, fontSize: 12, marginTop: 2 },
 
   // Per-store card (multi-store tracking)
   storeOrderList: { marginHorizontal: 16, gap: 12 },
