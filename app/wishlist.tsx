@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { C } from "../constants/colors";
+import { useAuth } from "../context/AuthContext";
 import { useCart } from "../context/CartContext";
 import { apiFetch } from "../lib/apiClient";
 import { cdnImage } from "../lib/imageUrl";
@@ -43,6 +44,7 @@ function priceWithGst(item: WishlistItem) {
 }
 
 export default function WishlistScreen() {
+  const { isAuthenticated } = useAuth();
   const { addItem } = useCart();
   const [items, setItems] = useState<WishlistItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -64,8 +66,12 @@ export default function WishlistScreen() {
   }, []);
 
   useEffect(() => {
+    if (!isAuthenticated) {
+      setLoading(false);
+      return;
+    }
     load();
-  }, [load]);
+  }, [isAuthenticated, load]);
 
   const remove = useCallback(async (productId: string) => {
     setRemovingId(productId);
@@ -95,7 +101,16 @@ export default function WishlistScreen() {
         <View style={{ width: 38 }} />
       </View>
 
-      {loading ? (
+      {!isAuthenticated ? (
+        <View style={styles.center}>
+          <MaterialCommunityIcons name="heart-outline" size={48} color={C.textLight} />
+          <Text style={styles.emptyTitle}>Sign in required</Text>
+          <Text style={styles.emptyText}>Log in to view and save items to your wishlist.</Text>
+          <TouchableOpacity style={styles.retryBtn} onPress={() => router.push("/phone")}>
+            <Text style={styles.retryBtnText}>Log In</Text>
+          </TouchableOpacity>
+        </View>
+      ) : loading ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color={C.primary} />
         </View>

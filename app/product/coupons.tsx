@@ -22,8 +22,9 @@ type Coupon = {
   id: string;
   code: string;
   description: string;
-  discount_type: "flat" | "percent";
-  value: number;
+  coupon_type: "flat" | "percent";
+  discount_value: number;
+  max_discount_amount?: number;
   min_order_value?: number;
   expires_at?: string;
 };
@@ -94,9 +95,9 @@ export default function CouponsScreen() {
                   <View style={styles.couponTopLeft}>
                     <Badge
                       label={
-                        item.discount_type === "flat"
-                          ? `₹${item.value} OFF`
-                          : `${item.value}% OFF`
+                        item.coupon_type === "flat"
+                          ? `₹${item.discount_value} OFF`
+                          : `${item.discount_value}% OFF`
                       }
                       bg={applied ? C.primaryLight : C.bgSoft}
                       color={applied ? C.primary : C.text}
@@ -148,7 +149,14 @@ export default function CouponsScreen() {
                     if (applied) {
                       removeCoupon();
                     } else {
-                      applyCoupon({ ...item, type: item.discount_type });
+                      applyCoupon({
+                        id: item.id,
+                        code: item.code,
+                        type: item.coupon_type,
+                        value: item.discount_value,
+                        max_discount: item.max_discount_amount,
+                        min_order_value: item.min_order_value,
+                      });
                       router.back();
                     }
                   }}
