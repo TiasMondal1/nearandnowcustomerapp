@@ -18,6 +18,7 @@ import React, {
 import {
     ActivityIndicator,
     BackHandler,
+    Dimensions,
     FlatList,
     InteractionManager,
     Platform,
@@ -38,6 +39,7 @@ import Animated, {
     useSharedValue,
     withSpring,
 } from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import ProfileMenu from "../../components/ProfileMenu";
 import {
@@ -51,7 +53,7 @@ import {
     TAB_HEADER_DOODLES,
     type DoodleSpec,
 } from "../../components/ui";
-import { HIT_SLOP } from "../../constants/ui";
+import { HIT_SLOP, TAB_BAR_BASE_HEIGHT } from "../../constants/ui";
 import { useAuth } from "../../context/AuthContext";
 import { useCart, useCartItemMap, type CartItem } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
@@ -166,7 +168,6 @@ const ADDRESS_HIT_SLOP = { top: 8, bottom: 8 };
  */
 type HomeListItem =
   | { kind: "search" }
-  | { kind: "activeOrders"; orders: Order[] }
   | { kind: "freqBought"; title: string; products: Product[] }
   | { kind: "catTileGrid"; categories: Category[] }
   | { kind: "sectionHeader"; title: string; subtitle?: string; onSeeAll?: () => void }
@@ -537,56 +538,107 @@ const FrequentlyBoughtSection = React.memo(function FrequentlyBoughtSection({
 
 // ─── Active orders banner ────────────────────────────────────────────────────
 // Sits above every other home section — an order in flight is the most
-// actionable thing on the screen. Capped-height + internal scroll (rather
-// than growing the card list unbounded) so two-plus active orders never push
-// the rest of the home feed further down than a single order would.
-const ACTIVE_ORDERS_MAX_HEIGHT = 220;
+// actionable thing on the screen. One banner fills the row at a time (a
+// single order is the overwhelmingly common case); a second+ active order
+// pages in horizontally on swipe instead of stacking the list taller and
+// pushing the rest of the home feed down.
+const ACTIVE_ORDER_CARD_GAP = 0; // full-bleed, edge-to-edge paging — no gap between pages
+const ACTIVE_ORDER_CARD_WIDTH = Dimensions.get("window").width; // flush with the (full-width) tab bar below it
+// Approx height of the floating banner block — used to lift the cart pill
+// clear of it instead of overlapping when both float at once.
+const ACTIVE_ORDER_BANNER_FOOTPRINT = 64;
+
+const activeOrderKeyExtractor = (o: Order) => o.id;
 
 const ActiveOrdersSection = React.memo(function ActiveOrdersSection({
   orders,
 }: {
   orders: Order[];
 }) {
+  const [pageIndex, setPageIndex] = useState(0);
+  const pageWidth = ACTIVE_ORDER_CARD_WIDTH + ACTIVE_ORDER_CARD_GAP;
+
+  const handleMomentumEnd = useCallback(
+    (e: { nativeEvent: { contentOffset: { x: number } } }) => {
+      const next = Math.round(e.nativeEvent.contentOffset.x / pageWidth);
+      setPageIndex(Math.max(0, Math.min(next, orders.length - 1)));
+    },
+    [pageWidth, orders.length],
+  );
+
+  // Clamp in case the order count shrinks (e.g. one gets delivered) while
+  // sitting on a later page than still exists.
+  useEffect(() => {
+    if (pageIndex > orders.length - 1) setPageIndex(Math.max(0, orders.length - 1));
+  }, [orders.length, pageIndex]);
+
   if (!orders.length) return null;
   return (
     <View style={styles.activeOrdersWrap}>
-      <ScrollView
-        nestedScrollEnabled
-        showsVerticalScrollIndicator={false}
-        style={orders.length > 2 ? { maxHeight: ACTIVE_ORDERS_MAX_HEIGHT } : undefined}
-      >
-        {orders.map((order) => (
-          <ActiveOrderCard key={order.id} order={order} />
-        ))}
-      </ScrollView>
+      <FlatList
+        data={orders}
+        keyExtractor={activeOrderKeyExtractor}
+        renderItem={({ item }) => (
+          <ActiveOrderCard
+            order={item}
+            pageLabel={orders.length > 1 ? `${pageIndex + 1}/${orders.length}` : undefined}
+          />
+        )}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        snapToInterval={pageWidth}
+        decelerationRate="fast"
+        snapToAlignment="start"
+        onMomentumScrollEnd={handleMomentumEnd}
+        extraData={pageIndex}
+      />
     </View>
   );
 });
 
-const ActiveOrderCard = React.memo(function ActiveOrderCard({ order }: { order: Order }) {
+const ActiveOrderCard = React.memo(function ActiveOrderCard({
+  order,
+  pageLabel,
+}: {
+  order: Order;
+  /** "1/4" style page counter — shown only when there's more than one active order. */
+  pageLabel?: string;
+}) {
   const meta = getStatusMeta(order.order_status);
   const handlePress = useCallback(() => {
     router.push(`/order/track/${order.id}` as any);
   }, [order.id]);
 
+  const itemsSummary = useMemo(() => {
+    const items = order.items ?? [];
+    if (!items.length) return "Your order";
+    const extra = items.length - 1;
+    return extra > 0 ? `${items[0].name} + ${extra} items` : items[0].name;
+  }, [order.items]);
+
   return (
     <TouchableOpacity
-      style={styles.activeOrderCard}
+      style={[styles.activeOrderCard, { width: ACTIVE_ORDER_CARD_WIDTH }]}
       onPress={handlePress}
       activeOpacity={0.85}
     >
-      <View style={[styles.activeOrderPulseWrap]}>
-        <View style={[styles.activeOrderPulseDot, { backgroundColor: meta.color }]} />
+      <View style={[styles.activeOrderIconWrap, { backgroundColor: meta.bg }]}>
+        <MaterialCommunityIcons name={meta.icon} size={18} color={meta.color} />
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.activeOrderTitle} numberOfLines={1}>
-          {order.order_number ? `Order ${order.order_number}` : "Your order is on its way"}
-        </Text>
-        <Text style={[styles.activeOrderStatus, { color: meta.color }]} numberOfLines={1}>
           {meta.label}
         </Text>
+        <Text style={styles.activeOrderStatus} numberOfLines={1}>
+          {itemsSummary}
+        </Text>
       </View>
-      <MaterialCommunityIcons name="chevron-right" size={20} color={T.green} />
+      {pageLabel && (
+        <Text style={styles.activeOrdersCounterText}>{pageLabel}</Text>
+      )}
+      <View style={styles.activeOrderViewBtn}>
+        <Text style={styles.activeOrderViewBtnText}>VIEW</Text>
+      </View>
     </TouchableOpacity>
   );
 });
@@ -649,6 +701,7 @@ export default function HomeScreen() {
   // (the difference between "cached UI is visible immediately" vs "blank
   // skeleton flashes for 60–200 ms before the cache finishes parsing").
   const initialCache = getMemoryHomeCache();
+  const insets = useSafeAreaInsets();
 
   const [loading, setLoading] = useState(!initialCache);
   const [categories, setCategories] = useState<Category[]>(
@@ -1089,10 +1142,6 @@ export default function HomeScreen() {
     const out: HomeListItem[] = [{ kind: "search" }];
 
     if (activeCategory === "All") {
-      if (activeOrders.length > 0) {
-        out.push({ kind: "activeOrders", orders: activeOrders });
-      }
-
       if (frequentlyBought.products.length > 0) {
         out.push({
           kind: "freqBought",
@@ -1203,7 +1252,6 @@ export default function HomeScreen() {
     return out;
   }, [
     activeCategory,
-    activeOrders,
     frequentlyBought,
     categoriesWithProducts,
     productsByCategory,
@@ -1242,9 +1290,6 @@ export default function HomeScreen() {
               </TouchableOpacity>
             </View>
           );
-
-        case "activeOrders":
-          return <ActiveOrdersSection orders={item.orders} />;
 
         case "freqBought":
           return (
@@ -1452,12 +1497,32 @@ export default function HomeScreen() {
         }
       />
 
+      {/* ── Active-order banner, docked just above the tab bar ───────────── */}
+      {activeOrders.length > 0 && (
+        <View
+          style={[
+            styles.activeOrdersFloatWrap,
+            // Flush against the tab bar's top edge — no gap — so the banner
+            // reads as one connected surface with it, not a separate floating card.
+            { bottom: TAB_BAR_BASE_HEIGHT + insets.bottom },
+          ]}
+          pointerEvents="box-none"
+        >
+          <ActiveOrdersSection orders={activeOrders} />
+        </View>
+      )}
+
       {/* ── Cart CTA pill (centered, compact) ──────────────────────────── */}
       {hasCart && (
         <Animated.View
           entering={FadeInUp.duration(340).springify()}
           exiting={FadeOutDown.duration(220)}
-          style={styles.cartBar}
+          style={[
+            styles.cartBar,
+            // Lift clear of the active-order banner instead of overlapping it
+            // when both float above the tab bar at once.
+            activeOrders.length > 0 && { bottom: styles.cartBar.bottom + ACTIVE_ORDER_BANNER_FOOTPRINT },
+          ]}
           pointerEvents="box-none"
         >
           <Pressable
@@ -1506,8 +1571,6 @@ const homeListKeyExtractor = (item: HomeListItem, index: number): string => {
   switch (item.kind) {
     case "search":
       return "search";
-    case "activeOrders":
-      return "activeOrders";
     case "freqBought":
       return "freq";
     case "catTileGrid":
@@ -1761,42 +1824,80 @@ const styles = StyleSheet.create({
   },
 
   // ── Active orders banner ─────────────────────────────────────────────────
+  // Docked flush against the tab bar's top edge (bottom offset set inline
+  // from safe-area insets, with zero gap) so it reads as one connected
+  // surface with the tab bar below it, not a separate floating card.
+  activeOrdersFloatWrap: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+  },
   activeOrdersWrap: {
-    paddingHorizontal: 16,
-    paddingTop: 4,
+    position: "relative",
   },
   activeOrderCard: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
     paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderRadius: 14,
-    backgroundColor: T.greenXLight,
-    borderWidth: 1,
-    borderColor: "rgba(45,122,79,0.18)",
-    marginBottom: 8,
+    paddingHorizontal: 16,
+    // Rounded where it meets the page content above, square where it meets
+    // the tab bar below — reads as an extension of the tab bar, not a card
+    // sitting on top of it.
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    // Solid brand green (not the pale greenXLight tint used elsewhere) — the
+    // page background and every other card here are light cream/white, so a
+    // solid dark card is what actually reads as "a distinct floating unit"
+    // rather than blending in. Text/icon colors below are all picked for
+    // contrast against this, not against a light card.
+    backgroundColor: T.green,
+    // Shadow points up (negative height), same direction as the tab bar's
+    // own shadow — both read as one raised unit above the page content.
+    shadowColor: T.shadowDark,
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
+    elevation: 10,
   },
-  activeOrderPulseWrap: {
-    width: 10,
-    height: 10,
+  activeOrderIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
-  },
-  activeOrderPulseDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
   },
   activeOrderTitle: {
     fontSize: 13.5,
     fontWeight: "800",
-    color: T.bark,
+    color: T.white,
   },
   activeOrderStatus: {
     fontSize: 12,
     fontWeight: "600",
+    color: "rgba(255,255,255,0.78)",
     marginTop: 2,
+  },
+  activeOrderViewBtn: {
+    backgroundColor: T.white,
+    borderRadius: 999,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+  },
+  activeOrderViewBtnText: {
+    fontSize: 11.5,
+    fontWeight: "800",
+    color: T.green,
+    letterSpacing: 0.3,
+  },
+  // "1/N" page counter, inline and centered in the card's row — adjacent to
+  // the VIEW button, not overlapping it (an earlier top-right overlaid
+  // version did).
+  activeOrdersCounterText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.85)",
+    fontVariant: ["tabular-nums"],
   },
 
   // ── Search bar ────────────────────────────────────────────────────────────
