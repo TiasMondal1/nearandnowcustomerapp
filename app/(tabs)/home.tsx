@@ -18,7 +18,6 @@ import React, {
 import {
     ActivityIndicator,
     BackHandler,
-    Dimensions,
     FlatList,
     InteractionManager,
     Platform,
@@ -28,6 +27,7 @@ import {
     StyleSheet,
     Text,
     TouchableOpacity,
+    useWindowDimensions,
     View,
     type StyleProp,
     type ViewStyle,
@@ -543,7 +543,6 @@ const FrequentlyBoughtSection = React.memo(function FrequentlyBoughtSection({
 // pages in horizontally on swipe instead of stacking the list taller and
 // pushing the rest of the home feed down.
 const ACTIVE_ORDER_CARD_GAP = 0; // full-bleed, edge-to-edge paging — no gap between pages
-const ACTIVE_ORDER_CARD_WIDTH = Dimensions.get("window").width; // flush with the (full-width) tab bar below it
 // Approx height of the floating banner block — used to lift the cart pill
 // clear of it instead of overlapping when both float at once.
 const ACTIVE_ORDER_BANNER_FOOTPRINT = 64;
@@ -556,7 +555,15 @@ const ActiveOrdersSection = React.memo(function ActiveOrdersSection({
   orders: Order[];
 }) {
   const [pageIndex, setPageIndex] = useState(0);
-  const pageWidth = ACTIVE_ORDER_CARD_WIDTH + ACTIVE_ORDER_CARD_GAP;
+  // Live window width, not a module-level Dimensions.get() snapshot — this
+  // app isn't orientation-locked (app.config.js: orientation: "default"),
+  // and a stale width would desync the paging math (snapToInterval vs. the
+  // screen's actual current width) on rotation or Android split-screen/
+  // foldable resize. Found 2026-09-01 during a cross-app audit.
+  const { width: windowWidth } = useWindowDimensions();
+  const cardWidth = windowWidth; // flush with the (full-width) tab bar below it
+  const pageWidth = cardWidth + ACTIVE_ORDER_CARD_GAP;
+  const listRef = useRef<FlatList<Order>>(null);
 
   const handleMomentumEnd = useCallback(
     (e: { nativeEvent: { contentOffset: { x: number } } }) => {
@@ -566,21 +573,38 @@ const ActiveOrdersSection = React.memo(function ActiveOrdersSection({
     [pageWidth, orders.length],
   );
 
-  // Clamp in case the order count shrinks (e.g. one gets delivered) while
-  // sitting on a later page than still exists.
+  // A background refresh (cache read, poll, realtime) can swap in a new
+  // `orders` array at any time — a status change, a delivered order
+  // dropping out, or the backend simply returning a different sequence.
+  // Without this, a customer who's swiped to page 2+ would keep seeing the
+  // old page's content and page-count label while the FlatList's underlying
+  // data (and its native scroll offset, which nothing here reprograms)
+  // silently fell out of sync — the label could show "2/2" while the list
+  // is actually scrolled past the end, or showing a different order than
+  // the label implies. Reset to page 1 whenever the
+  // actual set of order ids changes (not on every re-render — same ids in
+  // the same order is a no-op) rather than trying to guess which page
+  // still "matches" a set that may have changed shape entirely.
+  const orderIdsKey = orders.map((o) => o.id).join(',');
+  const prevOrderIdsKeyRef = useRef(orderIdsKey);
   useEffect(() => {
-    if (pageIndex > orders.length - 1) setPageIndex(Math.max(0, orders.length - 1));
-  }, [orders.length, pageIndex]);
+    if (prevOrderIdsKeyRef.current === orderIdsKey) return;
+    prevOrderIdsKeyRef.current = orderIdsKey;
+    setPageIndex(0);
+    listRef.current?.scrollToOffset({ offset: 0, animated: false });
+  }, [orderIdsKey]);
 
   if (!orders.length) return null;
   return (
     <View style={styles.activeOrdersWrap}>
       <FlatList
+        ref={listRef}
         data={orders}
         keyExtractor={activeOrderKeyExtractor}
         renderItem={({ item }) => (
           <ActiveOrderCard
             order={item}
+            cardWidth={cardWidth}
             pageLabel={orders.length > 1 ? `${pageIndex + 1}/${orders.length}` : undefined}
           />
         )}
@@ -590,7 +614,7 @@ const ActiveOrdersSection = React.memo(function ActiveOrdersSection({
         decelerationRate="fast"
         snapToAlignment="start"
         onMomentumScrollEnd={handleMomentumEnd}
-        extraData={pageIndex}
+        extraData={[pageIndex, cardWidth]}
       />
     </View>
   );
@@ -598,9 +622,11 @@ const ActiveOrdersSection = React.memo(function ActiveOrdersSection({
 
 const ActiveOrderCard = React.memo(function ActiveOrderCard({
   order,
+  cardWidth,
   pageLabel,
 }: {
   order: Order;
+  cardWidth: number;
   /** "1/4" style page counter — shown only when there's more than one active order. */
   pageLabel?: string;
 }) {
@@ -618,7 +644,7 @@ const ActiveOrderCard = React.memo(function ActiveOrderCard({
 
   return (
     <TouchableOpacity
-      style={[styles.activeOrderCard, { width: ACTIVE_ORDER_CARD_WIDTH }]}
+      style={[styles.activeOrderCard, { width: cardWidth }]}
       onPress={handlePress}
       activeOpacity={0.85}
     >
@@ -1475,7 +1501,19 @@ export default function HomeScreen() {
         stickyHeaderIndices={[0]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
-        contentContainerStyle={styles.flashListContent}
+        contentContainerStyle={
+          activeOrders.length > 0
+            ? // The active-orders banner floats above the tab bar (doesn't
+              // reserve list space the way it did before that redesign) — on
+              // a high-inset device (large gesture-nav bottom inset) its own
+              // height can exceed the static 150px content padding below,
+              // covering the last row of the feed. Add the banner's actual
+              // footprint (card height + safe-area inset) on top of the
+              // existing padding whenever it's actually showing. Found
+              // 2026-09-01 during a cross-app audit.
+              { ...styles.flashListContent, paddingBottom: styles.flashListContent.paddingBottom + ACTIVE_ORDER_BANNER_FOOTPRINT + insets.bottom }
+            : styles.flashListContent
+        }
         ListHeaderComponent={
           <AddressBarBlock
             liveAddress={liveAddress}
