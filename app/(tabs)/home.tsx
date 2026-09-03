@@ -153,6 +153,9 @@ const SECTION_VISIBLE_PRODUCTS = 6;
 /** Number of cards rendered per row in the home grid. */
 const ROW_COUNT = 3;
 
+/** How often the floating active-orders banner re-polls while Home is focused. */
+const ACTIVE_ORDERS_POLL_MS = 20_000;
+
 /** Lifts the 22px qty buttons to a 44px target; horizontal slop stays 6 so − and + never overlap inside the 68px box. */
 const QTY_HIT_SLOP = { top: 11, bottom: 11, left: 6, right: 6 };
 /** Lifts the ~24px ADD button to a 44px target. */
@@ -776,32 +779,43 @@ export default function HomeScreen() {
     }, []),
   );
 
-  // ── Active orders banner: re-sync on every return to Home ─────────────────
+  // ── Active orders banner: re-sync on every return to Home, then keep polling ──
   // The two mount-time effects above (cache read + getUserOrders) only run
   // once when `userId` becomes available, so an order that transitions to
-  // delivered/cancelled while the customer is elsewhere (e.g. watching it on
-  // the tracking screen, then tapping back to the Home tab) stayed stuck in
-  // the floating banner until the next full app restart. Re-fetching on
-  // focus — skipping the very first focus, which the mount effects already
-  // cover — keeps the banner limited to genuinely still-active orders.
+  // delivered/cancelled — or just changes status (preparing -> picked up ->
+  // on the way) — while the customer is elsewhere stayed stuck showing its
+  // old state in the floating banner until the next full app restart.
+  // Re-fetching on focus (skipping the very first focus, which the mount
+  // effects already cover) handles "left and came back." But a customer who
+  // just sits on Home watching the banner, without ever navigating away,
+  // would still see a frozen status — there's no realtime option here
+  // (customer_orders' RLS-based realtime policies are dead for this app's
+  // phone-OTP auth model, same reason useOrderTracking.ts's FALLBACK_POLL_MS
+  // exists), so this polls at a lighter cadence appropriate for a compact
+  // summary banner rather than the tracking screen's own 5s detail poll.
   const activeOrdersFocusedOnce = useRef(false);
   useFocusEffect(
     useCallback(() => {
       if (!userId) return;
+      let cancelled = false;
+      const refresh = () => {
+        getUserOrders(userId)
+          .then((orders) => {
+            if (!cancelled) {
+              setActiveOrders(orders.filter((o) => !(TERMINAL_STATUSES as string[]).includes(o.order_status)));
+            }
+          })
+          .catch((err) => logSilentFailure("Refresh active orders", err));
+      };
       if (!activeOrdersFocusedOnce.current) {
         activeOrdersFocusedOnce.current = true;
-        return;
+      } else {
+        refresh();
       }
-      let cancelled = false;
-      getUserOrders(userId)
-        .then((orders) => {
-          if (!cancelled) {
-            setActiveOrders(orders.filter((o) => !(TERMINAL_STATUSES as string[]).includes(o.order_status)));
-          }
-        })
-        .catch((err) => logSilentFailure("Re-sync active orders on focus", err));
+      const interval = setInterval(refresh, ACTIVE_ORDERS_POLL_MS);
       return () => {
         cancelled = true;
+        clearInterval(interval);
       };
     }, [userId]),
   );
