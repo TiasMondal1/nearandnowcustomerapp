@@ -776,6 +776,36 @@ export default function HomeScreen() {
     }, []),
   );
 
+  // ── Active orders banner: re-sync on every return to Home ─────────────────
+  // The two mount-time effects above (cache read + getUserOrders) only run
+  // once when `userId` becomes available, so an order that transitions to
+  // delivered/cancelled while the customer is elsewhere (e.g. watching it on
+  // the tracking screen, then tapping back to the Home tab) stayed stuck in
+  // the floating banner until the next full app restart. Re-fetching on
+  // focus — skipping the very first focus, which the mount effects already
+  // cover — keeps the banner limited to genuinely still-active orders.
+  const activeOrdersFocusedOnce = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      if (!userId) return;
+      if (!activeOrdersFocusedOnce.current) {
+        activeOrdersFocusedOnce.current = true;
+        return;
+      }
+      let cancelled = false;
+      getUserOrders(userId)
+        .then((orders) => {
+          if (!cancelled) {
+            setActiveOrders(orders.filter((o) => !(TERMINAL_STATUSES as string[]).includes(o.order_status)));
+          }
+        })
+        .catch((err) => logSilentFailure("Re-sync active orders on focus", err));
+      return () => {
+        cancelled = true;
+      };
+    }, [userId]),
+  );
+
   const derivedCategoryCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const [k, v] of Object.entries(productsByCategory)) {
@@ -921,15 +951,16 @@ export default function HomeScreen() {
   // within 4 km of their delivery address.
   useEffect(() => {
     if (!isHydrated || !location) {
-      // No location — fall back to all active-store products (not raw master catalog).
-      if (nearbyIds !== null) {
+      // No location set — show nothing rather than the whole platform
+      // catalog. The 0-4 km radius filter can't run without coordinates, and
+      // silently falling back to every active store's products (as this used
+      // to) defeats the radius restriction entirely. Clearing the catalog
+      // here lets the existing "Set your location" empty state render
+      // instead. See bug_fixes doc, 2026-09-03.
+      if (nearbyIds !== null || Object.keys(productsByCategory).length > 0) {
         setNearbyIds(null);
         setNoStoresNearby(false);
-        let cancelled = false;
-        getAllActiveProductIds().then((filter) => {
-          if (!cancelled) fetchFresh(filter.size > 0 ? filter : undefined);
-        });
-        return () => { cancelled = true; };
+        setProductsByCategory({});
       }
       return;
     }
@@ -946,7 +977,11 @@ export default function HomeScreen() {
       const noStores = filter.storeIds.length === 0;
       setNearbyIds(filter.productIds);
       setNoStoresNearby(noStores);
-      await fetchFresh(noStores ? undefined : filter.productIds);
+      // filter.productIds is already an empty Set when no store is within
+      // radius — passing it through (instead of `undefined`) is what makes
+      // fetchFresh load zero products instead of silently falling back to
+      // the entire unfiltered platform catalog. See bug_fixes doc, 2026-09-03.
+      await fetchFresh(filter.productIds);
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1648,12 +1683,17 @@ const AddressBarBlock = React.memo(function AddressBarBlock({
   onProfilePress: () => void;
 }) {
   const locationLabel = location?.label;
-  const addressText = liveAddress
-    ? liveAddress
-    : location?.address
-      ? location.address
-      : location?.label
-        ? location.label
+  // A location the customer explicitly set (a saved address, a manual pin
+  // drop) must always win over the device's live GPS reverse-geocode —
+  // liveAddress is only a cold-start placeholder for before any location is
+  // known, never a silent override of a deliberate choice. See bug_fixes
+  // doc, 2026-09-03.
+  const addressText = location?.address
+    ? location.address
+    : location?.label
+      ? location.label
+      : liveAddress
+        ? liveAddress
         : null;
 
   return (

@@ -21,7 +21,7 @@ import { useLocation } from "../../context/LocationContext";
 import { cdnImage } from "../../lib/imageUrl";
 import { logError } from "../../lib/logError";
 import { getProductsByCategory, type Product as ServiceProduct } from "../../lib/productService";
-import { getAllActiveProductIds, getNearbyProductFilter } from "../../lib/storeService";
+import { getNearbyProductFilter } from "../../lib/storeService";
 import StarRating from "../../components/StarRating";
 
 const FALLBACK_COLORS = [
@@ -192,13 +192,11 @@ export default function CategorySlugScreen() {
         if (myId !== requestIdRef.current) return;
         nearbyIds = filter?.productIds;
       } else {
-        // No location yet — without this fallback, the store-approved/active
-        // filter was skipped entirely, matching the same gap already fixed
-        // elsewhere (checkout, product detail, order confirmation, search)
-        // via getAllActiveProductIds() but missed here.
-        const filter = await getAllActiveProductIds();
-        if (myId !== requestIdRef.current) return;
-        nearbyIds = filter.size > 0 ? filter : undefined;
+        // No location yet — the 0-4 km radius filter can't run without
+        // coordinates. Show nothing rather than falling back to every
+        // active store's catalog platform-wide, which would defeat the
+        // radius restriction. See bug_fixes doc, 2026-09-03.
+        nearbyIds = new Set();
       }
       const productsData = await getProductsByCategory(categoryData.name, { nearbyIds });
       if (myId !== requestIdRef.current) return;

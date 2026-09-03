@@ -16,7 +16,7 @@ import { useCartItemMap, useCart } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
 import { cdnImage } from "../../lib/imageUrl";
 import { searchProducts, type Product } from "../../lib/productService";
-import { getAllActiveProductIds, getNearbyProductFilter } from "../../lib/storeService";
+import { getNearbyProductFilter } from "../../lib/storeService";
 import StarRating from "../../components/StarRating";
 import { BackButton, Badge, EmptyState, PrimaryButton, Screen, Skeleton } from "../../components/ui";
 
@@ -32,14 +32,11 @@ export default function SearchScreen() {
   useEffect(() => {
     if (!location) {
       // No location yet (fresh install, geolocation denied, direct deep
-      // link into this screen) — without this fallback, searchProducts()
-      // was called with nearbyIds: undefined, which skips the
-      // store-approved/active filter entirely, matching the same gap
-      // already fixed elsewhere (checkout, product detail, order
-      // confirmation) via getAllActiveProductIds() but missed here.
-      getAllActiveProductIds().then((filter) => {
-        nearbyIdsRef.current = filter.size > 0 ? filter : undefined;
-      });
+      // link into this screen) — the 0-4 km radius filter can't run without
+      // coordinates. Search against an empty set rather than falling back
+      // to every active store's catalog platform-wide, which would defeat
+      // the radius restriction. See bug_fixes doc, 2026-09-03.
+      nearbyIdsRef.current = new Set();
       return;
     }
     const key = `${location.latitude.toFixed(3)},${location.longitude.toFixed(3)}`;

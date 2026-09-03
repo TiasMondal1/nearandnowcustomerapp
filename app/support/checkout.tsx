@@ -44,7 +44,7 @@ import {
     type Product,
 } from "../../lib/productService";
 import { clearSavedPaymentMethodsCache } from "../../lib/razorpayService";
-import { getAllActiveProductIds } from "../../lib/storeService";
+import { getNearbyProductFilter } from "../../lib/storeService";
 
 // Standard 15-char Indian GSTIN format: 2-digit state code, 10-char PAN,
 // 1-digit entity code, literal 'Z', 1 checksum char. Was previously
@@ -183,18 +183,27 @@ export default function CheckoutScreen() {
         return;
       }
       try {
+        if (!location) {
+          // No delivery location set — the 0-4 km radius filter can't run,
+          // so skip suggestions entirely instead of falling back to every
+          // active store's catalog (which could include products from
+          // stores far outside the customer's actual delivery range).
+          setRecommended([]);
+          return;
+        }
+        const nearbyFilter = await getNearbyProductFilter(location.latitude, location.longitude);
+        const nearbyIds = nearbyFilter?.productIds ?? new Set<string>();
+
         const cache = getMemoryHomeCache();
         let allProducts: Product[];
         if (cache) {
+          // The warm home cache is store-active-only, not radius-filtered —
+          // narrow it to nearby stores' products, same restriction the home
+          // screen itself applies once location hydrates.
           const flat: Product[] = [];
           for (const arr of Object.values(cache.productsByCategory)) flat.push(...arr);
-          allProducts = flat;
+          allProducts = flat.filter((p) => nearbyIds.has(p.id));
         } else {
-          // Restrict to products actually carried by an approved + online
-          // store — same base filter the home screen's cache is already
-          // built from (getAllActiveProductIds), so this cold-cache fallback
-          // can't surface a product from an unapproved/offline store.
-          const nearbyIds = await getAllActiveProductIds();
           allProducts = await getAllProducts({ nearbyIds });
         }
         const cartIds = new Set(items.map((i) => i.product_id));

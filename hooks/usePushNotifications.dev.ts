@@ -2,7 +2,7 @@ import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { router, useRootNavigationState } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { Platform } from 'react-native';
+import { InteractionManager, Platform } from 'react-native';
 
 import { apiFetch } from '../lib/apiClient';
 
@@ -80,8 +80,26 @@ export function usePushNotifications(userId: string | null) {
   useEffect(() => {
     if (!userId) return;
 
-    registerForPushNotifications(userId).then((token) => {
-      if (token) setExpoPushToken(token);
+    // `userId` flips from null to real the instant OTP verification succeeds
+    // — the same render pass in which app/otp.tsx calls router.replace() to
+    // /welcome or /onboarding. Calling registerForPushNotifications()
+    // synchronously here means its permission request (a real native
+    // dialog/Activity on Android 13+'s POST_NOTIFICATIONS, and on iOS) can
+    // fire while that Stack transition is still animating — a known
+    // Android crash class ("...after onSaveInstanceState") when a native
+    // dialog is requested mid-transition, which kills the JS thread before
+    // React's ErrorBoundary ever gets a chance to catch anything, seen as a
+    // black screen rather than the boundary's "Something went wrong" UI.
+    // Deferring past the transition (same InteractionManager pattern
+    // app/(tabs)/home.tsx already uses for its own post-login GPS call, for
+    // the identical "don't compete with a transition" reason) avoids the
+    // race entirely.
+    let cancelled = false;
+    const handle = InteractionManager.runAfterInteractions(() => {
+      if (cancelled) return;
+      registerForPushNotifications(userId).then((token) => {
+        if (!cancelled && token) setExpoPushToken(token);
+      });
     });
 
     notificationListener.current = Notifications.addNotificationReceivedListener(
@@ -100,6 +118,8 @@ export function usePushNotifications(userId: string | null) {
     );
 
     return () => {
+      cancelled = true;
+      handle.cancel?.();
       notificationListener.current?.remove();
       responseListener.current?.remove();
     };

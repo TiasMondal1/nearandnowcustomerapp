@@ -27,13 +27,14 @@ import { C } from "../../../constants/colors";
 import { PLATFORM_FEE, HANDLING_FEE } from "../../../constants/fees";
 import { useAuth } from "../../../context/AuthContext";
 import { useCart } from "../../../context/CartContext";
+import { useLocation } from "../../../context/LocationContext";
 import { cdnImage } from "../../../lib/imageUrl";
 import { getOrderById, type Order } from "../../../lib/orderService";
 import { logError } from "../../../lib/logError";
 import { logSilentFailure } from "../../../lib/logSilentFailure";
 import { getAllProducts, type Product } from "../../../lib/productService";
 import { createAdditionPayment, verifyAdditionPayment } from "../../../lib/orderAdditionService";
-import { getAllActiveProductIds } from "../../../lib/storeService";
+import { getNearbyProductFilter } from "../../../lib/storeService";
 import { formatQuantityDisplay } from "../../../lib/quantityFormat";
 
 // Matches ADD_ITEMS_WINDOW_MS's 35s server-side backstop in
@@ -48,6 +49,7 @@ export default function OrderConfirmationScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { userId, user, isLoading: authLoading } = useAuth();
   const { items: cartItems, addItem, clearCart } = useCart();
+  const { location } = useLocation();
   const { openCheckout, closeCheckout, RazorpayUI } = useRazorpay();
 
   const [order, setOrder] = useState<Order | null>(null);
@@ -118,10 +120,16 @@ export default function OrderConfirmationScreen() {
 
     (async () => {
       try {
-        // Same base filter every other product-fetch path in the app
-        // applies — these suggestions are addable to the order, so they must
-        // only come from approved + online stores.
-        const nearbyIds = await getAllActiveProductIds();
+        // These suggestions are addable to the order, so they must be
+        // restricted the same way as every other product surface: only
+        // products from stores within 0-4 km of the customer's delivery
+        // location, not every active store platform-wide.
+        if (!location) {
+          if (!cancelled) setSuggestedProducts([]);
+          return;
+        }
+        const nearbyFilter = await getNearbyProductFilter(location.latitude, location.longitude);
+        const nearbyIds = nearbyFilter?.productIds ?? new Set<string>();
         const products = await getAllProducts({ nearbyIds });
         if (!cancelled) {
           // Get random products not in the current order
@@ -147,7 +155,7 @@ export default function OrderConfirmationScreen() {
     return () => {
       cancelled = true;
     };
-  }, [order]);
+  }, [order, location]);
 
   // Re-anchor the countdown to the order's actual placed time once it loads,
   // rather than trusting "time since this screen happened to mount". A pure
