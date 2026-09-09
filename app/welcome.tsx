@@ -13,6 +13,7 @@ import { IconWrap, Screen } from "../components/ui";
 import { C } from "../constants/colors";
 import { useAuth } from "../context/AuthContext";
 import { useLocation } from "../context/LocationContext";
+import { isNativePromptPending } from "../lib/pendingNativePrompts";
 
 const T = {
   green: "#2D7A4F",
@@ -44,11 +45,37 @@ export default function WelcomeScreen() {
   const displayLabel = location?.label ?? null;
   const displayAddress = location?.address ?? null;
 
-  // Always navigate to home after exactly 2s — no dependencies so this fires
-  // once on mount and is never reset by state changes.
+  // Navigate to home after 2s — unless a native permission dialog (push
+  // notifications or location, both fired the instant login succeeded — see
+  // usePushNotifications.dev.ts and (tabs)/home.tsx's GPS effect) may still
+  // be up. That's only possible on a clean install (permissions still
+  // undetermined there; already-decided on every later app open, so this
+  // extra wait is a no-op in the overwhelmingly common case). Navigating
+  // blind into that dialog is a known hard-crash class — a native OS dialog
+  // racing a JS-driven screen transition kills the process below the JS
+  // layer, so ErrorBoundary never even sees it. Found + fixed 2026-09-09,
+  // see bug_fixes_2026-07-23.md. Capped so a stuck/never-released flag can't
+  // strand the user on this screen forever.
   useEffect(() => {
-    const timer = setTimeout(() => router.replace("/(tabs)/home"), 2000);
-    return () => clearTimeout(timer);
+    let cancelled = false;
+    let pollTimer: ReturnType<typeof setTimeout> | null = null;
+    const hardDeadline = Date.now() + 2000 + 8000;
+
+    const tryAdvance = () => {
+      if (cancelled) return;
+      if (isNativePromptPending() && Date.now() < hardDeadline) {
+        pollTimer = setTimeout(tryAdvance, 250);
+        return;
+      }
+      router.replace("/(tabs)/home");
+    };
+
+    const initialTimer = setTimeout(tryAdvance, 2000);
+    return () => {
+      cancelled = true;
+      clearTimeout(initialTimer);
+      if (pollTimer) clearTimeout(pollTimer);
+    };
   }, []);
 
   // Entrance motion for the greeting and location bands (staggered). Purely

@@ -24,7 +24,6 @@ import { useAuth } from "../../context/AuthContext";
 import { useCart } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
 import { usePaymentFlow } from "../../hooks/usePaymentFlow";
-import { getBatchProductStoreDistances } from "../../lib/distanceUtils";
 import { cdnImage } from "../../lib/imageUrl";
 import { formatQuantityDisplay } from "../../lib/quantityFormat";
 import { markOrderPlaced } from "../../lib/orderHistoryFlag";
@@ -92,8 +91,6 @@ export default function CheckoutScreen() {
   // frequently win over — the real navigation issued a line later.
   const navigatingAwayRef = useRef(false);
   const { location } = useLocation();
-  const [maxDistance, setMaxDistance] = useState<number>(2);
-  const [loadingDistance, setLoadingDistance] = useState(false);
 
   const [gstinClaim, setGstinClaim] = useState(false);
   const [gstin, setGstin] = useState("");
@@ -119,6 +116,15 @@ export default function CheckoutScreen() {
     for (const arr of Object.values(cache.productsByCategory)) flat.push(...arr);
     return flat.slice(0, 9);
   });
+
+  // Count of cart items not found among the current location's radius-filtered
+  // catalog (nearbyIds, computed below alongside `recommended`) — a customer
+  // could add items near address A, then switch to a farther saved address B
+  // via /select-location without revisiting Home, and previously got no client-
+  // side signal that some items might not be deliverable there; the backend
+  // still enforces this at order-placement, this is purely an earlier warning.
+  // Found 2026-09-09.
+  const [outOfRangeItemCount, setOutOfRangeItemCount] = useState(0);
 
   // NOTE: we intentionally do NOT hold the payment selection in React state
   // on this screen. Subscribing here would re-render the entire (large)
@@ -146,31 +152,6 @@ export default function CheckoutScreen() {
   }, [isHydrated, items.length]);
 
   useEffect(() => {
-    if (!location || items.length === 0) {
-      setMaxDistance(2);
-      return;
-    }
-    const calculateMaxDistance = async () => {
-      setLoadingDistance(true);
-      try {
-        // Single batched query instead of one DB round-trip per cart item.
-        const distances = await getBatchProductStoreDistances(
-          items.map((item) => item.product_id),
-          location.latitude,
-          location.longitude,
-        );
-        const max = Math.max(...distances);
-        setMaxDistance(Math.min(max, 4));
-      } catch {
-        setMaxDistance(2);
-      } finally {
-        setLoadingDistance(false);
-      }
-    };
-    calculateMaxDistance();
-  }, [location, items]);
-
-  useEffect(() => {
     // Kick off scoring immediately. We no longer gate on `location` being
     // ready — the user already picked items, so we have everything we need to
     // render a sensible "Did you forget?" strip on frame 1. If the memory
@@ -180,6 +161,7 @@ export default function CheckoutScreen() {
     const loadRecommended = async () => {
       if (items.length === 0) {
         setRecommended([]);
+        setOutOfRangeItemCount(0);
         return;
       }
       try {
@@ -189,10 +171,16 @@ export default function CheckoutScreen() {
           // active store's catalog (which could include products from
           // stores far outside the customer's actual delivery range).
           setRecommended([]);
+          setOutOfRangeItemCount(0);
           return;
         }
         const nearbyFilter = await getNearbyProductFilter(location.latitude, location.longitude);
         const nearbyIds = nearbyFilter?.productIds ?? new Set<string>();
+        // A cart item missing from nearbyIds either fell outside the current
+        // location's delivery radius or is no longer active — either way it
+        // may not be deliverable here, worth flagging before the backend's
+        // own checkout-time check does.
+        setOutOfRangeItemCount(items.filter((i) => !nearbyIds.has(i.product_id)).length);
 
         const cache = getMemoryHomeCache();
         let allProducts: Product[];
@@ -288,8 +276,14 @@ export default function CheckoutScreen() {
   const subtotal = useMemo(() => items.reduce((s, i) => s + i.price * i.quantity, 0), [items]);
   const totalItems = useMemo(() => items.reduce((s, i) => s + i.quantity, 0), [items]);
   const { platformFee, handlingFee, deliveryFee, projected } = useMemo(
-    () => calcOrderTotal(subtotal, totalItems, maxDistance),
-    [subtotal, totalItems, maxDistance],
+    // calcOrderTotal's distanceKm param is unused (delivery is a flat ₹0 —
+    // see constants/fees.ts); this screen used to run an extra per-cart-change
+    // Supabase query (getBatchProductStoreDistances) purely to compute a value
+    // that fed into it and was then ignored, plus drove a loading spinner on a
+    // bill row whose value never actually changed. Removed 2026-09-09 — matches
+    // how cart.tsx and payment-options.tsx already call this (no real distance).
+    () => calcOrderTotal(subtotal, totalItems),
+    [subtotal, totalItems],
   );
   const baseFinalPayable = useMemo(() => Math.max(projected - discount, 0), [projected, discount]);
 
@@ -685,6 +679,18 @@ export default function CheckoutScreen() {
         keyboardShouldPersistTaps="handled"
         automaticallyAdjustKeyboardInsets
       >
+        {outOfRangeItemCount > 0 && (
+          <View style={styles.outOfRangeBanner}>
+            <MaterialCommunityIcons name="alert-circle-outline" size={16} color={C.danger} />
+            <Text style={styles.outOfRangeBannerText}>
+              {outOfRangeItemCount === 1
+                ? "1 item in your cart may not be deliverable to this address."
+                : `${outOfRangeItemCount} items in your cart may not be deliverable to this address.`}{" "}
+              You can still try placing the order, or change your delivery address above.
+            </Text>
+          </View>
+        )}
+
         {/* ─── Items Card ─── */}
         <View style={styles.card}>
           <View style={styles.cardHeaderRow}>
@@ -1019,7 +1025,7 @@ export default function CheckoutScreen() {
                 )
               }
             />
-            <BillRow label="Delivery Fee" value={deliveryFee} loading={loadingDistance} />
+            <BillRow label="Delivery Fee" value={deliveryFee} />
             {tipAmount > 0 && <BillRow label="Delivery Partner Tip" value={tipAmount} />}
           </View>
           <Divider />
@@ -1481,6 +1487,24 @@ const styles = StyleSheet.create({
   gstinAddBtn: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.primary, fontSize: 14 },
   gstinExpanded: { marginTop: 12 },
   gstinErrorText: { fontFamily: "PlusJakartaSans_300Light", color: C.danger, fontSize: 11, marginTop: 4, marginLeft: 2 },
+
+  outOfRangeBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    backgroundColor: "#fdecea",
+    borderRadius: 12,
+    padding: 12,
+    marginHorizontal: 16,
+    marginTop: 12,
+  },
+  outOfRangeBannerText: {
+    flex: 1,
+    fontFamily: "PlusJakartaSans_400Regular",
+    color: C.danger,
+    fontSize: 12,
+    lineHeight: 17,
+  },
 
   // Reco tabs — the -16 bleed is coupled to card paddingHorizontal 16; the
   // trailing 16px lives in contentContainerStyle so the last chip/card can

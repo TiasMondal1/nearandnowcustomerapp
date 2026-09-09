@@ -61,6 +61,7 @@ import { getAllCategories, type Category } from "../../lib/categoryService";
 import { cdnImage } from "../../lib/imageUrl";
 import { getUserOrders, readUserOrdersCache, type Order } from "../../lib/orderService";
 import { logSilentFailure } from "../../lib/logSilentFailure";
+import { beginNativePrompt } from "../../lib/pendingNativePrompts";
 import { TERMINAL_STATUSES, getStatusMeta } from "../../constants/orderStatus";
 import {
     getCountForCategoryName,
@@ -618,6 +619,14 @@ const ActiveOrdersSection = React.memo(function ActiveOrdersSection({
         snapToAlignment="start"
         onMomentumScrollEnd={handleMomentumEnd}
         extraData={[pageIndex, cardWidth]}
+        // Same virtualization tuning FrequentlyBoughtSection already uses above —
+        // this list was missing it despite the identical horizontal-FlatList shape.
+        // Low impact given active-order counts are typically 1-3, but kept
+        // consistent with this file's own convention. Found 2026-09-09.
+        initialNumToRender={4}
+        maxToRenderPerBatch={4}
+        windowSize={3}
+        removeClippedSubviews
       />
     </View>
   );
@@ -793,16 +802,48 @@ export default function HomeScreen() {
   // phone-OTP auth model, same reason useOrderTracking.ts's FALLBACK_POLL_MS
   // exists), so this polls at a lighter cadence appropriate for a compact
   // summary banner rather than the tracking screen's own 5s detail poll.
+  // Three independent places write setActiveOrders (the cache-read effect below,
+  // this focus-effect's refresh, and the InteractionManager-deferred mount
+  // effect further down) with no ordering guarantee between them — a slower
+  // fetch resolving after a faster/fresher one used to be able to clobber
+  // newer state with stale data (e.g. resurrecting an order that just went
+  // terminal). Same fix shape as fetchFreshSeqRef below: each writer captures
+  // a token when it starts and only applies its result if no newer write has
+  // started since. Found 2026-09-09.
+  const activeOrdersSeqRef = useRef(0);
+
+  // Shared by both places that actually fetch fresh orders from the network
+  // (this focus-effect's refresh, and the InteractionManager-deferred mount
+  // effect further down) — previously only the mount effect recomputed
+  // "frequently bought," so a refocus-triggered refresh updated the active-
+  // orders banner but silently left that carousel stale until the next full
+  // remount. One implementation now, applied by both triggers. Found 2026-09-09.
+  const applyFetchedOrders = useCallback((orders: Order[]) => {
+    setActiveOrders(orders.filter((o) => !(TERMINAL_STATUSES as string[]).includes(o.order_status)));
+    const counts: Record<string, number> = {};
+    for (const order of orders) {
+      for (const it of order.items || []) {
+        if (!it.product_id) continue;
+        counts[it.product_id] = (counts[it.product_id] || 0) + (it.quantity || 1);
+      }
+    }
+    const ids = Object.entries(counts)
+      .sort(([, a], [, b]) => b - a)
+      .map(([id]) => id);
+    setUserTopProductIds(ids);
+  }, []);
+
   const activeOrdersFocusedOnce = useRef(false);
   useFocusEffect(
     useCallback(() => {
       if (!userId) return;
       let cancelled = false;
       const refresh = () => {
+        const mySeq = ++activeOrdersSeqRef.current;
         getUserOrders(userId)
           .then((orders) => {
-            if (!cancelled) {
-              setActiveOrders(orders.filter((o) => !(TERMINAL_STATUSES as string[]).includes(o.order_status)));
+            if (!cancelled && mySeq === activeOrdersSeqRef.current) {
+              applyFetchedOrders(orders);
             }
           })
           .catch((err) => logSilentFailure("Refresh active orders", err));
@@ -817,7 +858,7 @@ export default function HomeScreen() {
         cancelled = true;
         clearInterval(interval);
       };
-    }, [userId]),
+    }, [userId, applyFetchedOrders]),
   );
 
   const derivedCategoryCounts = useMemo(() => {
@@ -1018,7 +1059,17 @@ export default function HomeScreen() {
       if (cancelled) return;
       try {
         setLocationFetching(true);
-        const { status } = await ExpoLocation.requestForegroundPermissionsAsync();
+        // A real native dialog only appears here on a clean install (permission
+        // still undetermined); marked pending regardless so welcome.tsx's
+        // auto-advance timer waits it out on the rare occasion it does — see
+        // lib/pendingNativePrompts.ts and bug_fixes_2026-07-23.md, 2026-09-09.
+        const releasePrompt = beginNativePrompt();
+        let status: string;
+        try {
+          status = (await ExpoLocation.requestForegroundPermissionsAsync()).status;
+        } finally {
+          releasePrompt();
+        }
         if (status !== "granted" || cancelled) return;
         const pos = await ExpoLocation.getCurrentPositionAsync({
           accuracy: ExpoLocation.Accuracy.Balanced,
@@ -1061,9 +1112,10 @@ export default function HomeScreen() {
       return;
     }
     let cancelled = false;
+    const mySeq = ++activeOrdersSeqRef.current;
     (async () => {
       const cached = await readUserOrdersCache(userId);
-      if (cancelled || !cached) return;
+      if (cancelled || !cached || mySeq !== activeOrdersSeqRef.current) return;
       setActiveOrders(cached.filter((o) => !(TERMINAL_STATUSES as string[]).includes(o.order_status)));
     })();
     return () => {
@@ -1083,22 +1135,13 @@ export default function HomeScreen() {
     let cancelled = false;
     const handle = InteractionManager.runAfterInteractions(async () => {
       if (cancelled) return;
+      const mySeq = ++activeOrdersSeqRef.current;
       try {
         const orders = await getUserOrders(userId);
         if (cancelled) return;
-        setActiveOrders(orders.filter((o) => !(TERMINAL_STATUSES as string[]).includes(o.order_status)));
-        const counts: Record<string, number> = {};
-        for (const order of orders) {
-          for (const it of order.items || []) {
-            if (!it.product_id) continue;
-            counts[it.product_id] =
-              (counts[it.product_id] || 0) + (it.quantity || 1);
-          }
+        if (mySeq === activeOrdersSeqRef.current) {
+          applyFetchedOrders(orders);
         }
-        const ids = Object.entries(counts)
-          .sort(([, a], [, b]) => b - a)
-          .map(([id]) => id);
-        setUserTopProductIds(ids);
       } catch {
         /* fall back silently to "bought by others"; active orders keep showing the cached view */
       }
@@ -1107,7 +1150,7 @@ export default function HomeScreen() {
       cancelled = true;
       handle.cancel?.();
     };
-  }, [userId]);
+  }, [userId, applyFetchedOrders]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);

@@ -8,6 +8,7 @@ import { IconWrap, Screen } from "../components/ui";
 import { C } from "../constants/colors";
 import { useAuth } from "../context/AuthContext";
 import { useLocation } from "../context/LocationContext";
+import { beginNativePrompt, isNativePromptPending } from "../lib/pendingNativePrompts";
 
 const T = {
   green: "#2D7A4F",
@@ -38,7 +39,21 @@ export default function SplashScreen() {
     gpsAttempted.current = true;
     (async () => {
       try {
-        const { status } = await ExpoLocation.requestForegroundPermissionsAsync();
+        // Same class of bug as welcome.tsx's post-login race (found + fixed
+        // 2026-09-09, see bug_fixes_2026-07-23.md): this effect and the
+        // auth-redirect effect below both run independently off `isLoading`/
+        // `isAuthenticated`/`isHydrated` resolving in whatever order they
+        // happen to — on a clean install (permission still undetermined) a
+        // real native dialog here could still be up when the redirect effect
+        // fires its own blind router.replace(). Tracked so that effect can
+        // wait it out instead of navigating mid-dialog.
+        const releasePrompt = beginNativePrompt();
+        let status: string;
+        try {
+          status = (await ExpoLocation.requestForegroundPermissionsAsync()).status;
+        } finally {
+          releasePrompt();
+        }
         if (status !== "granted") return;
         const pos = await ExpoLocation.getCurrentPositionAsync({
           accuracy: ExpoLocation.Accuracy.Balanced,
@@ -57,13 +72,33 @@ export default function SplashScreen() {
     })();
   }, [isHydrated, location]);
 
+  // Waits out a pending native permission dialog (the GPS effect above)
+  // before navigating — a real dialog only appears here on a clean install
+  // (permission still undetermined; already decided on every later app
+  // open, so this is a no-op the overwhelmingly common case). Navigating
+  // blind into it is the same hard-crash class fixed in welcome.tsx
+  // 2026-09-09 — see lib/pendingNativePrompts.ts and bug_fixes_2026-07-23.md.
+  // Capped so a stuck/never-released flag can't strand the splash screen forever.
   useEffect(() => {
     if (isLoading) return;
-    if (isAuthenticated) {
-      router.replace("/(tabs)/home");
-    } else {
-      router.replace("/phone");
-    }
+    let cancelled = false;
+    let pollTimer: ReturnType<typeof setTimeout> | null = null;
+    const hardDeadline = Date.now() + 8000;
+
+    const tryAdvance = () => {
+      if (cancelled) return;
+      if (isNativePromptPending() && Date.now() < hardDeadline) {
+        pollTimer = setTimeout(tryAdvance, 250);
+        return;
+      }
+      router.replace(isAuthenticated ? "/(tabs)/home" : "/phone");
+    };
+
+    tryAdvance();
+    return () => {
+      cancelled = true;
+      if (pollTimer) clearTimeout(pollTimer);
+    };
   }, [isLoading, isAuthenticated]);
 
   const displayLabel = location?.label ?? null;

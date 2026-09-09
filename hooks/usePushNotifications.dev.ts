@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { InteractionManager, Platform } from 'react-native';
 
 import { apiFetch } from '../lib/apiClient';
+import { beginNativePrompt } from '../lib/pendingNativePrompts';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -149,8 +150,16 @@ export async function registerForPushNotifications(userId: string): Promise<stri
     let finalStatus = existingStatus;
 
     if (existingStatus !== 'granted') {
-      const { status } = await Notifications.requestPermissionsAsync();
-      finalStatus = status;
+      // Only undetermined here on a clean install (or a fresh reinstall) —
+      // a real native dialog can appear. Marked pending so welcome.tsx's
+      // auto-advance timer waits it out instead of navigating mid-dialog.
+      const releasePrompt = beginNativePrompt();
+      try {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+      } finally {
+        releasePrompt();
+      }
     }
 
     if (finalStatus !== 'granted') {
