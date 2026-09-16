@@ -10,6 +10,7 @@
  * (the `prebuild:android` npm script calls it automatically).
  *
  * Patches applied:
+ *   android/keystore.properties                  restore from credentials/keystore.properties backup if missing
  *   android/local.properties                    write sdk.dir if missing
  *   android/gradle.properties                   enable minify + shrink + bundle compression, narrow ABIs
  *   android/app/build.gradle                    add ABI splits + release signing config
@@ -33,7 +34,22 @@ function note(msg) {
   console.log("  " + msg);
 }
 
-// ─── 1. local.properties ────────────────────────────────────────────────────
+// ─── 1. keystore.properties — restore from credentials/ backup ─────────────
+// `expo prebuild --clean` wipes android/, including android/keystore.properties.
+// We keep the durable copy (+ the .jks itself) in credentials/ at the project
+// root, outside android/, so it survives a prebuild wipe. If the real file is
+// missing here but a backup exists, restore it automatically so bundleRelease
+// (AAB) keeps working without a manual copy step after every prebuild.
+const ksPropsPath = path.join(androidDir, "keystore.properties");
+const ksBackupPath = path.join(rootDir, "credentials", "keystore.properties");
+if (!fs.existsSync(ksPropsPath) && fs.existsSync(ksBackupPath)) {
+  fs.copyFileSync(ksBackupPath, ksPropsPath);
+  note("keystore.properties: restored from credentials/keystore.properties (prebuild wipes android/)");
+} else if (!fs.existsSync(ksPropsPath)) {
+  console.warn("  keystore.properties missing and no credentials/keystore.properties backup found — bundleRelease (AAB) will fail until you run `npm run keystore:generate` or restore it manually.");
+}
+
+// ─── 2. local.properties ────────────────────────────────────────────────────
 const localPropsPath = path.join(androidDir, "local.properties");
 if (!fs.existsSync(localPropsPath)) {
   const sdkDir = process.env.ANDROID_HOME
@@ -48,7 +64,7 @@ if (!fs.existsSync(localPropsPath)) {
   }
 }
 
-// ─── 2. gradle.properties ───────────────────────────────────────────────────
+// ─── 3. gradle.properties ───────────────────────────────────────────────────
 const gpPath = path.join(androidDir, "gradle.properties");
 let gp = fs.readFileSync(gpPath, "utf8");
 
@@ -76,7 +92,7 @@ ensureProp("org.gradle.jvmargs", "-Xmx4096m -XX:MaxMetaspaceSize=1024m -XX:+Heap
 
 fs.writeFileSync(gpPath, gp, "utf8");
 
-// ─── 3. app/build.gradle ────────────────────────────────────────────────────
+// ─── 4. app/build.gradle ────────────────────────────────────────────────────
 const bgPath = path.join(appDir, "build.gradle");
 let bg = fs.readFileSync(bgPath, "utf8");
 
@@ -202,7 +218,7 @@ android.applicationVariants.all { variant ->
 
 fs.writeFileSync(bgPath, bg, "utf8");
 
-// ─── 4. app/proguard-rules.pro ──────────────────────────────────────────────
+// ─── 5. app/proguard-rules.pro ──────────────────────────────────────────────
 const prPath = path.join(appDir, "proguard-rules.pro");
 let pr = fs.readFileSync(prPath, "utf8");
 
@@ -259,7 +275,7 @@ ${PR_MARKER} (managed by scripts/patch-android.js)
   note("proguard-rules.pro: appended keep rules");
 }
 
-// ─── 5. .gitignore ──────────────────────────────────────────────────────────
+// ─── 6. .gitignore ──────────────────────────────────────────────────────────
 const giPath = path.join(androidDir, ".gitignore");
 if (fs.existsSync(giPath)) {
   let gi = fs.readFileSync(giPath, "utf8");
@@ -277,7 +293,7 @@ app/*.keystore
   }
 }
 
-// ─── 6. keystore.properties.example ─────────────────────────────────────────
+// ─── 7. keystore.properties.example ─────────────────────────────────────────
 const ksExPath = path.join(androidDir, "keystore.properties.example");
 if (!fs.existsSync(ksExPath)) {
   fs.writeFileSync(
@@ -298,7 +314,7 @@ keyPassword=CHANGE_ME
   note("keystore.properties.example: created");
 }
 
-// ─── 7. AndroidManifest.xml — tablet support ────────────────────────────────
+// ─── 8. AndroidManifest.xml — tablet support ────────────────────────────────
 const manifestPath = path.join(appDir, "src/main/AndroidManifest.xml");
 if (fs.existsSync(manifestPath)) {
   let mf = fs.readFileSync(manifestPath, "utf8");
