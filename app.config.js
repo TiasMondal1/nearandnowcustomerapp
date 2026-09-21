@@ -92,7 +92,7 @@ module.exports = {
       // when it comes from EAS's GOOGLE_SERVICES_JSON file env var it's an
       // absolute path elsewhere on the build machine, not relative to this file.
       ...(hasGoogleServicesFile ? { googleServicesFile: googleServicesFilePath } : {}),
-      versionCode: 3,
+      versionCode: 4,
       permissions: [
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
