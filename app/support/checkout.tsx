@@ -19,7 +19,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { PaymentProcessingOverlay } from "../../components/PaymentProcessingOverlay";
 import { BackButton, BottomDock, Divider, SectionLabel, Skeleton } from "../../components/ui";
 import { C } from "../../constants/colors";
-import { calcOrderTotal } from "../../constants/fees";
+import { calcOrderTotal, DELIVERY_FEE_WAS } from "../../constants/fees";
 import { useAuth } from "../../context/AuthContext";
 import { useCart } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
@@ -1025,7 +1025,13 @@ export default function CheckoutScreen() {
                 )
               }
             />
-            <BillRow label="Delivery Fee" value={deliveryFee} />
+            <BillRow
+              label="Delivery Fee"
+              value={deliveryFee}
+              strikeValue={deliveryFee === 0 ? DELIVERY_FEE_WAS : undefined}
+              showStrike={deliveryFee === 0}
+              freeLabel={deliveryFee === 0 ? "FREE" : undefined}
+            />
             {tipAmount > 0 && <BillRow label="Delivery Partner Tip" value={tipAmount} />}
           </View>
           <Divider />
@@ -1202,6 +1208,7 @@ function BillRow({
   highlight,
   strikeValue,
   showStrike,
+  freeLabel,
   note,
   onInfoPress,
   loading,
@@ -1211,6 +1218,8 @@ function BillRow({
   highlight?: boolean;
   strikeValue?: number;
   showStrike?: boolean;
+  /** Shown instead of "₹0" when value === 0 (e.g. "FREE" for a waived delivery fee). */
+  freeLabel?: string;
   note?: string;
   onInfoPress?: () => void;
   /** Presentational only: swaps the value for a small skeleton while it resolves. */
@@ -1251,6 +1260,10 @@ function BillRow({
           )}
           {loading ? (
             <Skeleton width={40} height={12} radius={6} />
+          ) : freeLabel && value === 0 ? (
+            <Text style={[styles.billValue, { color: C.success, fontFamily: "PlusJakartaSans_700Bold" }]}>
+              {freeLabel}
+            </Text>
           ) : (
             <Text style={[styles.billValue, highlight && { color: C.success, fontFamily: "PlusJakartaSans_700Bold" }]}>
               {value < 0 ? `−₹${formatAmount(value)}` : `₹${formatAmount(value)}`}

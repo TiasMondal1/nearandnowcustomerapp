@@ -24,7 +24,7 @@ import {
     SkeletonCircle,
 } from "../../../components/ui";
 import { C } from "../../../constants/colors";
-import { PLATFORM_FEE, HANDLING_FEE } from "../../../constants/fees";
+import { PLATFORM_FEE, HANDLING_FEE, DELIVERY_FEE_WAS } from "../../../constants/fees";
 import { useAuth } from "../../../context/AuthContext";
 import { useCart } from "../../../context/CartContext";
 import { useLocation } from "../../../context/LocationContext";
@@ -656,9 +656,14 @@ export default function OrderConfirmationScreen() {
             </View>
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Delivery Fee</Text>
-              <Text style={styles.summaryValue}>
-                ₹{(order?.delivery_fee ?? 0).toFixed(2)}
-              </Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                {(order?.delivery_fee ?? 0) === 0 && (
+                  <Text style={styles.summaryStrike}>₹{DELIVERY_FEE_WAS.toFixed(0)}</Text>
+                )}
+                <Text style={[styles.summaryValue, (order?.delivery_fee ?? 0) === 0 && styles.summaryValueFree]}>
+                  {(order?.delivery_fee ?? 0) === 0 ? "FREE" : `₹${(order?.delivery_fee ?? 0).toFixed(2)}`}
+                </Text>
+              </View>
             </View>
             {!!order?.discount_amount && (
               <View style={styles.summaryRow}>
@@ -962,6 +967,13 @@ const styles = StyleSheet.create({
   summaryValue: { fontFamily: "PlusJakartaSans_600SemiBold",
     color: C.text,
     fontSize: 14,
+  },
+  summaryValueFree: { color: C.success },
+  summaryStrike: {
+    fontFamily: "PlusJakartaSans_600SemiBold",
+    color: C.textLight,
+    fontSize: 12,
+    textDecorationLine: "line-through",
   },
   totalRow: {
     marginTop: 4,

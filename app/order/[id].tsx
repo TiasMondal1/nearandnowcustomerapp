@@ -27,7 +27,7 @@ import {
     Skeleton,
 } from "../../components/ui";
 import { C } from "../../constants/colors";
-import { PLATFORM_FEE, HANDLING_FEE } from "../../constants/fees";
+import { PLATFORM_FEE, HANDLING_FEE, DELIVERY_FEE_WAS } from "../../constants/fees";
 import {
     CANCELLED_STATUSES,
     ORDER_TIMELINE,
@@ -576,7 +576,12 @@ export default function OrderDetailScreen() {
             <BillLine label="Subtotal" value={`₹${(order.subtotal ?? 0).toFixed(2)}`} />
             <BillLine label="Platform Fee" value={`₹${PLATFORM_FEE.toFixed(2)}`} />
             <BillLine label="Handling Charges" value={`₹${HANDLING_FEE.toFixed(2)}`} />
-            <BillLine label="Delivery fee" value={`₹${(order.delivery_fee ?? 0).toFixed(2)}`} />
+            <BillLine
+              label="Delivery fee"
+              value={(order.delivery_fee ?? 0) === 0 ? "FREE" : `₹${(order.delivery_fee ?? 0).toFixed(2)}`}
+              strikeValue={(order.delivery_fee ?? 0) === 0 ? `₹${DELIVERY_FEE_WAS.toFixed(0)}` : undefined}
+              free={(order.delivery_fee ?? 0) === 0}
+            />
             {!!order.discount_amount && (
               <BillLine label="Coupon Discount" value={`-₹${order.discount_amount.toFixed(2)}`} />
             )}
@@ -603,15 +608,24 @@ function BillLine({
   label,
   value,
   bold,
+  strikeValue,
+  free,
 }: {
   label: string;
   value: string;
   bold?: boolean;
+  /** Shown struck through before `value` (e.g. a waived delivery fee's original price). */
+  strikeValue?: string;
+  /** Styles `value` as a "free" highlight (e.g. green "FREE" text). */
+  free?: boolean;
 }) {
   return (
     <View style={styles.billRow}>
       <Text style={[styles.billLabel, bold && styles.billLabelBold]}>{label}</Text>
-      <Text style={[styles.billValue, bold && styles.billValueBold]}>{value}</Text>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+        {strikeValue && <Text style={styles.billStrike}>{strikeValue}</Text>}
+        <Text style={[styles.billValue, bold && styles.billValueBold, free && styles.billValueFree]}>{value}</Text>
+      </View>
     </View>
   );
 }
@@ -899,4 +913,6 @@ const styles = StyleSheet.create({
   billLabelBold: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 14 },
   billValue: { fontFamily: "PlusJakartaSans_500Medium", color: C.text, fontSize: 14, fontVariant: ["tabular-nums"] },
   billValueBold: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.primary, fontSize: 16 },
+  billValueFree: { color: C.success, fontFamily: "PlusJakartaSans_700Bold" },
+  billStrike: { fontFamily: "PlusJakartaSans_500Medium", color: C.textLight, fontSize: 12, textDecorationLine: "line-through" },
 });

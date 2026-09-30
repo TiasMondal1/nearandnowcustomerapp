@@ -25,7 +25,7 @@ import {
     SectionLabel,
 } from "../../components/ui";
 import { C } from "../../constants/colors";
-import { calcOrderTotal, DELIVERY_FEE, HANDLING_FEE, PLATFORM_FEE } from "../../constants/fees";
+import { calcOrderTotal, DELIVERY_FEE, DELIVERY_FEE_WAS, HANDLING_FEE, PLATFORM_FEE } from "../../constants/fees";
 import { useCart } from "../../context/CartContext";
 import { cdnImage } from "../../lib/imageUrl";
 import { formatQuantityDisplay } from "../../lib/quantityFormat";
@@ -129,9 +129,14 @@ export default function CartScreen() {
                         <MaterialCommunityIcons name="information-outline" size={16} color={C.textLight} />
                       </TouchableOpacity>
                     </View>
-                    <Text style={styles.billValue}>
-                      {deliveryFee === 0 ? "Free" : `₹${deliveryFee.toFixed(2)}`}
-                    </Text>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                      {deliveryFee === 0 && (
+                        <Text style={styles.billStrike}>₹{DELIVERY_FEE_WAS.toFixed(0)}</Text>
+                      )}
+                      <Text style={[styles.billValue, deliveryFee === 0 && styles.billValueFree]}>
+                        {deliveryFee === 0 ? "FREE" : `₹${deliveryFee.toFixed(2)}`}
+                      </Text>
+                    </View>
                   </View>
                   <Divider spacing={12} />
                   <View style={[styles.billRow, styles.billRowLast]}>
@@ -247,7 +252,9 @@ export default function CartScreen() {
               <Divider />
               <Text style={styles.modalSectionTitle}>Delivery Fee</Text>
               <Text style={styles.modalDesc}>
-                {DELIVERY_FEE > 0 ? `Fixed ₹${DELIVERY_FEE.toFixed(2)} per order` : "Always free — ₹0"}
+                {DELIVERY_FEE > 0
+                  ? `Fixed ₹${DELIVERY_FEE.toFixed(2)} per order`
+                  : `Usually ₹${DELIVERY_FEE_WAS.toFixed(0)} — free for now!`}
               </Text>
               <Divider />
               <Text style={styles.modalNote}>All fees are calculated and confirmed at checkout.</Text>
@@ -330,6 +337,8 @@ const styles = StyleSheet.create({
   billLabelRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   billLabel: { fontFamily: "PlusJakartaSans_500Medium", color: C.textSub, fontSize: 14 },
   billValue: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.text, fontSize: 14 },
+  billValueFree: { color: C.success },
+  billStrike: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.textLight, fontSize: 12, textDecorationLine: "line-through" },
   billTotal: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 15 },
   billTotalValue: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.primary, fontSize: 18 },
 
