@@ -24,7 +24,7 @@ import { BackButton, Badge, EmptyState, PrimaryButton, Screen, Skeleton } from "
 const SKELETON_ROWS = [0, 1, 2, 3, 4, 5];
 
 export default function SearchScreen() {
-  const { location } = useLocation();
+  const { location, isHydrated } = useLocation();
   // Cache the nearby product filter so we don't re-call Supabase on every keystroke.
   const nearbyIdsRef = useRef<Set<string> | undefined>(undefined);
   const lastLocationKeyRef = useRef<string | null>(null);
@@ -35,6 +35,11 @@ export default function SearchScreen() {
   const [nearbyVersion, setNearbyVersion] = useState(0);
 
   useEffect(() => {
+    // LocationContext reads the saved location from AsyncStorage asynchronously on
+    // app start; until that finishes, `location === null` doesn't yet mean "no
+    // location" — treating it as such here would search against an empty set for
+    // the (short) window before hydration completes. Wait instead.
+    if (!isHydrated) return;
     if (!location) {
       // No location yet (fresh install, geolocation denied, direct deep
       // link into this screen) — the 0-4 km radius filter can't run without
@@ -49,11 +54,21 @@ export default function SearchScreen() {
     if (lastLocationKeyRef.current === key) return;
     lastLocationKeyRef.current = key;
     nearbyIdsRef.current = undefined;
-    getNearbyProductFilter(location.latitude, location.longitude).then((filter) => {
-      nearbyIdsRef.current = filter?.productIds;
-      setNearbyVersion((v) => v + 1);
-    });
-  }, [location?.latitude, location?.longitude]);
+    getNearbyProductFilter(location.latitude, location.longitude)
+      .then((filter) => {
+        nearbyIdsRef.current = filter?.productIds;
+        setNearbyVersion((v) => v + 1);
+      })
+      .catch(() => {
+        // getNearbyActiveStores/getMasterProductIdsForStores already catch their own
+        // Supabase errors and resolve with safe fallbacks, so this should be
+        // unreachable in practice — but leaving nearbyIdsRef at `undefined` here would
+        // permanently stick the search effect below in its "waiting for the filter"
+        // bail-out, with no way to recover. Fail toward "no matches", not a frozen spinner.
+        nearbyIdsRef.current = new Set();
+        setNearbyVersion((v) => v + 1);
+      });
+  }, [isHydrated, location?.latitude, location?.longitude]);
   const { addItem, incrementQty } = useCart();
   const cartItemsByProductId = useCartItemMap();
   // Allow `/support/search?q=Amul+Milk` (used by the Order Again fallback card
@@ -88,11 +103,13 @@ export default function SearchScreen() {
     // after the threshold.
     setLoading(true);
 
-    // The radius filter for the current location hasn't resolved yet — searching now
-    // would read `nearbyIdsRef.current` as `undefined`, which searchProducts() treats as
-    // "no filter" and returns the whole platform catalog (bypassing the delivery radius).
-    // Bail out and let the `nearbyVersion` bump below re-run this effect once it's ready.
-    if (location && nearbyIdsRef.current === undefined) {
+    // The radius filter hasn't resolved yet (still waiting on location hydration or the
+    // nearby-stores fetch above) — searching now would read `nearbyIdsRef.current` as
+    // `undefined`, which searchProducts() treats as "no filter" and returns the whole
+    // platform catalog (bypassing the delivery radius). This can be true even while
+    // `location` itself is still `null` (not yet hydrated), so it doesn't gate on `location`.
+    // Bail out and let the `nearbyVersion` bump above re-run this effect once it's ready.
+    if (nearbyIdsRef.current === undefined) {
       return;
     }
 
