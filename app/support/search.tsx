@@ -28,6 +28,11 @@ export default function SearchScreen() {
   // Cache the nearby product filter so we don't re-call Supabase on every keystroke.
   const nearbyIdsRef = useRef<Set<string> | undefined>(undefined);
   const lastLocationKeyRef = useRef<string | null>(null);
+  // Bumped whenever nearbyIdsRef finishes loading (or is set synchronously for the
+  // no-location case) so the search effect below can re-run once the radius filter
+  // is actually ready, instead of reading `undefined` off the ref mid-fetch and
+  // searching the whole platform catalog. See bug_fixes doc, 2026-09-30.
+  const [nearbyVersion, setNearbyVersion] = useState(0);
 
   useEffect(() => {
     if (!location) {
@@ -37,13 +42,16 @@ export default function SearchScreen() {
       // to every active store's catalog platform-wide, which would defeat
       // the radius restriction. See bug_fixes doc, 2026-09-03.
       nearbyIdsRef.current = new Set();
+      setNearbyVersion((v) => v + 1);
       return;
     }
     const key = `${location.latitude.toFixed(3)},${location.longitude.toFixed(3)}`;
     if (lastLocationKeyRef.current === key) return;
     lastLocationKeyRef.current = key;
+    nearbyIdsRef.current = undefined;
     getNearbyProductFilter(location.latitude, location.longitude).then((filter) => {
       nearbyIdsRef.current = filter?.productIds;
+      setNearbyVersion((v) => v + 1);
     });
   }, [location?.latitude, location?.longitude]);
   const { addItem, incrementQty } = useCart();
@@ -79,6 +87,15 @@ export default function SearchScreen() {
     // this gives the user feedback that *something* is happening on the very first keystroke
     // after the threshold.
     setLoading(true);
+
+    // The radius filter for the current location hasn't resolved yet — searching now
+    // would read `nearbyIdsRef.current` as `undefined`, which searchProducts() treats as
+    // "no filter" and returns the whole platform catalog (bypassing the delivery radius).
+    // Bail out and let the `nearbyVersion` bump below re-run this effect once it's ready.
+    if (location && nearbyIdsRef.current === undefined) {
+      return;
+    }
+
     const myId = ++requestIdRef.current;
 
     const timeout = setTimeout(async () => {
@@ -105,7 +122,7 @@ export default function SearchScreen() {
     }, 350);
 
     return () => clearTimeout(timeout);
-  }, [query, location, retryNonce]);
+  }, [query, location, retryNonce, nearbyVersion]);
 
   const doSearch = () => {
     // Keep onSubmitEditing wired to dismiss keyboard / no-op (debounced effect runs on its own).
