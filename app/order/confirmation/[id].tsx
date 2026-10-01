@@ -36,6 +36,7 @@ import { getAllProducts, type Product } from "../../../lib/productService";
 import { createAdditionPayment, verifyAdditionPayment } from "../../../lib/orderAdditionService";
 import { getNearbyProductFilter } from "../../../lib/storeService";
 import { formatQuantityDisplay } from "../../../lib/quantityFormat";
+import { isInvoiceAvailable } from "../../../lib/invoiceEligibility";
 
 // Matches ADD_ITEMS_WINDOW_MS's 35s server-side backstop in
 // backend/src/controllers/orderAdditions.controller.ts (a few seconds'
@@ -698,6 +699,7 @@ export default function OrderConfirmationScreen() {
             style={styles.actionButton}
             textStyle={styles.actionButtonText}
           />
+          {order && isInvoiceAvailable(order) && (
           <PrimaryButton
             size="sm"
             variant="success"
@@ -709,6 +711,7 @@ export default function OrderConfirmationScreen() {
             style={styles.actionButton}
             textStyle={styles.actionButtonText}
           />
+          )}
         </View>
 
         {/* Delivery Info */}

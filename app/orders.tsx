@@ -36,6 +36,7 @@ import {
 import { logError } from "../lib/logError";
 import { formatQuantityDisplay } from "../lib/quantityFormat";
 import { payOrderWithWallet } from "../lib/walletService";
+import { isInvoiceAvailable } from "../lib/invoiceEligibility";
 
 function formatDate(iso: string) {
   const d = new Date(iso);
@@ -149,7 +150,7 @@ const OrderCard = React.memo(function OrderCard({
               <Text style={styles.payNowText}>{walletPayingOrderId === item.id ? "Paying…" : "Pay now"}</Text>
             </TouchableOpacity>
           </View>
-        ) : isDelivered ? (
+        ) : isDelivered && isInvoiceAvailable(item) ? (
           <PrimaryButton
             size="xs"
             variant="success"
@@ -159,7 +160,7 @@ const OrderCard = React.memo(function OrderCard({
             onPress={() => router.push(`/order/invoice/${item.id}` as any)}
             style={[styles.actionBtn, styles.actionBtnShadow]}
           />
-        ) : isCancelled ? (
+        ) : isCancelled || isDelivered ? (
           <PrimaryButton
             size="xs"
             icon="information-outline"

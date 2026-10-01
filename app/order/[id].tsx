@@ -43,6 +43,7 @@ import { getOrderPaymentStatus, getUserOrders, type Order } from "../../lib/orde
 import { formatQuantityDisplay } from "../../lib/quantityFormat";
 import { supabase } from "../../lib/supabase";
 import { payOrderWithWallet } from "../../lib/walletService";
+import { isInvoiceAvailable } from "../../lib/invoiceEligibility";
 
 // Fallback for when Realtime never delivers a single event on this screen —
 // `customer_orders`' `customer_own_orders` RLS policy gates on `auth.uid()`,
@@ -465,6 +466,7 @@ export default function OrderDetailScreen() {
                   {order.payment_status === "paid" ? "Paid" : "Pending"}
                 </Text>
               </View>
+              {isInvoiceAvailable(order) && (
               <TouchableOpacity
                 style={styles.viewInvoiceBtn}
                 activeOpacity={0.8}
@@ -475,6 +477,7 @@ export default function OrderDetailScreen() {
                 <Text style={styles.viewInvoiceBtnText}>View Tax Invoice</Text>
                 <MaterialCommunityIcons name="chevron-right" size={18} color="#fff" />
               </TouchableOpacity>
+              )}
             </Card>
           </View>
         ) : !isCancelled ? (
