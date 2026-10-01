@@ -10,6 +10,7 @@ import React, {
   useState,
 } from "react";
 import { useAuth } from "./AuthContext";
+import { computeCouponDiscount, type CouponKind } from "../lib/couponMath";
 
 const CART_STORAGE_KEY = "nn_cart_items";
 const COUPON_STORAGE_KEY = "nn_cart_coupon";
@@ -37,7 +38,8 @@ export type CartItem = {
 export type Coupon = {
   id: string;
   code: string;
-  type: "flat" | "percent";
+  // Matches the DB enum public.coupon_type.
+  type: CouponKind;
   value: number;
   max_discount?: number;
   min_order_value?: number;
@@ -209,14 +211,17 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   const discount = useMemo(() => {
     if (!appliedCoupon || !isCouponEligible) return 0;
-    if (appliedCoupon.type === "flat") return Math.min(appliedCoupon.value, subtotal);
-    if (appliedCoupon.type === "percent") {
-      const raw = (subtotal * appliedCoupon.value) / 100;
-      return appliedCoupon.max_discount
-        ? Math.min(raw, appliedCoupon.max_discount)
-        : raw;
-    }
-    return 0;
+    // Mirrors the backend's computeCouponDiscount (database.service.ts), which
+    // sets the amount actually charged: 'flat' is rupees off; 'percent' and
+    // 'first_order_discount' are both a percentage capped at max_discount; the
+    // result is always clamped to [0, subtotal]. 'first_order_discount' used to
+    // fall through to `return 0`, so the cart showed no discount and the full
+    // total while checkout charged the discounted amount. (2026-10-02, found
+    // while fixing audit C2.)
+    return computeCouponDiscount(
+      { type: appliedCoupon.type, value: appliedCoupon.value, maxDiscount: appliedCoupon.max_discount },
+      subtotal
+    );
   }, [appliedCoupon, isCouponEligible, subtotal]);
 
   // Memoize the context value so downstream consumers only re-render when the *fields they

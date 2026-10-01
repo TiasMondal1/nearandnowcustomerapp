@@ -17,17 +17,30 @@ import { C } from "../../constants/colors";
 import { text } from "../../constants/ui";
 import { useCart } from "../../context/CartContext";
 import { apiFetch } from "../../lib/apiClient";
+import { couponValidityState, type CouponKind } from "../../lib/couponMath";
 
 type Coupon = {
   id: string;
   code: string;
   description: string;
-  coupon_type: "flat" | "percent";
+  // Matches the DB enum public.coupon_type. first_order_discount is a
+  // percentage (backend coupons.routes.ts percentCheck), so it shares the
+  // "% OFF" label below.
+  coupon_type: CouponKind;
   discount_value: number;
   max_discount_amount?: number;
   min_order_value?: number;
-  expires_at?: string;
+  // The real column names. This type used to declare `expires_at`, which the
+  // API never returns, so no client-side expiry check was even possible.
+  valid_from?: string;
+  valid_until?: string | null;
 };
+
+// Same validity window the server applies (getActiveCoupons /
+// is_currently_valid). The list is server-filtered when fetched, but this
+// screen can stay open past a coupon's end time, so it's re-checked at render
+// instead of offering a coupon checkout will refuse. (Audit C2, 2026-10-02.)
+const validityState = (c: Coupon) => couponValidityState(c);
 
 export default function CouponsScreen() {
   const { appliedCoupon, applyCoupon, removeCoupon, subtotal } = useCart();
@@ -52,6 +65,7 @@ export default function CouponsScreen() {
   };
 
   const isApplicable = (c: Coupon) => {
+    if (validityState(c) !== "active") return false;
     if (!c.min_order_value) return true;
     return subtotal >= c.min_order_value;
   };
@@ -84,6 +98,7 @@ export default function CouponsScreen() {
           renderItem={({ item }) => {
             const applied = appliedCoupon?.id === item.id;
             const disabled = !isApplicable(item);
+            const validity = validityState(item);
 
             return (
               <Card
@@ -131,7 +146,7 @@ export default function CouponsScreen() {
                   <View style={styles.minOrderRow}>
                     <MaterialCommunityIcons name="cart-outline" size={13} color={C.textLight} />
                     <Text style={styles.minOrderText}>Min order ₹{item.min_order_value}</Text>
-                    {disabled && !applied && (
+                    {disabled && !applied && validity === "active" && (
                       <Text style={styles.needMore}>
                         Add ₹{(item.min_order_value - subtotal).toFixed(0)} more
                       </Text>
@@ -144,7 +159,17 @@ export default function CouponsScreen() {
                   fullWidth
                   variant={applied ? "danger" : "primary"}
                   disabled={disabled && !applied}
-                  label={applied ? "Remove" : disabled ? "Not Applicable" : "Apply Coupon"}
+                  label={
+                    applied
+                      ? "Remove"
+                      : validity === "expired"
+                        ? "Expired"
+                        : validity === "not_started"
+                          ? "Not yet active"
+                          : disabled
+                            ? "Not Applicable"
+                            : "Apply Coupon"
+                  }
                   onPress={() => {
                     if (applied) {
                       removeCoupon();
