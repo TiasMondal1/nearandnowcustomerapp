@@ -880,7 +880,7 @@ export default function HomeScreen() {
    * Full background refresh — fetches the entire catalog and overwrites cache.
    * Pass `filter` when the user has a location set so only nearby products load.
    */
-  const fetchFresh = useCallback(async (filter?: Set<string>) => {
+  const fetchFresh = useCallback(async (filter?: Set<string>, options?: { cacheable?: boolean }) => {
     const myId = ++fetchFreshSeqRef.current;
     try {
       const [categoriesData, catalog] = await Promise.all([
@@ -890,8 +890,17 @@ export default function HomeScreen() {
       if (myId !== fetchFreshSeqRef.current) return;
       setCategories(categoriesData);
       setProductsByCategory(catalog.productsByCategory);
-      // Only persist to cache when no location filter (cache is global, not per-location).
-      if (!filter) {
+      // Cache only the cold-start "all active products platform-wide" fetch
+      // (options.cacheable, set by callers passing getAllActiveProductIds()'s
+      // global filter) — never the location-scoped nearby filter from
+      // getNearbyProductFilter(), which would poison the shared cache with one
+      // location's results for every other location. Previously gated on
+      // `!filter`: after the 2026-09-03 radius fix made every real caller pass a
+      // truthy Set (global or nearby), this branch stopped running in practice —
+      // order-again.tsx/categories.tsx's "paint instantly from cache" path
+      // silently fell through to a live fetch on every single run. Found
+      // 2026-10-01 (bug_fixes doc, finding C1).
+      if (options?.cacheable) {
         InteractionManager.runAfterInteractions(() => {
           writeHomeCatalogCache({
             products: catalog.products,
@@ -910,7 +919,7 @@ export default function HomeScreen() {
    * (one round-trip) so the home grid paints with real data quickly.
    * Pass `filter` to restrict results to nearby-store inventory.
    */
-  const fetchFreshFast = useCallback(async (filter?: Set<string>) => {
+  const fetchFreshFast = useCallback(async (filter?: Set<string>, options?: { cacheable?: boolean }) => {
     try {
       const [categoriesData, fastCatalog] = await Promise.all([
         getAllCategories(),
@@ -924,7 +933,9 @@ export default function HomeScreen() {
         loadMasterCatalog({ nearbyIds: filter })
           .then((full) => {
             setProductsByCategory(full.productsByCategory);
-            if (!filter) {
+            // See fetchFresh's matching comment — cacheable only for the
+            // cold-start global active-ids filter, never a location-scoped one.
+            if (options?.cacheable) {
               writeHomeCatalogCache({
                 products: full.products,
                 productsByCategory: full.productsByCategory,
@@ -936,7 +947,7 @@ export default function HomeScreen() {
       });
     } catch (error) {
       logSilentFailure("Load home (fast)", error);
-      await fetchFresh(filter);
+      await fetchFresh(filter, options);
       setLoading(false);
     }
   }, [fetchFresh]);
@@ -965,7 +976,7 @@ export default function HomeScreen() {
           InteractionManager.runAfterInteractions(async () => {
             if (cancelled) return;
             const filter = await getAllActiveProductIds();
-            if (!cancelled) fetchFresh(filter.size > 0 ? filter : undefined);
+            if (!cancelled) fetchFresh(filter.size > 0 ? filter : undefined, { cacheable: true });
           });
         }
         return;
@@ -982,7 +993,7 @@ export default function HomeScreen() {
           InteractionManager.runAfterInteractions(async () => {
             if (cancelled) return;
             const filter = await getAllActiveProductIds();
-            if (!cancelled) fetchFresh(filter.size > 0 ? filter : undefined);
+            if (!cancelled) fetchFresh(filter.size > 0 ? filter : undefined, { cacheable: true });
           });
         }
         return;
@@ -990,7 +1001,7 @@ export default function HomeScreen() {
 
       // Case 3: no cache at all → get active store filter then fast network path.
       const filter = await getAllActiveProductIds();
-      if (!cancelled) await fetchFreshFast(filter.size > 0 ? filter : undefined);
+      if (!cancelled) await fetchFreshFast(filter.size > 0 ? filter : undefined, { cacheable: true });
     })();
 
     return () => {
