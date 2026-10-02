@@ -5,8 +5,11 @@
  * check character. The 15th character is a checksum over the first 14, so
  * most single-character typos are caught here for free — before any paid
  * registry lookup (the planned Cashfree verification) is spent on them.
- * (GST finding G4, 2026-10-02.) Mirrored in frontend/src/utils/gstin.ts and
- * nearandnowcustomerapp/lib/gstin.ts — keep all three identical.
+ * (GST finding G4, 2026-10-02.) Mirrored word-for-word in
+ * frontend/src/utils/gstin.ts, admin/src/utils/gstin.ts,
+ * nearandnowcustomerapp/lib/gstin.ts and near-now-store_owner/lib/gstin.ts —
+ * keep all five identical (frontend/src/utils/gstin.test.ts checks the
+ * website and admin copies).
  *
  * This proves a number is *well-formed*, not that it's registered or active;
  * that needs the registry lookup.
