@@ -44,12 +44,11 @@ import {
 } from "../../lib/productService";
 import { clearSavedPaymentMethodsCache } from "../../lib/razorpayService";
 import { getNearbyProductFilter } from "../../lib/storeService";
+import { gstinHint, isValidGstin, normalizeGstin } from "../../lib/gstin";
+import { useGstinVerification } from "../../lib/useGstinVerification";
 
-// Standard 15-char Indian GSTIN format: 2-digit state code, 10-char PAN,
-// 1-digit entity code, literal 'Z', 1 checksum char. Was previously
-// persisted and printed on the customer's own tax invoice with no format
-// check at all — a typo'd GSTIN would silently ship on a real invoice.
-const GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+// GSTIN checks (format + check character) live in lib/gstin.ts, shared
+// word-for-word with the backend and the website (GST finding G4).
 
 // Off-palette screen ground (no C token equals it — flagged in the UI audit).
 // Kept byte-identical; hoisted so the screen and the pay dock can't drift apart.
@@ -95,6 +94,13 @@ export default function CheckoutScreen() {
   const [gstinClaim, setGstinClaim] = useState(false);
   const [gstin, setGstin] = useState("");
   const [invoiceName, setInvoiceName] = useState("");
+  // Live registry check once the GSTIN is well-formed (2026-10-02). An Active
+  // GSTIN fills in the registered legal name — what the backend saves and
+  // prints on the invoice anyway.
+  const gstinCheck = useGstinVerification(normalizeGstin(gstin), gstinClaim && isValidGstin(gstin));
+  useEffect(() => {
+    if (gstinCheck.state === "verified" && gstinCheck.legalName) setInvoiceName(gstinCheck.legalName);
+  }, [gstinCheck]);
   const [deliveryInstructions, setDeliveryInstructions] = useState("");
   const [tipPreset, setTipPreset] = useState<10 | 20 | 30 | 50 | "custom" | null>(null);
   const [customTip, setCustomTip] = useState("");
@@ -342,7 +348,7 @@ export default function CheckoutScreen() {
         unit: i.unit,
       })),
       notes: notesParts.length ? notesParts.join(" | ") : undefined,
-      gstin: gstinClaim && gstin.trim() ? gstin.trim() : undefined,
+      gstin: gstinClaim && gstin.trim() ? normalizeGstin(gstin) : undefined,
       gstin_business_name: gstinClaim && invoiceName.trim() ? invoiceName.trim() : undefined,
       receiver_name: orderFor === "others" && receiverName.trim() ? receiverName.trim() : undefined,
       receiver_phone: orderFor === "others" && receiverPhone.trim() ? `+91${receiverPhone.trim()}` : undefined,
@@ -442,10 +448,28 @@ export default function CheckoutScreen() {
         return;
       }
     }
-    if (gstinClaim && gstin.trim() && !GSTIN_REGEX.test(gstin.trim().toUpperCase())) {
+    if (gstinClaim && gstin.trim() && !isValidGstin(gstin)) {
       Alert.alert(
         "Invalid GSTIN",
-        "Please enter a valid 15-character GSTIN (e.g. 22AAAAA0000A1Z5), or remove it to continue without one.",
+        `${gstinHint(gstin)}\n\nFix it, or remove it to continue without one.`,
+      );
+      return;
+    }
+    if (gstinClaim && gstin.trim() && gstinCheck.state === "rejected") {
+      Alert.alert("GSTIN not accepted", `${gstinCheck.message}\n\nFix it, or remove it to continue without one.`);
+      return;
+    }
+    if (gstinClaim && gstin.trim() && gstinCheck.state === "checking") {
+      Alert.alert("Checking GSTIN", "Still checking your GSTIN with the GST portal — one moment.");
+      return;
+    }
+    // Required with a GSTIN — the website already enforced this, the app
+    // didn't, so an app order could produce a GST invoice with a GSTIN and no
+    // registered business name. (GST finding G5, 2026-10-02.)
+    if (gstinClaim && gstin.trim() && !invoiceName.trim()) {
+      Alert.alert(
+        "Business name needed",
+        "Enter your registered business name to go with the GSTIN, or remove the GSTIN to continue without one.",
       );
       return;
     }
@@ -831,23 +855,30 @@ export default function CheckoutScreen() {
                 onChangeText={(t) => setGstin(t.toUpperCase())}
                 style={[
                   styles.textInput,
-                  gstin.trim().length > 0 && !GSTIN_REGEX.test(gstin.trim()) && styles.textInputError,
+                  gstin.trim().length > 0 && !isValidGstin(gstin) && styles.textInputError,
                 ]}
                 autoCapitalize="characters"
                 maxLength={15}
               />
-              {gstin.trim().length > 0 && !GSTIN_REGEX.test(gstin.trim()) && (
-                <Text style={styles.gstinErrorText}>
-                  {gstin.trim().length < 15
-                    ? `${15 - gstin.trim().length} more character${15 - gstin.trim().length === 1 ? "" : "s"} needed`
-                    : "Doesn't match the GSTIN format (e.g. 22AAAAA0000A1Z5)"}
+              {gstin.trim().length > 0 && !isValidGstin(gstin) ? (
+                <Text style={styles.gstinErrorText}>{gstinHint(gstin)}</Text>
+              ) : gstinCheck.state === "checking" ? (
+                <Text style={styles.gstinInfoText}>Checking with the GST portal…</Text>
+              ) : gstinCheck.state === "verified" ? (
+                <Text style={styles.gstinVerifiedText}>✓ Verified on the GST portal · Active</Text>
+              ) : gstinCheck.state === "rejected" ? (
+                <Text style={styles.gstinErrorText}>{gstinCheck.message}</Text>
+              ) : gstinCheck.state === "unavailable" ? (
+                <Text style={styles.gstinInfoText}>
+                  Couldn't check with the GST portal right now — we'll check again when you place the order.
                 </Text>
-              )}
+              ) : null}
               <TextInput
-                placeholder="Registered Business Name"
+                placeholder="Registered Business Name (required with GSTIN)"
                 placeholderTextColor={C.textLight}
                 value={invoiceName}
                 onChangeText={setInvoiceName}
+                editable={!(gstinCheck.state === "verified" && !!gstinCheck.legalName)}
                 style={[styles.textInput, { marginTop: 8 }]}
               />
             </View>
@@ -1500,6 +1531,8 @@ const styles = StyleSheet.create({
   gstinAddBtn: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.primary, fontSize: 14 },
   gstinExpanded: { marginTop: 12 },
   gstinErrorText: { fontFamily: "PlusJakartaSans_300Light", color: C.danger, fontSize: 11, marginTop: 4, marginLeft: 2 },
+  gstinInfoText: { fontFamily: "PlusJakartaSans_300Light", color: C.textLight, fontSize: 11, marginTop: 4, marginLeft: 2 },
+  gstinVerifiedText: { fontFamily: "PlusJakartaSans_700Bold", color: C.success, fontSize: 11, marginTop: 4, marginLeft: 2 },
 
   outOfRangeBanner: {
     flexDirection: "row",
