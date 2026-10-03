@@ -1,27 +1,30 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
 import React from "react";
-import {
-  StyleSheet,
-  View,
-  type DimensionValue,
-  type StyleProp,
-  type ViewStyle,
-} from "react-native";
+import { StyleSheet, View, type DimensionValue } from "react-native";
 
-// Fresh-green accents shared by every decorated surface (mirrors the tab
-// screens' local T palettes — keep in sync with T.green / T.greenXLight).
-const GREEN = "#2D7A4F";
-const GREEN_X_LIGHT = "#EAF6EE";
+import { C } from "../../constants/colors";
+import type { IconName } from "./types";
+
+// Retinted 2026-10-03 (codename boreal): the local GREEN / GREEN_X_LIGHT / rgba
+// literals that mirrored the tab screens' `T` palettes are gone. Every decorated
+// surface now reads the brand tokens, so a palette change in constants/colors.ts
+// retints the doodles with it. This file holds NO colour literal.
+// W3 (2026-10-03): SoftPanel, PAGE_WALLPAPER_DOODLES and GRID_PANEL_DOODLES had no
+// consumers and were removed with their token-derived transparent end stop.
 
 export type DoodleSpec = {
-  icon: React.ComponentProps<typeof MaterialCommunityIcons>["name"];
+  /** MaterialCommunityIcons glyph name. */
+  icon: IconName;
+  /** Glyph size in px (18–44 across the shipped scatters). */
   size: number;
+  /** Absolute offsets; numbers are px, strings are percentages of the host. */
   top?: DimensionValue;
   bottom?: DimensionValue;
   left?: DimensionValue;
   right?: DimensionValue;
+  /** CSS-style rotation, e.g. "-28deg". */
   rotate: string;
+  /** Per-glyph opacity override; falls back to the layer's `baseOpacity`. */
   opacity?: number;
 };
 
@@ -39,31 +42,15 @@ export const TAB_HEADER_DOODLES: DoodleSpec[] = [
   { icon: "leaf", size: 26, top: -6, right: -4, rotate: "-24deg", opacity: 0.09 },
 ];
 
-/** Page wallpaper — big, sparse, extra-faint glyphs across the whole screen.
- *  Sits as a fixed layer behind a scrolling list, so it mostly shows through
- *  the gaps between opaque cards: texture, not decoration. Pass a low
- *  baseOpacity (~0.04-0.05). */
-export const PAGE_WALLPAPER_DOODLES: DoodleSpec[] = [
-  { icon: "basket-outline", size: 44, top: "9%", left: "6%", rotate: "-14deg" },
-  { icon: "fruit-pineapple", size: 38, top: "14%", right: "8%", rotate: "18deg" },
-  { icon: "food-croissant", size: 36, top: "24%", left: "42%", rotate: "-22deg" },
-  { icon: "egg-outline", size: 32, top: "32%", left: "8%", rotate: "12deg" },
-  { icon: "ice-cream", size: 38, top: "37%", right: "6%", rotate: "-16deg" },
-  { icon: "noodles", size: 40, top: "48%", left: "28%", rotate: "10deg" },
-  { icon: "cup-outline", size: 34, top: "55%", right: "20%", rotate: "-20deg" },
-  { icon: "fish", size: 38, top: "63%", left: "9%", rotate: "16deg" },
-  { icon: "muffin", size: 34, top: "71%", right: "9%", rotate: "-12deg" },
-  { icon: "food-apple-outline", size: 40, top: "80%", left: "38%", rotate: "20deg" },
-  { icon: "carrot", size: 36, top: "89%", left: "10%", rotate: "-26deg" },
-  { icon: "cookie-outline", size: 32, top: "87%", right: "14%", rotate: "14deg" },
-];
-
-/** Corner accents for a SoftPanel behind a tile/card grid. */
-export const GRID_PANEL_DOODLES: DoodleSpec[] = [
-  { icon: "leaf", size: 22, top: 8, right: 16, rotate: "-20deg" },
-  { icon: "basket-outline", size: 22, bottom: 8, left: 16, rotate: "14deg" },
-  { icon: "fruit-cherries", size: 18, bottom: 12, right: "27%", rotate: "-12deg" },
-];
+export type DoodleBackdropProps = {
+  /** Hand-tuned scatter (one of the exported *_DOODLES constants or your own). */
+  doodles: DoodleSpec[];
+  /** Glyph colour. Default `C.primary` (brand green). */
+  color?: string;
+  /** Opacity applied to every glyph without its own `opacity`. Default 0.08;
+   *  wallpapers pass ~0.04–0.05. Keep ≤ 0.09 so text drawn over it stays legible. */
+  baseOpacity?: number;
+};
 
 /** Scattered grocery line-art (Blinkit-style) rendered as an absolute-fill,
  *  non-interactive layer. Scatters are hand-tuned constants (not randomized)
@@ -73,13 +60,9 @@ export const GRID_PANEL_DOODLES: DoodleSpec[] = [
  *  overflow:"hidden" when glyphs sit on negative offsets. */
 export const DoodleBackdrop = React.memo(function DoodleBackdrop({
   doodles,
-  color = GREEN,
+  color = C.primary,
   baseOpacity = 0.08,
-}: {
-  doodles: DoodleSpec[];
-  color?: string;
-  baseOpacity?: number;
-}) {
+}: DoodleBackdropProps) {
   return (
     <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
       {doodles.map((d, i) => (
@@ -101,33 +84,4 @@ export const DoodleBackdrop = React.memo(function DoodleBackdrop({
       ))}
     </View>
   );
-});
-
-/** Inset rounded green wash with a hairline border — grounds a tile grid or
- *  carousel as a "container box" on a cream/white band (the zoning treatment
- *  introduced on home's shop-by-category grid). Absolutely positioned behind
- *  its siblings; pass `style` to override the default 2/8 insets. */
-export function SoftPanel({ style }: { style?: StyleProp<ViewStyle> }) {
-  return (
-    <LinearGradient
-      colors={[GREEN_X_LIGHT, "rgba(234,246,238,0)"]}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 0, y: 1 }}
-      style={[styles.panel, style]}
-      pointerEvents="none"
-    />
-  );
-}
-
-const styles = StyleSheet.create({
-  panel: {
-    position: "absolute",
-    top: 2,
-    bottom: 2,
-    left: 8,
-    right: 8,
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: "rgba(45,122,79,0.10)",
-  },
 });

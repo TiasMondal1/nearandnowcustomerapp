@@ -146,3 +146,37 @@ export function getTimelineIndex(status: string | null | undefined): number {
   if (!status) return -1;
   return ORDER_TIMELINE.findIndex((s) => s.key === status);
 }
+
+// ─── Payment method labels (C22) ─────────────────────────────────────────────
+// ADDED 2026-10-03 (W2-orders). Everything above is a byte-compatible mirror of the backend enum
+// and stays untouched; these two exports are additive, shared by app/order/[id].tsx and
+// app/settings/payments.tsx.
+//
+// Data domain (W3 R2-02): `customer_orders.payment_method` is the Postgres enum razorpay | cod | wallet
+// (supabase/migrations/20260405000000_…, 20260912000000_…). The backend's placeCheckoutOrder folds whatever
+// string the client sends into that enum ("upi" / "online" / "split" → razorpay), so the Razorpay sub-method
+// (UPI app vs card vs netbanking) is never persisted — no label may claim it. The app posts "upi" for every
+// Razorpay rail (lib/paymentSelection PaymentMode) and /api/orders/place echoes that string back, so a freshly
+// placed online order reads "upi" until the first refetch returns "razorpay": both must render the same label.
+
+/** Customer-facing label per `customer_orders.payment_method` value (plus the app's own pre-refetch "upi"). */
+export const PAYMENT_METHOD_LABEL: Record<string, string> = {
+  cod: 'Cash on delivery',
+  razorpay: 'Online',
+  upi: 'Online',
+  wallet: 'Near & Now wallet',
+};
+
+/**
+ * `PAYMENT_METHOD_LABEL[method]` (case-insensitive). An unknown non-empty method is shown
+ * capitalised with underscores as spaces ("cash_on_delivery" → "Cash on delivery");
+ * empty / null → "Online".
+ */
+export function paymentMethodLabel(method?: string | null): string {
+  const key = String(method ?? '').trim().toLowerCase();
+  if (!key) return 'Online';
+  const known = PAYMENT_METHOD_LABEL[key];
+  if (known) return known;
+  const spaced = key.replace(/_/g, ' ');
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}

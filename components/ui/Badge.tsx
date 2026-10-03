@@ -6,7 +6,7 @@ import { C } from "../../constants/colors";
 import { radius, text } from "../../constants/ui";
 import type { IconName } from "./types";
 
-export type BadgeTone = "primary" | "success" | "warning" | "danger" | "info" | "neutral";
+export type BadgeTone = "primary" | "success" | "warning" | "danger" | "info" | "neutral" | "deal" | "dealSoft";
 
 export const BADGE_TONES: Record<BadgeTone, { bg: string; color: string }> = {
   primary: { bg: C.primaryXLight, color: C.primary },
@@ -15,17 +15,20 @@ export const BADGE_TONES: Record<BadgeTone, { bg: string; color: string }> = {
   danger: { bg: C.dangerLight, color: C.danger },
   info: { bg: C.infoLight, color: C.info },
   neutral: { bg: C.bgSoft, color: C.textSub },
+  // Deal tones are for % off / savings / coupon tags ONLY — never errors or CTAs (constants/colors.ts).
+  deal: { bg: C.deal, color: C.onPrimary },
+  dealSoft: { bg: C.dealLight, color: C.dealDark },
 };
 
 export type BadgeProps = {
   label: string;
-  /** Color pair. Default "neutral" (C.bgSoft / C.textSub). */
+  /** Color pair. Default "neutral" (C.bgSoft / C.textSub). `deal` = C.deal / C.onPrimary; `dealSoft` = C.dealLight / C.dealDark. */
   tone?: BadgeTone;
   /** Explicit background (e.g. `getStatusMeta(status).bg`). Overrides tone. */
   bg?: string;
   /** Explicit text/icon color (e.g. `getStatusMeta(status).color`). Overrides tone. */
   color?: string;
-  /** "md" (default) = ph10 pv5 r8 text 12/700; "sm" = ph8 pv3 text 10/800. */
+  /** "md" (default) = ph10 pv5 r8 text 12/700; "sm" = ph8 pv3 text 11/700 (`text.badgeSm`). */
   size?: "md" | "sm";
   /** borderRadius 999. */
   pill?: boolean;
@@ -73,7 +76,9 @@ export function Badge({
       testID={testID}
     >
       {icon ? <MaterialCommunityIcons name={icon} size={iconSize ?? (sm ? 10 : 12)} color={fg} /> : null}
-      <Text style={[sm ? styles.textSm : styles.textMd, { color: fg }, textStyle]}>{label}</Text>
+      <Text style={[sm ? styles.textSm : styles.textMd, { color: fg }, textStyle]} maxFontSizeMultiplier={1.3}>
+        {label}
+      </Text>
     </View>
   );
 }

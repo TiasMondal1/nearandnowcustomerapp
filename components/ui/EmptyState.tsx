@@ -35,6 +35,8 @@ export type EmptyStateProps = {
   iconColor?: string;
   /** Tab-root style: icon inside an 80px circle, bg C.primaryXLight, border 1.5 C.primaryLight. Default false. */
   iconWrap?: boolean;
+  /** 'error' = the one error treatment everywhere: iconWrap circle on C.dangerLight with a C.danger glyph (W3 R3-14). Default 'default'. */
+  tone?: "default" | "error";
   /** Extra content rendered under the text / action. */
   children?: React.ReactNode;
   style?: StyleProp<ViewStyle>;
@@ -53,20 +55,23 @@ export function EmptyState({
   iconSize,
   iconColor,
   iconWrap = false,
+  tone = "default",
   children,
   style,
   titleStyle,
   textStyle,
   testID,
 }: EmptyStateProps) {
-  const glyphSize = iconSize ?? (iconWrap ? 40 : iconSizes.heroLg);
-  const glyphColor = iconColor ?? (iconWrap ? C.primary : C.textLight);
+  const error = tone === "error";
+  const wrapped = iconWrap || error;
+  const glyphSize = iconSize ?? (wrapped ? 40 : iconSizes.heroLg);
+  const glyphColor = iconColor ?? (error ? C.danger : wrapped ? C.primary : C.textLight);
   const glyph = <MaterialCommunityIcons name={icon} size={glyphSize} color={glyphColor} />;
 
   return (
     <View style={[styles.base, fill ? styles.fill : styles.top, style]} testID={testID}>
-      {iconWrap ? (
-        <IconWrap size={80} circle bg={C.primaryXLight} style={styles.iconWrapBorder}>
+      {wrapped ? (
+        <IconWrap size={80} circle bg={error ? C.dangerLight : C.primaryXLight} style={error ? styles.iconWrapBorderError : styles.iconWrapBorder}>
           {glyph}
         </IconWrap>
       ) : (
@@ -96,6 +101,7 @@ const styles = StyleSheet.create({
   top: { marginTop: layout.emptyTop },
   fill: { flex: 1, justifyContent: "center" },
   iconWrapBorder: { borderWidth: 1.5, borderColor: C.primaryLight },
+  iconWrapBorderError: { borderWidth: 1.5, borderColor: C.dangerBorder },
   title: { ...typo.emptyTitle },
   text: { ...typo.emptyText },
   action: { marginTop: 8 },

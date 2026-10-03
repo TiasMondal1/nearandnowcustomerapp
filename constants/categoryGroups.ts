@@ -2,9 +2,11 @@
  * Maps each category (by lowercase name/slug keyword) to a display "group"
  * that shows up as a header in the Categories tab — Blinkit-style grouping.
  *
- * The match is tolerant: it looks for any keyword in the category name, so a
- * category named "Dairy, Bread & Eggs" will still land under the "Grocery &
- * Kitchen" group via the "dairy" / "bread" / "egg" keywords.
+ * The match is tolerant but word-anchored: a keyword counts only when it STARTS
+ * a word of the category name (X9). A category named "Dairy, Bread & Eggs"
+ * still lands under "Grocery & Kitchen" via "dairy" / "bread" / "egg" (word
+ * prefixes, so plurals and stems match), while "Steaks" no longer trips "tea"
+ * and "Toiletries" no longer trips "oil".
  *
  * Add new keywords as the master catalog grows. Anything that doesn't match
  * falls into the "More" bucket instead of breaking the layout.
@@ -13,7 +15,7 @@
 export interface CategoryGroupDef {
   id: string;
   title: string;
-  /** Keywords that should live inside this group (lowercase, whole-word/substring matched). */
+  /** Keywords that should live inside this group (lowercase; matched as the start of a word, see `getGroupForCategoryName`). */
   match: string[];
 }
 
@@ -172,13 +174,30 @@ export const DEFAULT_GROUP: CategoryGroupDef = {
   match: [],
 };
 
+/** Escapes a keyword so it can sit verbatim inside a RegExp source. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * One pattern per keyword, compiled once at module load (X9 word-boundary matching). The keyword must start a
+ * word — preceded by the start of the string or a non-alphanumeric — so "tea" no longer matches "steak", "oil"
+ * no longer matches "toiletries", "pet" no longer matches "carpet". The right end stays open on purpose: plurals
+ * ("eggs", "chips") and the deliberate stems in the lists above ("stapl", "dishwash", "air fresh") keep matching.
+ * Names are lowercased before the test, so the class only needs the lowercase range.
+ */
+const GROUP_PATTERNS: { group: CategoryGroupDef; patterns: RegExp[] }[] = CATEGORY_GROUPS.map((group) => ({
+  group,
+  patterns: group.match.map((kw) => new RegExp("(?:^|[^a-z0-9])" + escapeRegExp(kw))),
+}));
+
 /** Returns the matching group for a category name, or the default group. */
 export function getGroupForCategoryName(name: string): CategoryGroupDef {
   const s = (name || "").toLowerCase();
   if (!s) return DEFAULT_GROUP;
-  for (const g of CATEGORY_GROUPS) {
-    for (const kw of g.match) {
-      if (s.includes(kw)) return g;
+  for (const { group, patterns } of GROUP_PATTERNS) {
+    for (const re of patterns) {
+      if (re.test(s)) return group;
     }
   }
   return DEFAULT_GROUP;
