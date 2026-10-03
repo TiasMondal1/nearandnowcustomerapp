@@ -1,4 +1,4 @@
-import { apiFetch } from './apiClient';
+import { apiFetch, type ApiFetchOptions } from './apiClient';
 import { logSilentFailure } from './logSilentFailure';
 
 /**
@@ -84,6 +84,20 @@ export interface DriverLocation {
   updated_at: string;
 }
 
+/**
+ * Per-call transport options forwarded to `apiFetch` (CONTRACTS §2.4). The tracking hook passes
+ * `{ timeoutMs: 8000 }` on every poll so a stalled request can never outlive the poll interval
+ * (the default 30 s timeout is sized for mutations, not for a 5 s cadence) — 2026-10-03 (mira).
+ */
+export type TrackingFetchOptions = {
+  timeoutMs?: number;
+};
+
+function toApiOptions(options?: TrackingFetchOptions): ApiFetchOptions | undefined {
+  if (!options || options.timeoutMs === undefined) return undefined;
+  return { timeoutMs: options.timeoutMs };
+}
+
 export interface TrackingFullResponse {
   order: TrackingOrder;
   statusHistory: TrackingStatusEvent[];
@@ -108,10 +122,12 @@ export interface TrackingFullResponse {
  */
 export async function fetchOrderTrackingFull(
   orderId: string,
+  options?: TrackingFetchOptions,
 ): Promise<TrackingFullResponse | null> {
   if (!orderId) return null;
   return apiFetch<TrackingFullResponse>(
     `/api/tracking/orders/${encodeURIComponent(orderId)}/full`,
+    toApiOptions(options),
   );
 }
 
@@ -122,11 +138,13 @@ export async function fetchOrderTrackingFull(
  */
 export async function fetchDriverLocations(
   orderId: string,
+  options?: TrackingFetchOptions,
 ): Promise<Record<string, DriverLocation>> {
   if (!orderId) return {};
   try {
     return await apiFetch<Record<string, DriverLocation>>(
       `/api/tracking/orders/${encodeURIComponent(orderId)}/driver-locations`,
+      toApiOptions(options),
     );
   } catch (err) {
     logSilentFailure('[TRACKING] fetchDriverLocations', err);

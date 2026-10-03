@@ -1,7 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { ORDER_STATUSES, TERMINAL_STATUSES } from '../constants/orderStatus';
+import type { CartItem } from '../context/CartContext';
 import { apiFetch } from './apiClient';
+import { getDevFlag } from './devFlags';
 import { logSilentFailure } from './logSilentFailure';
+import { getMemoryHomeCache, type Product } from './productService';
+import { cached, invalidate, QC_KEYS } from './queryCache';
 
 // ─── User-orders SWR cache ──────────────────────────────────────────────────
 // Keyed per user so switching accounts on the same device doesn't cross
@@ -9,6 +14,13 @@ import { logSilentFailure } from './logSilentFailure';
 // caches for consistency.
 const ORDERS_CACHE_VERSION = 1;
 const ORDERS_CACHE_TTL_MS = 1000 * 60 * 60 * 24; // 1 day
+/** Disk rows hold the newest N orders only — an unbounded history hits Android's 2 MB CursorWindow (C38). */
+const ORDERS_CACHE_MAX_ROWS = 50;
+/** queryCache TTLs: the list dedupes Home / Orders / Order again mounts; a single order is short-lived (polls refresh it). */
+const ORDERS_LIST_TTL_MS = 20_000;
+const SINGLE_ORDER_TTL_MS = 10_000;
+
+const SYNTHETIC_ORDER_ID = 'dev-synthetic-order';
 
 const ordersCacheKey = (userId: string) =>
   `nn_user_orders_v${ORDERS_CACHE_VERSION}:${userId}`;
@@ -19,20 +31,85 @@ interface UserOrdersCache {
   orders: unknown[];
 }
 
+// ─── Memory mirror ──────────────────────────────────────────────────────────
+// Filled by getUserOrders / readUserOrdersCache / getOrderById / createOrder so
+// single-order screens can paint from `peekOrder(id)` on the first frame.
+// User-scoped: AuthContext.clearStoredSession() calls clearOrdersMemory().
+
+const ordersById = new Map<string, Order>();
+let memoryOrders: Order[] | null = null;
+/**
+ * Bumped by `clearOrdersMemory()`. Every fetch captures it BEFORE its await and skips `remember*` when it moved,
+ * so an in-flight list/order resolve can never repopulate the mirror after logout (W3 R1-01: queryCache refuses
+ * to STORE a late resolve but still resolves it to the caller).
+ */
+let mirrorGen = 0;
+
+function rememberOrders(orders: Order[]): void {
+  for (const o of orders) ordersById.set(o.id, o);
+  memoryOrders = orders;
+}
+
+function rememberOrder(order: Order): void {
+  ordersById.set(order.id, order);
+  if (memoryOrders) {
+    const idx = memoryOrders.findIndex((o) => o.id === order.id);
+    if (idx >= 0) {
+      const next = memoryOrders.slice();
+      next[idx] = order;
+      memoryOrders = next;
+    }
+  }
+}
+
+/** Last known copy of an order from any fetch (list, disk cache, single read, placement); `undefined` when never seen. */
+export function peekOrder(orderId: string): Order | undefined {
+  return ordersById.get(orderId);
+}
+
+/** The last order list resolved for the current user (sorted newest first), or `null` before any fetch / after logout. */
+export function getMemoryOrders(): Order[] | null {
+  return memoryOrders;
+}
+
+/** Empties the mirror (Map + list). Called from `AuthContext.clearStoredSession()` — shared-device leak otherwise. */
+export function clearOrdersMemory(): void {
+  mirrorGen += 1;
+  ordersById.clear();
+  memoryOrders = null;
+}
+
+// ─── Disk cache ─────────────────────────────────────────────────────────────
+
+/**
+ * Per-user disk cache of the order list (newest 50). `null` on miss /
+ * version mismatch / expiry (24 h) / parse error and under
+ * `Dev_Cache_inhibit_Orders`. A hit also fills the memory mirror.
+ */
 export async function readUserOrdersCache(
   userId: string,
 ): Promise<Order[] | null> {
   if (!userId) return null;
+  if (getDevFlag('Dev_Cache_inhibit_Orders')) return null;
+  const gen = mirrorGen;
   try {
     const raw = await AsyncStorage.getItem(ordersCacheKey(userId));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as UserOrdersCache;
     if (!parsed || parsed.version !== ORDERS_CACHE_VERSION) return null;
     if (Date.now() - parsed.savedAt > ORDERS_CACHE_TTL_MS) return null;
-    return Array.isArray(parsed.orders) ? (parsed.orders as Order[]) : null;
+    if (!Array.isArray(parsed.orders)) return null;
+    const orders = parsed.orders as Order[];
+    if (gen === mirrorGen) rememberOrders(orders);
+    return orders;
   } catch {
     return null;
   }
+}
+
+function createdAtMs(order: Order): number {
+  const t = Date.parse(order.created_at);
+  return Number.isFinite(t) ? t : 0;
 }
 
 async function writeUserOrdersCache(
@@ -40,10 +117,15 @@ async function writeUserOrdersCache(
   orders: Order[],
 ): Promise<void> {
   if (!userId) return;
+  const newestFirst = orders
+    .filter((o) => o.id !== SYNTHETIC_ORDER_ID)
+    .slice()
+    .sort((a, b) => createdAtMs(b) - createdAtMs(a))
+    .slice(0, ORDERS_CACHE_MAX_ROWS);
   const payload: UserOrdersCache = {
     version: ORDERS_CACHE_VERSION,
     savedAt: Date.now(),
-    orders,
+    orders: newestFirst,
   };
   try {
     await AsyncStorage.setItem(ordersCacheKey(userId), JSON.stringify(payload));
@@ -52,8 +134,20 @@ async function writeUserOrdersCache(
   }
 }
 
+/**
+ * Synchronous, memory-only invalidation: every `order:<id>` entry plus the
+ * user's list entry when `userId` is given. Call after createOrder / cancel /
+ * payment so the next read goes to the network.
+ */
+export function invalidateOrders(userId: string | null): void {
+  invalidate('order:');
+  if (userId) invalidate(QC_KEYS.orders(userId));
+}
+
+/** Removes the per-user disk row AND invalidates the memory entries (`invalidateOrders`). */
 export async function invalidateUserOrdersCache(userId: string): Promise<void> {
   if (!userId) return;
+  invalidateOrders(userId);
   try {
     await AsyncStorage.removeItem(ordersCacheKey(userId));
   } catch {
@@ -114,6 +208,11 @@ export interface CreateOrderInput {
   customer_name: string;
   customer_phone: string;
   customer_email?: string;
+  /**
+   * The rail, never the Razorpay sub-method: the backend folds this string into the enum
+   * razorpay | cod | wallet by substring ("upi" → razorpay; anything unrecognised → cod), so
+   * "card" / "netbanking" would be stored as cash on delivery (W3 R2-02).
+   */
   payment_method: "upi" | "cod" | "wallet";
   payment_status: "pending" | "paid";
   subtotal: number;
@@ -323,11 +422,15 @@ export async function createOrder(input: CreateOrderInput): Promise<Order> {
     created_at: order.placed_at || order.created_at || new Date().toISOString(),
   };
 
+  // The memory entries go first (sync) so the next list/order read hits the
+  // network, and the confirmation screen can peek the placed order right away.
+  invalidateOrders(input.user_id);
+  rememberOrder(placedOrder);
   // Fire-and-forget: the next visit to the Orders tab will refresh from the
-  // server anyway, but clearing the stale cache now means the new order shows
-  // up at the top even on a cold start within the TTL window.
+  // server anyway, but clearing the stale disk cache now means the new order
+  // shows up at the top even on a cold start within the TTL window.
   invalidateUserOrdersCache(input.user_id).catch((err) =>
-    logSilentFailure("Invalidate user-orders cache after placing order", err),
+    logSilentFailure('Invalidate user-orders cache after placing order', err),
   );
   return placedOrder;
 }
@@ -342,6 +445,7 @@ export async function createOrder(input: CreateOrderInput): Promise<Order> {
  */
 export async function getOrderPaymentStatus(
   orderId: string,
+  opts?: { timeoutMs?: number },
 ): Promise<{ payment_status: string; status: string } | null> {
   if (!orderId) return null;
   try {
@@ -350,8 +454,10 @@ export async function getOrderPaymentStatus(
     // check. Previously this read customer_orders directly with the
     // privileged client and NO ownership check at all: any known/guessed
     // order id's payment status was readable by anyone.
+    // Pollers pass a short `timeoutMs` (order detail: 8 s cadence) so requests cannot pile up on a slow link.
     const data = await apiFetch<{ payment_status?: string; status?: string }>(
       `/api/tracking/orders/${encodeURIComponent(orderId)}`,
+      { timeoutMs: opts?.timeoutMs },
     );
     if (!data) return null;
     return {
@@ -377,6 +483,11 @@ export async function cancelOrder(orderId: string): Promise<void> {
   await apiFetch(`/api/orders/${encodeURIComponent(orderId)}/cancel`, {
     method: 'POST',
   });
+  // Every memory entry — the caller knows the user id; the list is cheap to refetch.
+  invalidateOrders(null);
+  // Patch the mirror so `peekOrder` never seeds a detail/confirmation screen with the pre-void status (W3 R2-11).
+  const prev = ordersById.get(orderId);
+  if (prev && prev.order_status !== 'order_cancelled') rememberOrder({ ...prev, order_status: 'order_cancelled' });
 }
 
 /**
@@ -470,59 +581,248 @@ export function buildOrderAgainItems(orders: Order[]): OrderAgainItem[] {
   return Array.from(byKey.values());
 }
 
-/**
- * @deprecated Use {@link buildOrderAgainItems} instead — it returns hydrated
- * items so the UI can render even when the catalog is unavailable. Kept as a
- * thin shim so existing call sites don't break.
- */
-export function buildOrderAgainProductIds(orders: Order[]): {
-  productIds: string[];
-  qtyByProductId: Record<string, number>;
-} {
-  const items = buildOrderAgainItems(orders);
-  const productIds: string[] = [];
-  const qtyByProductId: Record<string, number> = {};
-  for (const it of items) {
-    const id = it.masterProductId || it.productId;
-    if (!id) continue;
-    productIds.push(id);
-    qtyByProductId[id] = it.totalQty;
-  }
-  return { productIds, qtyByProductId };
+// ─── Active / past (vega) ───────────────────────────────────────────────────
+
+const TERMINAL_SET = new Set<string>(TERMINAL_STATUSES);
+
+/** Every `ORDER_STATUSES` entry except `TERMINAL_STATUSES` (delivered / cancelled). */
+export const ACTIVE_ORDER_STATUSES: readonly string[] = ORDER_STATUSES.filter((s) => !TERMINAL_SET.has(s));
+
+const ACTIVE_SET = new Set<string>(ACTIVE_ORDER_STATUSES);
+
+/** True when `order.order_status` is one of `ACTIVE_ORDER_STATUSES`. */
+export function isActiveOrder(order: Order): boolean {
+  return ACTIVE_SET.has(order.order_status);
 }
 
-// GET /api/orders/customer/:customerId — requireCustomer-gated; the controller
-// verifies the :customerId param matches the caller's own session
-// (req.customerId) before querying, so this is safe to call directly with no
-// privileged client involved (previously this was only a fallback behind a
-// direct-Supabase read that took a bare userId with no ownership check).
+/**
+ * Partitions a list into `{ active, past }`. `active` is sorted newest first
+ * by `created_at`; `past` keeps the input order (already newest first from the API).
+ */
+export function splitActivePast(orders: Order[]): { active: Order[]; past: Order[] } {
+  const active: Order[] = [];
+  const past: Order[] = [];
+  for (const o of orders) (isActiveOrder(o) ? active : past).push(o);
+  active.sort((a, b) => createdAtMs(b) - createdAtMs(a));
+  return { active, past };
+}
+
+// ─── Reorder (vega) ─────────────────────────────────────────────────────────
+
+/** A cart line ready for `cartActions.addMany`; `priceChanged` = catalog price differs from what was paid. */
+export type ReorderItem = Omit<CartItem, 'quantity'> & { quantity: number; priceChanged: boolean };
+
+function approxEqual(a: number, b: number): boolean {
+  return Math.abs(a - b) < 0.005;
+}
+
+/**
+ * Turns an order's lines into cart lines using the catalog `lookup`
+ * (`getCachedProduct` or a nearby-filtered map):
+ * - matched in the catalog → `isLoose` + current `price` from the product, `priceChanged` when it moved
+ * - `master_product_id` present but not in the catalog → the order line's price with `priceChanged: false`
+ *   (`isLoose` inferred from a fractional quantity)
+ * - no `master_product_id` AND no catalog match → `unavailable.push(name)`
+ * Duplicate products (same item from two store orders) are merged by summing quantities.
+ */
+export function buildReorderItems(
+  order: Order,
+  lookup: (masterProductId: string) => Product | undefined,
+): { items: ReorderItem[]; unavailable: string[] } {
+  const byProductId = new Map<string, ReorderItem>();
+  const unavailable: string[] = [];
+
+  for (const line of order.items ?? []) {
+    const qty = Number(line.quantity) > 0 ? Number(line.quantity) : 1;
+    const name = (line.name || '').trim() || 'Item';
+
+    // Lines placed from this app carry the master id in `product_id`; backend
+    // rows carry it in `master_product_id`. Try both before giving up.
+    const candidates = [line.master_product_id, line.product_id].filter((id): id is string => !!id);
+    let product: Product | undefined;
+    for (const id of candidates) {
+      product = lookup(id);
+      if (product) break;
+    }
+
+    let item: ReorderItem;
+    if (product) {
+      item = {
+        product_id: product.id,
+        name: product.name,
+        price: product.price,
+        unit: product.unit,
+        image_url: product.image_url,
+        isLoose: product.isLoose ?? false,
+        quantity: qty,
+        priceChanged: !approxEqual(product.price, Number(line.price) || 0),
+      };
+    } else if (line.master_product_id) {
+      item = {
+        product_id: line.master_product_id,
+        name,
+        price: Number(line.price) || 0,
+        unit: line.unit,
+        image_url: line.image,
+        isLoose: !Number.isInteger(qty),
+        quantity: qty,
+        priceChanged: false,
+      };
+    } else {
+      unavailable.push(name);
+      continue;
+    }
+
+    const existing = byProductId.get(item.product_id);
+    if (existing) {
+      existing.quantity += item.quantity;
+      existing.priceChanged = existing.priceChanged || item.priceChanged;
+    } else {
+      byProductId.set(item.product_id, item);
+    }
+  }
+
+  return { items: Array.from(byProductId.values()), unavailable };
+}
+
+// ─── Synthetic active order (Dev_Orders_inhibit_SimulateActive) ─────────────
+
+const SYNTHETIC_FALLBACK_ITEMS: Pick<OrderItem, 'name' | 'price' | 'unit'>[] = [
+  { name: 'Toned milk', price: 28, unit: '500 ml' },
+  { name: 'Brown bread', price: 45, unit: '400 g' },
+  { name: 'Bananas', price: 40, unit: '1 kg' },
+];
+const SYNTHETIC_DELIVERY_FEE = 25;
+const SYNTHETIC_AGE_MS = 12 * 60_000;
+
+let syntheticOrder: Order | null = null;
+let syntheticOrderCatalog: ReturnType<typeof getMemoryHomeCache> = null;
+
+/**
+ * One in-transit order for dev simulations: `id 'dev-synthetic-order'`,
+ * `order_number 'NN-DEV01'`, `in_transit`, paid by UPI, 3 items (the first
+ * three memory-catalog products with images when the catalog is loaded,
+ * placeholders otherwise), `created_at` 12 minutes before it was first built.
+ * Built once per session and rebuilt when the memory catalog object changes
+ * (so images appear once the catalog lands); never written to disk.
+ */
+export function buildSyntheticActiveOrder(): Order {
+  const catalog = getMemoryHomeCache();
+  if (syntheticOrder && syntheticOrderCatalog === catalog) return syntheticOrder;
+
+  const picks = catalog?.products.slice(0, 3) ?? [];
+  const items: OrderItem[] = SYNTHETIC_FALLBACK_ITEMS.map((fallback, i) => {
+    const p = picks[i];
+    if (!p) return { name: fallback.name, price: fallback.price, quantity: 1, unit: fallback.unit };
+    return {
+      product_id: p.id,
+      master_product_id: p.id,
+      name: p.name,
+      price: Math.round(p.price * 100) / 100,
+      quantity: 1,
+      unit: p.unit,
+      image: p.image_url,
+    };
+  });
+  const subtotal = Math.round(items.reduce((sum, it) => sum + it.price * it.quantity, 0) * 100) / 100;
+  const createdAt = syntheticOrder?.created_at ?? new Date(Date.now() - SYNTHETIC_AGE_MS).toISOString();
+
+  syntheticOrder = {
+    id: SYNTHETIC_ORDER_ID,
+    order_number: 'NN-DEV01',
+    order_status: 'in_transit',
+    payment_status: 'paid',
+    payment_method: 'upi',
+    order_total: Math.round(subtotal + SYNTHETIC_DELIVERY_FEE),
+    subtotal,
+    delivery_fee: SYNTHETIC_DELIVERY_FEE,
+    items,
+    items_count: items.length,
+    delivery_address: 'Simulated address (dev)',
+    created_at: createdAt,
+    delivery_otp: '4821',
+  };
+  syntheticOrderCatalog = catalog;
+  return syntheticOrder;
+}
+
+// ─── Reads ──────────────────────────────────────────────────────────────────
+
 /**
  * Fetches a single order directly by id (`GET /api/orders/:orderId`,
  * ownership-checked server-side), instead of fetching the customer's whole
  * order list and scanning it for a matching id. Used right after placing an
  * order (confirmation screen) — the full-list endpoint can be a beat behind
  * (cache, replication lag) immediately after creation, which previously
- * meant `orders.find(...)` silently came back empty with no error at all,
- * rendering a broken-looking confirmation page with no order details and no
- * indication anything was wrong. Lets a real error propagate instead of
- * swallowing it into an empty result, same as `fetchOrderTrackingFull`.
+ * meant `orders.find(...)` silently came back empty with no error at all.
+ * `cached(QC_KEYS.order(id), 10 s, userScope)`; a resolve fills the memory
+ * mirror (`peekOrder`). The dev synthetic order resolves locally while
+ * `Dev_Orders_inhibit_SimulateActive` is on. Rejects on a real error.
  */
 export async function getOrderById(orderId: string): Promise<Order> {
-  const raw = await apiFetch<BackendCustomerOrder>(
-    `/api/orders/${encodeURIComponent(orderId)}`,
+  if (orderId === SYNTHETIC_ORDER_ID && getDevFlag('Dev_Orders_inhibit_SimulateActive')) {
+    const synthetic = buildSyntheticActiveOrder();
+    rememberOrder(synthetic);
+    return synthetic;
+  }
+  const gen = mirrorGen;
+  const order = await cached<Order>(
+    QC_KEYS.order(orderId),
+    async () => {
+      const raw = await apiFetch<BackendCustomerOrder>(
+        `/api/orders/${encodeURIComponent(orderId)}`,
+      );
+      return mapBackendOrder(raw);
+    },
+    { ttlMs: SINGLE_ORDER_TTL_MS, userScope: true },
   );
-  return mapBackendOrder(raw);
+  if (gen === mirrorGen) rememberOrder(order);
+  return order;
 }
 
-export async function getUserOrders(userId: string): Promise<Order[]> {
-  if (!userId) return [];
+// GET /api/orders/customer/:customerId — requireCustomer-gated; the controller
+// verifies the :customerId param matches the caller's own session
+// (req.customerId) before querying, so this is safe to call directly with no
+// privileged client involved.
+async function fetchUserOrders(userId: string): Promise<Order[]> {
   const rows = await apiFetch<BackendCustomerOrder[]>(
     `/api/orders/customer/${encodeURIComponent(userId)}`,
   );
   const orders = Array.isArray(rows) ? rows.map(mapBackendOrder) : [];
   writeUserOrdersCache(userId, orders).catch((err) =>
-    logSilentFailure("Write user-orders cache", err),
+    logSilentFailure('Write user-orders cache', err),
   );
+  return orders;
+}
+
+/**
+ * The customer's order history, newest first.
+ * `cached(QC_KEYS.orders(userId), 20 s, userScope)` dedupes Home / Orders /
+ * Order again; `force` (pull-to-refresh) skips memory. A network resolve
+ * writes the per-user disk row (newest 50). Every resolve fills the memory mirror.
+ * `Dev_Orders_inhibit_History` → `[]` with no network;
+ * `Dev_Orders_inhibit_SimulateActive` → `buildSyntheticActiveOrder()` prepended.
+ */
+export async function getUserOrders(userId: string, opts?: { force?: boolean }): Promise<Order[]> {
+  if (!userId) return [];
+
+  const gen = mirrorGen;
+  let orders: Order[];
+  if (getDevFlag('Dev_Orders_inhibit_History')) {
+    orders = [];
+  } else {
+    orders = await cached<Order[]>(QC_KEYS.orders(userId), () => fetchUserOrders(userId), {
+      ttlMs: ORDERS_LIST_TTL_MS,
+      userScope: true,
+      force: opts?.force,
+    });
+  }
+
+  if (getDevFlag('Dev_Orders_inhibit_SimulateActive')) {
+    orders = [buildSyntheticActiveOrder(), ...orders.filter((o) => o.id !== SYNTHETIC_ORDER_ID)];
+  }
+
+  if (gen === mirrorGen) rememberOrders(orders);
   return orders;
 }
 

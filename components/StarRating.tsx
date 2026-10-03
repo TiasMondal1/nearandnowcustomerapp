@@ -1,68 +1,65 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import React, { useMemo } from "react";
+import React from "react";
 import { StyleSheet, Text, View } from "react-native";
 
 import { C } from "../constants/colors";
+import { text } from "../constants/ui";
+import type { IconName } from "./ui";
 
-type StarRatingProps = {
-  rating: number; // 0..5 (can be fractional)
+export type StarRatingProps = {
+  /** 0..5, fractional allowed; snapped to the nearest half star for display. */
+  rating: number;
+  /** When > 0, "(N)" is drawn after the stars (12/600 C.textSub). */
   reviewCount?: number;
+  /** Glyph size. Default 13. */
   starSize?: number;
 };
 
-export default function StarRating({
-  rating,
-  reviewCount,
-  starSize = 13,
-}: StarRatingProps) {
+const STAR_INDICES = [1, 2, 3, 4, 5] as const;
+
+function starIcon(snapped: number, i: number): IconName {
+  if (snapped >= i) return "star";
+  if (snapped >= i - 0.5) return "star-half-full";
+  return "star-outline";
+}
+
+/**
+ * Read-only star row (display only — the interactive picker is components/orders/StarPicker.tsx).
+ * Memoised because it sits inside product grids, rails and search rows (speed-and-ease #13).
+ */
+const StarRating = React.memo(function StarRating({ rating, reviewCount, starSize = 13 }: StarRatingProps) {
   const safeRating = Number.isFinite(rating) ? rating : 0;
+  // Snap to the nearest half star for a clean compact display.
+  const snapped = Math.round(Math.max(0, Math.min(5, safeRating)) * 2) / 2;
+  const showCount = typeof reviewCount === "number" && reviewCount > 0;
 
-  // Snap to nearest half-star for a clean compact display.
-  const snapped = useMemo(() => {
-    const clamped = Math.max(0, Math.min(5, safeRating));
-    return Math.round(clamped * 2) / 2;
-  }, [safeRating]);
-
-  const stars = [];
-  for (let i = 1; i <= 5; i++) {
-    const name =
-      snapped >= i
-        ? "star"
-        : snapped >= i - 0.5
-          ? "star-half-full"
-          : "star-outline";
-    const color =
-      name === "star-outline" ? C.textLight : C.warning;
-
-    stars.push(
-      <MaterialCommunityIcons
-        key={i}
-        name={name as any}
-        size={starSize}
-        color={color}
-      />,
-    );
-  }
-
-  const accessibilityLabel = `Rated ${snapped} out of 5${
-    typeof reviewCount === "number" && reviewCount > 0 ? `, ${reviewCount} reviews` : ""
-  }`;
+  const accessibilityLabel = `Rated ${snapped} out of 5${showCount ? `, ${reviewCount} reviews` : ""}`;
 
   return (
     <View style={styles.wrap} accessible accessibilityLabel={accessibilityLabel}>
-      <View
-        style={styles.starsRow}
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
-      >
-        {stars}
+      <View style={styles.starsRow} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+        {STAR_INDICES.map((i) => {
+          const name = starIcon(snapped, i);
+          return (
+            <MaterialCommunityIcons
+              key={i}
+              name={name}
+              size={starSize}
+              color={name === "star-outline" ? C.textLight : C.warning}
+            />
+          );
+        })}
       </View>
-      {typeof reviewCount === "number" && reviewCount > 0 ? (
-        <Text style={styles.reviewText} numberOfLines={1}>({reviewCount})</Text>
+      {showCount ? (
+        <Text style={styles.reviewText} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+          ({reviewCount})
+        </Text>
       ) : null}
     </View>
   );
-}
+});
+
+export default StarRating;
 
 const styles = StyleSheet.create({
   wrap: {
@@ -75,10 +72,5 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 2,
   },
-  reviewText: {
-    color: C.textSub,
-    fontSize: 12,
-    fontFamily: "PlusJakartaSans_600SemiBold",
-  },
+  reviewText: { ...text.label },
 });
-

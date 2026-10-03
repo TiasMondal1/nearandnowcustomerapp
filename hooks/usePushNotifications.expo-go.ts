@@ -17,6 +17,11 @@ export function getLastPushRegistrationError(): 'expo-go' {
   return 'expo-go';
 }
 
+/** No token is ever issued in Expo Go. */
+export function getLastPushToken(): string | null {
+  return null;
+}
+
 export async function checkPushPermissionStatus(): Promise<'unavailable'> {
   return 'unavailable';
 }

@@ -1,4 +1,5 @@
 import { apiFetch } from './apiClient';
+import { getAppExtra } from './appExtra';
 
 /**
  * Backend response from POST /api/payment/create.
@@ -159,10 +160,13 @@ const SAVED_METHODS_TIMEOUT_MS = 4000;
  *
  * ...set `EXPO_PUBLIC_SAVED_METHODS_ENABLED=true` in `.env` (no rebuild —
  * Expo Router picks this up on reload) and saved methods will start
- * populating automatically.
+ * populating automatically. EAS builds receive the same value through
+ * `extra.savedMethodsEnabled` (app.config.js) — the second layer below reads
+ * it via lib/appExtra, the one sanctioned cast of `extra` (CONTRACTS §2.24).
  */
 const SAVED_METHODS_ENABLED =
-  (process.env.EXPO_PUBLIC_SAVED_METHODS_ENABLED || '').toLowerCase() === 'true';
+  (process.env.EXPO_PUBLIC_SAVED_METHODS_ENABLED || '').toLowerCase() === 'true' ||
+  (getAppExtra().savedMethodsEnabled || '').toLowerCase() === 'true';
 
 export function isSavedPaymentMethodsEnabled(): boolean {
   return SAVED_METHODS_ENABLED;

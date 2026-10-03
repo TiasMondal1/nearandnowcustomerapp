@@ -1,100 +1,110 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import * as Sentry from "@sentry/react-native";
+import { router } from "expo-router";
+import * as SplashScreen from "expo-splash-screen";
 import React from "react";
-import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
-import { C } from "../constants/colors";
+import { StyleSheet, Text, View } from "react-native";
+
+import { text } from "../constants/ui";
+import { useFontsReady } from "../lib/bootGate";
+import { logError } from "../lib/logError";
+// Barrel-import exception (CONTRACTS §4.17 rev. 2, allowlisted by W3): these three primitives are imported from their
+// FILES, not from "./ui". The barrel pulls CartBar → CartContext → feedback → devFlags, and an import-time crash inside
+// one of those must not take the error boundary down with it.
+import { EmptyState } from "./ui/EmptyState";
+import { PrimaryButton } from "./ui/PrimaryButton";
+import { Screen } from "./ui/Screen";
 
 // An unhandled render exception anywhere in the tree previously crashed the
 // whole app with no fallback UI — the customer was left staring at a blank/
 // native crash screen with no way back in except force-quitting and
-// relaunching. This catches it and offers a retry instead. Mirrors the rider
-// app's identical fix (components/ErrorBoundary.tsx there) — the customer
-// app never got the equivalent.
+// relaunching. This catches it and offers a retry (and a way home) instead.
+// Mirrors the rider app's identical fix (components/ErrorBoundary.tsx there).
 type BoundaryState = { hasError: boolean; message: string };
 
-export class ErrorBoundary extends React.Component<{ children: React.ReactNode }, BoundaryState> {
-  constructor(props: { children: React.ReactNode }) {
-    super(props);
-    this.state = { hasError: false, message: "" };
+type BoundaryProps = { children: React.ReactNode };
+
+export class ErrorBoundary extends React.Component<BoundaryProps, BoundaryState> {
+  state: BoundaryState = { hasError: false, message: "" };
+
+  static getDerivedStateFromError(error: unknown): BoundaryState {
+    const message = error instanceof Error ? error.message : String(error);
+    return { hasError: true, message: message || "Unknown error" };
   }
 
-  static getDerivedStateFromError(error: any): BoundaryState {
-    return {
-      hasError: true,
-      message: error?.message ?? String(error) ?? "Unknown error",
-    };
+  componentDidCatch(error: unknown, info: React.ErrorInfo): void {
+    // A boot-time crash unmounts AppShell, whose effect is the only other splash hide — without this the native
+    // splash stays up forever and the recovery UI below is never seen (W3 R6-03). Sanctioned bare catch (MAP §2.7).
+    SplashScreen.hideAsync().catch(() => {});
+    // Both sinks are best-effort: a logger that throws inside a crash handler would mask the original error.
+    try {
+      logError("ErrorBoundary", error);
+    } catch {
+      // ignore — nothing left to report to
+    }
+    try {
+      Sentry.captureException(error, { extra: { componentStack: info?.componentStack } });
+    } catch {
+      // ignore — Sentry may not be initialised (no DSN) or may itself be the crashing module
+    }
   }
 
-  componentDidCatch(error: any, info: any) {
-    if (__DEV__) console.error("[ErrorBoundary]", error, info?.componentStack);
-  }
+  reset = (): void => {
+    this.setState({ hasError: false, message: "" });
+  };
 
-  render() {
+  render(): React.ReactNode {
     if (this.state.hasError) {
-      return (
-        <View style={styles.container} accessibilityRole="alert" accessibilityLiveRegion="assertive">
-          <View style={styles.iconWrap}>
-            <MaterialCommunityIcons name="alert-circle-outline" size={40} color={C.danger} />
-          </View>
-          <Text style={styles.title}>Something went wrong</Text>
-          <Text style={styles.message} numberOfLines={6} selectable>
-            {this.state.message}
-          </Text>
-          <TouchableOpacity
-            style={styles.retryButton}
-            onPress={() => this.setState({ hasError: false, message: "" })}
-            activeOpacity={0.8}
-            accessibilityRole="button"
-          >
-            <Text style={styles.retryText}>Retry</Text>
-          </TouchableOpacity>
-        </View>
-      );
+      return <BoundaryFallback message={this.state.message} reset={this.reset} />;
     }
     return this.props.children;
   }
 }
 
+type BoundaryFallbackProps = {
+  /** The caught error's message; shown selectable, 6 lines max. */
+  message: string;
+  /** Clears the boundary so the children render again. */
+  reset: () => void;
+};
+
+/** Full-screen fallback: Screen + EmptyState (fill, iconWrap, alert-circle-outline) with "Try again" and "Go to Home". */
+function BoundaryFallback({ message, reset }: BoundaryFallbackProps): React.JSX.Element {
+  // A crash before useFonts settles must not render a Jakarta family (MAP §7.13): drop the family while unset.
+  const fontsReady = useFontsReady();
+  const goHome = () => {
+    reset();
+    // Navigate on the next frame so the boundary has re-rendered its children before the route changes.
+    // dismissTo pops to the live tabs route (or replaces when absent) instead of stacking a second one (W3 R6-04).
+    requestAnimationFrame(() => router.dismissTo("/(tabs)/home"));
+  };
+
+  return (
+    <Screen>
+      <View style={styles.wrap} accessibilityRole="alert" accessibilityLiveRegion="assertive">
+        <EmptyState
+          fill
+          iconWrap
+          icon="alert-circle-outline"
+          title="Something went wrong"
+          titleStyle={fontsReady ? undefined : styles.systemFont}
+          textStyle={fontsReady ? undefined : styles.systemFont}
+        >
+          <Text style={[styles.message, !fontsReady && styles.systemFont]} selectable numberOfLines={6}>
+            {message}
+          </Text>
+          <View style={styles.actions}>
+            <PrimaryButton label="Try again" size="sm" onPress={reset} />
+            <PrimaryButton label="Go to Home" size="sm" variant="outline" onPress={goHome} />
+          </View>
+        </EmptyState>
+      </View>
+    </Screen>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 32,
-    backgroundColor: C.bg,
-  },
-  iconWrap: {
-    width: 84,
-    height: 84,
-    borderRadius: 42,
-    backgroundColor: C.dangerLight,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 20,
-  },
-  title: {
-    fontSize: 18,
-    fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: C.danger,
-    marginBottom: 8,
-    textAlign: "center",
-  },
-  message: { fontFamily: "PlusJakartaSans_400Regular",
-    fontSize: 13,
-    color: C.textSub,
-    textAlign: "center",
-    marginBottom: 24,
-    lineHeight: 20,
-  },
-  retryButton: {
-    backgroundColor: C.primary,
-    paddingHorizontal: 32,
-    paddingVertical: 14,
-    borderRadius: 14,
-    minWidth: 160,
-    alignItems: "center",
-  },
-  retryText: { fontFamily: "PlusJakartaSans_600SemiBold",
-    color: C.card,
-    fontSize: 15,
-  },
+  wrap: { flex: 1 },
+  message: { ...text.emptyText },
+  systemFont: { fontFamily: undefined },
+  actions: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 10, marginTop: 8 },
 });

@@ -1,4 +1,8 @@
-import Constants from 'expo-constants';
+// codename: kepler
+// Auth + customer-profile calls. Every request goes through `apiFetch` (K17): the OTP endpoints pass
+// `{ auth: false, timeoutMs: 15000 }` because they run before any session exists — `auth: false` means
+// no token is attached AND no SecureStore/AsyncStorage lookup happens, and a 401 on such a call never
+// fires the session-expired handler (apiClient only does that when a token was actually sent).
 import { apiFetch } from './apiClient';
 
 export interface AppUser {
@@ -36,57 +40,41 @@ export interface AuthResponse {
   isNewUser: boolean;
 }
 
-const getApiBase = () => {
-  const extra = (Constants.expoConfig?.extra ?? {}) as Record<string, string>;
-  return (
-    process.env.EXPO_PUBLIC_API_BASE_URL ||
-    extra.apiBaseUrl ||
-    'https://near-and-now-backend.vercel.app'
-  ).replace(/\/+$/, '');
-};
+/** Pre-session calls (send/verify OTP) get the shorter budget the old private `fetchWithTimeout` used. */
+const OTP_TIMEOUT_MS = 15000;
 
-async function fetchWithTimeout(
-  url: string,
-  options: RequestInit,
-  timeoutMs = 15000,
-): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } catch (err: any) {
-    if (err?.name === 'AbortError') throw new Error('Request timed out. Check your connection and try again.');
-    throw err;
-  } finally {
-    clearTimeout(timer);
-  }
+/**
+ * apiFetch maps EVERY 401 to this string. On the OTP endpoints no session exists, so a 401 there is the
+ * backend rejecting the request (e.g. a wrong/expired code), not an expired session. The two OTP wrappers
+ * swap it back for the user-facing default they have always shown, so neither screen ever says
+ * "Session expired" to a user who is still logging in.
+ */
+const SESSION_EXPIRED_MESSAGE = 'Session expired. Please log in again.';
+
+function errorMessage(err: unknown, fallback: string): string {
+  const message = err instanceof Error ? err.message : '';
+  return message && message !== SESSION_EXPIRED_MESSAGE ? message : fallback;
 }
 
 export async function sendOTP(phone: string): Promise<void> {
-  const apiBase = getApiBase();
-  if (!apiBase) throw new Error('API base URL is not configured.');
-  const url = `${apiBase}/api/auth/send-otp`;
-
-  const response = await fetchWithTimeout(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ phone }),
-  });
-
-  if (!response.ok) {
-    let message = 'Failed to send OTP';
-    try {
-      const text = await response.text();
-      try {
-        const parsed = JSON.parse(text);
-        message = parsed.message || parsed.error || message;
-      } catch {
-        if (text) message = text;
-      }
-    } catch {}
-    throw new Error(message);
+  try {
+    await apiFetch<unknown>('/api/auth/send-otp', {
+      method: 'POST',
+      body: JSON.stringify({ phone }),
+      auth: false,
+      timeoutMs: OTP_TIMEOUT_MS,
+    });
+  } catch (err) {
+    throw new Error(errorMessage(err, 'Failed to send OTP'));
   }
 }
+
+type VerifyOtpBody = Partial<{
+  user: AppUser;
+  customer: Customer;
+  token: string;
+  isNewUser: boolean;
+}>;
 
 export async function verifyOTP(
   phone: string,
@@ -94,35 +82,27 @@ export async function verifyOTP(
   name = 'Customer',
   email?: string,
 ): Promise<AuthResponse> {
-  const apiBase = getApiBase();
-  if (!apiBase) throw new Error('API base URL is not configured.');
-  const url = `${apiBase}/api/auth/verify-otp`;
-
-  const response = await fetchWithTimeout(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ phone, otp: String(otp).trim(), name, email }),
-  });
-
-  const text = await response.text();
-  let data: any;
+  let data: VerifyOtpBody;
   try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    data = {};
+    data = await apiFetch<VerifyOtpBody>('/api/auth/verify-otp', {
+      method: 'POST',
+      body: JSON.stringify({ phone, otp: String(otp).trim(), name, email }),
+      auth: false,
+      timeoutMs: OTP_TIMEOUT_MS,
+    });
+  } catch (err) {
+    // The backend's own message is preserved verbatim for 4xx bodies — app/otp.tsx matches on the
+    // "email" substring to route brand-new signups back to /phone (auth.controller.ts rejects
+    // new accounts without an email).
+    throw new Error(errorMessage(err, 'Invalid OTP'));
   }
 
-  if (!response.ok) {
-    const message = data.message || data.error || 'Invalid OTP';
-    throw new Error(String(message));
-  }
-
-  if (!data.user || !data.token) {
+  if (!data || typeof data !== 'object' || !data.user || !data.token) {
     throw new Error('Invalid response from server');
   }
 
   return {
-    user: data.user as AppUser,
+    user: data.user,
     customer: data.customer,
     token: data.token,
     isNewUser: Boolean(data.isNewUser),
@@ -136,10 +116,18 @@ export async function verifyOTP(
  * read, which took a bare userId with zero verification against the actual
  * authenticated session (an IDOR — anyone who knew/guessed another user's id
  * could read their full profile).
+ *
+ * `opts.timeoutMs` is forwarded to apiFetch (AuthContext's session restore
+ * races this against its own budget as well). Resolves `null` on any failure.
  */
-export async function getCurrentUserFromSession(): Promise<{ user: AppUser; customer?: Customer } | null> {
+export async function getCurrentUserFromSession(
+  opts?: { timeoutMs?: number },
+): Promise<{ user: AppUser; customer?: Customer } | null> {
   try {
-    const data = await apiFetch<{ user: AppUser; customer?: Customer }>('/api/customers/me');
+    const data = await apiFetch<{ user: AppUser; customer?: Customer }>(
+      '/api/customers/me',
+      opts?.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : undefined,
+    );
     return data;
   } catch {
     return null;
