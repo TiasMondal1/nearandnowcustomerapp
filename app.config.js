@@ -9,10 +9,28 @@
  *    app manifest and available at runtime via Constants.expoConfig.extra even if
  *    Metro inlining doesn't fire (e.g. dynamic access, hermes quirks).
  *
- * Set these in the EAS dashboard (expo.dev → project → Environment Variables)
- * for production builds: EXPO_PUBLIC_SUPABASE_URL, EXPO_PUBLIC_SUPABASE_ANON_KEY,
- * EXPO_PUBLIC_API_BASE_URL, EXPO_PUBLIC_GOOGLE_MAPS_API_KEY.
+ * Every EXPO_PUBLIC_* the app reads (mirror of .env.example — keep both in sync;
+ * lib/appExtra.ts `AppExtra` is the typed runtime view of `extra` below and the
+ * ONLY place `Constants.expoConfig.extra` is cast):
+ *   EXPO_PUBLIC_API_BASE_URL          → extra.apiBaseUrl          (lib/apiClient.ts)
+ *   EXPO_PUBLIC_SUPABASE_URL          → extra.supabaseUrl         (lib/supabase.ts)
+ *   EXPO_PUBLIC_SUPABASE_ANON_KEY     → extra.supabaseAnonKey     (lib/supabase.ts)
+ *   EXPO_PUBLIC_GOOGLE_MAPS_API_KEY   → extra.googleMapsApiKey    (+ ios/android native map config)
+ *   EXPO_PUBLIC_EAS_PROJECT_ID        → extra.eas.projectId       (push-token registration; hardcoded fallback below)
+ *   EXPO_PUBLIC_SUPPORT_PHONE         → extra.supportPhone        (app/settings/support.tsx)
+ *   EXPO_PUBLIC_SUPPORT_EMAIL         → extra.supportEmail        (support rows; default support@nearandnow.app)
+ *   EXPO_PUBLIC_SAVED_METHODS_ENABLED → extra.savedMethodsEnabled (lib/razorpayService.ts)
+ *   EXPO_PUBLIC_SENTRY_DSN            → extra.sentryDsn           (app/_layout.tsx Sentry.init; empty = disabled)
+ *   EXPO_PUBLIC_DEV_PANEL_PIN         → extra.devPanelPin         (lib/devFlags.ts; REQUIRED in the EAS production profile)
+ * Non-public inputs read here only: EAS_BUILD_PROFILE → extra.buildProfile ("local" when
+ * unset), EAS_PROJECT_ID, GOOGLE_SERVICES_JSON (EAS "file" env var).
+ *
+ * Never give a secret the EXPO_PUBLIC_ prefix: Metro inlines every static
+ * process.env.EXPO_PUBLIC_* reference into the client bundle (MAP §7.21).
+ * Set the keys in the EAS dashboard (expo.dev → project → Environment Variables)
+ * per build profile; locally they come from the gitignored .env.
  */
+/* global __dirname */ // Node config file; the Expo ESLint preset assumes RN globals (lint hygiene, D8)
 const fs = require("fs");
 const path = require("path");
 
@@ -60,10 +78,14 @@ module.exports = {
     name: "Near & Now",
     slug: "near-and-now-customer",
     version: "1.0.1",
-    orientation: "default",
+    // Portrait only — every layout is portrait and commit 4753e5c already fixed a
+    // rotation bug (MAP C33). Tablet support added by scripts/patch-android.js is unaffected.
+    orientation: "portrait",
     icon: "./assets/images/icon.png",
     scheme: "nearandnow",
-    userInterfaceStyle: "automatic",
+    // Light only — the app has no dark theme; "automatic" + edgeToEdge gave dark-mode
+    // devices dark status-bar icons / keyboard / Alerts over light surfaces (MAP C33).
+    userInterfaceStyle: "light",
     newArchEnabled: true,
     ios: {
       supportsTablet: false,
@@ -127,11 +149,21 @@ module.exports = {
         },
       ],
       "expo-font",
+      // Playback only. The bare "expo-audio" string injects android.permission.RECORD_AUDIO
+      // + NSMicrophoneUsageDescription at the next prebuild/EAS build (MAP §7.7).
+      ["expo-audio", { recordAudioAndroid: false }],
+      // Accelerometer for the dev-panel shake gesture only. `motionPermission: false` skips the
+      // iOS NSMotionUsageDescription injection (node_modules/expo-sensors/plugin/build/withSensors.js:6-7,
+      // verified 2026-10-03). No HIGH_SAMPLING_RATE_SENSORS: shake detection is designed for the
+      // 200 ms Android 12+ floor (MAP §7.19).
+      ["expo-sensors", { motionPermission: false }],
       [
         "expo-notifications",
         {
           icon: "./assets/images/notification-icon.png",
-          color: "#0EA5E9",
+          // Android notification accent — the ONE hex that must live in config (a config
+          // plugin cannot import TS). Mirrors C.primary in constants/colors.ts; keep in sync.
+          color: "#2D7A4F",
           defaultChannel: "orders_v2",
           sounds: ["./assets/sounds/order_chime.wav"],
         },
@@ -151,6 +183,18 @@ module.exports = {
       supabaseAnonKey,
       apiBaseUrl,
       googleMapsApiKey,
+      // ── DECISIONS D8 additions. Read through lib/appExtra.ts getAppExtra() (typed AppExtra).
+      // An empty string is the documented "unset" value: Sentry stays disabled, the dev PIN falls
+      // back to DEV_PIN_FALLBACK (and the panel's Env tab flags "PIN source: default"), support
+      // rows have no phone, saved payment methods stay off.
+      sentryDsn: process.env.EXPO_PUBLIC_SENTRY_DSN || "",
+      devPanelPin: process.env.EXPO_PUBLIC_DEV_PANEL_PIN || "",
+      supportPhone: process.env.EXPO_PUBLIC_SUPPORT_PHONE || "",
+      supportEmail: process.env.EXPO_PUBLIC_SUPPORT_EMAIL || "support@nearandnow.app",
+      // EAS Build sets EAS_BUILD_PROFILE (development | preview | production) on its build
+      // machines; local `expo start` / gradle builds have none → "local" (getBuildProfile()).
+      buildProfile: process.env.EAS_BUILD_PROFILE || "local",
+      savedMethodsEnabled: process.env.EXPO_PUBLIC_SAVED_METHODS_ENABLED || "",
       eas: {
         // EAS injects EAS_PROJECT_ID during cloud builds; for local dev set EXPO_PUBLIC_EAS_PROJECT_ID in .env
         ...(easProjectId ? { projectId: easProjectId } : {}),
