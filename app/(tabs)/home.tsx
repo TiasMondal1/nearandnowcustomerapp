@@ -1,2167 +1,1281 @@
+// codename: kepler
+// Home — the Blinkit feed, composed from components/home/* (W2-home-screen · CONTRACTS §4.18 · design/blinkit-parity
+// §3.1). One FlashList of typed items: TabHeader (atlas + antares ETA hero) → sticky SearchBand + category chip strip
+// (lyra) → text-card banners (deneb) → 8 tiles + "All categories" → "Frequently bought" rail → one rail per category
+// with "See all" → end stamp. The Home-only cart pill is GONE (cyan: the global CartBar is mounted once in the root
+// layout and lifts over the active-orders banner through `setCartBarExtraBottom`). The account sheet is mounted by
+// its provider; the avatar calls `useProfileMenu().open`. Android back asks before exiting (zephyr). No local
+// palette (boreal). Loading is `HomeSkeleton` (onyx).
+//
+// Data (kepler): boot seeds from the in-memory global catalog; the location effect resolves the nearby filter and
+// DERIVES the nearby view in memory (`products.filter(nearby) → groupProductsByCategory`) — zero catalog requests on
+// a cold start with a warm cache; a stale cache triggers ONE background global pull that is written to the shared
+// cache and re-derived; a nearby `.in()` pull runs only when there is no cache at all (cold install) or under
+// `Dev_Kepler_inhibit_InstantNearby`. Pulls dedupe in flight per filter key. The orders poll is diffed (vega): no
+// setState unless the active set or the top-product order changed; 20 s only while an order is active and the tab
+// is focused + the app is active; a focus refetch is skipped while idle for < 2 min.
+//
+// Landmine 24 (MAP §7.24), updated for rev. 2: `listData` is a discriminated union consumed by `getItemType`; the
+// TabHeader is item 0 and the STICKY cell is now INDEX 1 (`stickyHeaderIndices={[1]}` — it was index 0 while the
+// address bar was a `ListHeaderComponent`). The "no location ⇒ clear catalog ⇒ empty state" and "empty Set ⇒ No
+// stores near you" branches are intact, and every async writer is guarded by a sequence ref + `cancelled`.
+import { FlashList, type FlashListRef, type ListRenderItemInfo, type ViewToken } from "@shopify/flash-list";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import {
-    FlashList,
-    type FlashListRef,
-    type ListRenderItemInfo,
-} from "@shopify/flash-list";
-import { Image as ExpoImage } from "expo-image";
-import { LinearGradient } from "expo-linear-gradient";
-import * as ExpoLocation from "expo-location";
 import { router, useFocusEffect } from "expo-router";
-import React, {
-    useCallback,
-    useEffect,
-    useMemo,
-    useRef,
-    useState,
-} from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
-    ActivityIndicator,
-    BackHandler,
-    FlatList,
-    InteractionManager,
-    Platform,
-    Pressable,
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    useWindowDimensions,
-    View,
-    type StyleProp,
-    type ViewStyle,
+  AppState,
+  BackHandler,
+  InteractionManager,
+  Platform,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  View,
+  type LayoutChangeEvent,
+  type ViewabilityConfig,
 } from "react-native";
-import Animated, {
-    FadeInUp,
-    FadeOutDown,
-    useAnimatedStyle,
-    useSharedValue,
-    withSpring,
-} from "react-native-reanimated";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import ProfileMenu from "../../components/ProfileMenu";
+import { ACTIVE_ORDER_BANNER_FOOTPRINT, ActiveOrdersBanner } from "../../components/home/ActiveOrdersBanner";
+import { BannerCarousel } from "../../components/home/BannerCarousel";
+import { CategoryChipStrip } from "../../components/home/CategoryChipStrip";
+import { CategoryTileGrid } from "../../components/home/CategoryTileGrid";
+import { HOME_ITEM_SIZE, HomeSkeleton } from "../../components/home/HomeSkeleton";
+import { ProductRail } from "../../components/home/ProductRail";
 import {
-    DoodleBackdrop,
-    GRID_PANEL_DOODLES,
-    IconWrap,
-    PAGE_WALLPAPER_DOODLES,
-    Screen,
-    Skeleton,
-    SoftPanel,
-    TAB_HEADER_DOODLES,
-    type DoodleSpec,
+  EmptyState,
+  notify,
+  PressableScale,
+  ProductCard,
+  Screen,
+  SearchBand,
+  setCartBarExtraBottom,
+  TabHeader,
+  useCartBarFootprint,
+  useMotionReduced,
+  type IconName,
 } from "../../components/ui";
-import { HIT_SLOP, TAB_BAR_BASE_HEIGHT } from "../../constants/ui";
+import { BANNERS, getActiveBanners, type Banner } from "../../constants/banners";
+import { C } from "../../constants/colors";
+import { fontFamily, layout, motion, radius, text } from "../../constants/ui";
 import { useAuth } from "../../context/AuthContext";
-import { useCart, useCartItemMap, type CartItem } from "../../context/CartContext";
-import { useLocation } from "../../context/LocationContext";
-import { getAllCategories, type Category } from "../../lib/categoryService";
-import { cdnImage } from "../../lib/imageUrl";
-import { getUserOrders, readUserOrdersCache, type Order } from "../../lib/orderService";
+import { useLocation, type ActiveLocation } from "../../context/LocationContext";
+import { useProfileMenu } from "../../context/ProfileMenuContext";
+import { useDeviceAddress } from "../../hooks/useDeviceAddress";
+import { useRefetchOnReconnect } from "../../hooks/useRefetchOnReconnect";
+import { useForceSkeleton, useSlowLoad } from "../../hooks/useSlowLoad";
+import { getRemoteBanners } from "../../lib/bannerService";
+import { markBoot } from "../../lib/bootGate";
+import { getAllCategories, peekCategories, resolveCategorySlug, type Category } from "../../lib/categoryService";
+import { getDevFlag, useDevFlag } from "../../lib/devFlags";
+import { feedback } from "../../lib/feedback";
+import { prefetchImages } from "../../lib/imageUrl";
+import { clearLiveAddressCache, getLiveAddressCache, setLiveAddressCache } from "../../lib/liveAddress";
 import { logSilentFailure } from "../../lib/logSilentFailure";
-import { beginNativePrompt } from "../../lib/pendingNativePrompts";
-import { TERMINAL_STATUSES, getStatusMeta } from "../../constants/orderStatus";
+import { getMemoryOrders, getUserOrders, readUserOrdersCache, splitActivePast, type Order } from "../../lib/orderService";
 import {
-    getCountForCategoryName,
-    getMemoryHomeCache,
-    getProductsForCategoryName,
-    isHomeCatalogCacheFresh,
-    loadMasterCatalog,
-    loadMasterCatalogFast,
-    readHomeCatalogCache,
-    writeHomeCatalogCache,
-    type Product,
+  getCountForCategoryName,
+  getMemoryHomeCache,
+  getPopularProducts,
+  getProductsForCategoryName,
+  groupProductsByCategory,
+  isHomeCatalogCacheFresh,
+  loadMasterCatalog,
+  readHomeCatalogCache,
+  writeHomeCatalogCache,
+  type HomeCatalogCache,
+  type Product,
 } from "../../lib/productService";
-import { getAllActiveProductIds, getNearbyProductFilter } from "../../lib/storeService";
+import {
+  getAllActiveProductIds,
+  getNearbyProductFilter,
+  nearbyKey,
+  peekNearbyProductFilter,
+  type NearbyFilter,
+} from "../../lib/storeService";
 
-// ─── Design tokens ──────────────────────────────────────────────────────────
-const T = {
-  green: "#2D7A4F",
-  greenLight: "#3DA668",
-  greenXLight: "#EAF6EE",
-  // Header-band gradient top stop — one step deeper than greenXLight so the
-  // top of the screen reads as a deliberate brand surface, not a faded white.
-  greenWash: "#D6EDE0",
-  greenGlow: "rgba(45,122,79,0.18)",
-  greenBorder: "rgba(45,122,79,0.2)",
-  cream: "#FAFAF7",
-  sand: "#F3F1EB",
-  bark: "#3C2F1E",
-  barkLight: "#A89282",
-  white: "#FFFFFF",
-  cardBorder: "rgba(60,47,30,0.08)",
-  shadowDark: "rgba(0,0,0,0.10)",
-  skeletonLo: "#EFEDE7",
-  skeletonHi: "#F7F5EF",
-  // Terracotta deal accent — mirrors C.deal/dealDark/dealLight in constants/colors.ts.
-  // Use ONLY for commercial-benefit signals (discounts, savings) — never errors/CTAs.
-  deal: "#EA580C",
-  dealDark: "#C2410C",
-  dealLight: "#FFEDD5",
-};
+// ─── Constants ────────────────────────────────────────────────────────────────
 
-const FALLBACK_ICONS = [
-  "apple",
-  "leaf",
-  "cow",
-  "cookie",
-  "cup",
-  "sack",
-  "food-apple-outline",
-  "basket-outline",
-];
-
-// ─── Grocery line-art backdrop (Blinkit-style) ───────────────────────────────
-// Shared scatters + layer component live in components/ui/DoodleBackdrop.tsx;
-// only home-specific scatters are defined here.
-
-/** Thin sticky-search band — a few small glyphs peeking around the white card
- *  so the surface still reads as part of the header once it sticks. */
-const SEARCH_DOODLES: DoodleSpec[] = [
-  { icon: "fruit-cherries", size: 16, top: 2, left: 3, rotate: "-16deg" },
-  { icon: "carrot", size: 16, bottom: -5, left: "32%", rotate: "24deg" },
-  { icon: "food-apple-outline", size: 14, top: -2, right: "27%", rotate: "-12deg" },
-  { icon: "leaf", size: 18, bottom: -3, right: 6, rotate: "20deg" },
-];
-
-/** Frequently-bought shelf — snacky glyphs in the shelf's own terracotta so
- *  the deals zone keeps its one-hue identity. */
-const FREQ_DOODLES: DoodleSpec[] = [
-  { icon: "cookie-outline", size: 22, top: 4, right: 14, rotate: "16deg" },
-  { icon: "ice-cream", size: 20, top: 34, right: "22%", rotate: "-14deg" },
-  { icon: "muffin", size: 20, bottom: 10, left: 10, rotate: "-18deg" },
-  { icon: "food-croissant", size: 22, top: 8, left: "38%", rotate: "22deg" },
-];
-
-
-/**
- * Module-level cache of the last reverse-geocoded "live address". When the
- * user navigates away from the home tab (e.g. into select-location and back)
- * expo-router may remount this screen, which previously re-fired the slow
- * GPS + reverse-geocode chain on every return and caused the home page to
- * briefly "hang" while permissions / GPS resolved. Caching here keeps the
- * address bar populated instantly across remounts — the fresh lookup still
- * runs in the background the first time per app launch.
- */
-let __liveAddressCache: string | null = null;
-let __liveAddressResolved = false;
-
-/** Products shown in each category section before "See all". */
-const SECTION_VISIBLE_PRODUCTS = 6;
-
-/** Number of cards rendered per row in the home grid. */
-const ROW_COUNT = 3;
-
-/** How often the floating active-orders banner re-polls while Home is focused. */
+/** How often the active-orders banner re-polls while an order is active, Home is focused and the app is active. */
 const ACTIVE_ORDERS_POLL_MS = 20_000;
+/** With no active order, a focus refetch is skipped while the last fetch is younger than this (speed-and-ease #9). */
+const ORDERS_IDLE_REFRESH_MS = 2 * 60_000;
+/** Second Android back press inside this window exits (motion M24). */
+const BACK_EXIT_WINDOW_MS = 2000;
+/** Scroll quiet time before the search placeholder resumes rotating (motion M31: paused while scrolling). */
+const SCROLL_IDLE_MS = 250;
+/** Cards per category rail and in the "Frequently bought" rail. */
+const RAIL_LENGTH = 10;
+/** `getPopularProducts` candidates scanned for the nearby-only "Frequently bought" fallback. */
+const POPULAR_CANDIDATES = 50;
+/** Legacy 2×3 blocks under `Dev_Home_inhibit_Rails`. */
+const LEGACY_SECTION_VISIBLE = 6;
+const LEGACY_ROW_COUNT = 3;
+/** Image warm-up after a catalog paint: the first rails' first cards at the card width hint (ProductCard uses 240). */
+const PREFETCH_RAILS = 2;
+const PREFETCH_PER_RAIL = 4;
+const PREFETCH_WIDTH = 240;
+/** Empty-state cell height so `EmptyState fill` has room to centre under the sticky band. */
+const EMPTY_MIN_HEIGHT = 360;
+/** "See all ›" is a 20 pt text link; ±12 vertical lifts it to 44 pt (nothing sits above/below it in the header row). */
+const SEE_ALL_HIT_SLOP = { top: 12, bottom: 12, left: 8, right: 8 };
+/** Index of the sticky cell (SearchBand + chip strip); the TabHeader is item 0. */
+const STICKY_INDICES = [1];
+/** A section counts as "in view" for the chip highlight once a fifth of it is visible for 80 ms. */
+const VIEWABILITY_CONFIG: ViewabilityConfig = { itemVisiblePercentThreshold: 20, minimumViewTime: 80, waitForInteraction: false };
 
-/** Lifts the 22px qty buttons to a 44px target; horizontal slop stays 6 so − and + never overlap inside the 68px box. */
-const QTY_HIT_SLOP = { top: 11, bottom: 11, left: 6, right: 6 };
-/** Lifts the ~24px ADD button to a 44px target. */
-const ADD_HIT_SLOP = { top: 10, bottom: 10, left: 4, right: 4 };
-/** Address pressable is ~35px tall; slop it to 44+ without moving the layout. */
-const ADDRESS_HIT_SLOP = { top: 8, bottom: 8 };
+const EMPTY_PRODUCTS: Product[] = [];
+
+// The last reverse-geocoded "live address" lives in lib/liveAddress.ts (module mirror: survives the remounts
+// expo-router does on tab return so the slow GPS + reverse-geocode chain runs once per launch; cleared on logout
+// from AuthContext.clearStoredSession — C30 / W3 R1-15).
+
+/** In-flight catalog pulls per filter key (`global` | `nearby:<lat,lng>`) — concurrent callers share one request. */
+const inFlightCatalog = new Map<string, Promise<CatalogResult>>();
+/** `__DEV__` once: proves the diffed poll produces no setState when nothing changed (card acceptance). */
+let loggedOrdersNoChange = false;
+
+type CatalogResult = Awaited<ReturnType<typeof loadMasterCatalog>>;
+type Phase = "booting" | "ready" | "error";
+type EmptyVariant = "noLocation" | "noStores" | "noProducts" | "error";
 
 /**
- * Typed discriminated-union of home-feed list items. FlashList virtualizes the
- * outer list, so off-screen sections / rows are unmounted from the native view
- * tree. This is the difference between scrolling 60+ images all at once (old
- * ScrollView) vs ~8 at a time (FlashList).
+ * Typed discriminated-union of home-feed list items. FlashList virtualizes the outer list, so off-screen sections are
+ * unmounted from the native view tree. `productRow` / `seeAllBar` are the legacy 2×3 blocks kept behind
+ * `Dev_Home_inhibit_Rails`.
  */
 type HomeListItem =
-  | { kind: "search" }
-  | { kind: "freqBought"; title: string; products: Product[] }
-  | { kind: "catTileGrid"; categories: Category[] }
-  | { kind: "sectionHeader"; title: string; subtitle?: string; onSeeAll?: () => void }
-  | { kind: "productRow"; products: Product[]; rowKey: string }
-  | { kind: "seeAllBar"; categoryName: string; onPress: () => void }
+  | { kind: "header" }
+  | { kind: "search"; names: readonly string[] }
+  | { kind: "banners"; banners: Banner[] }
+  | { kind: "catTileGrid"; categories: Category[]; counts: Record<string, number>; capped: boolean }
+  | { kind: "freqBought"; products: Product[] }
+  | { kind: "sectionHeader"; categoryId: string; categoryName: string; slug: string | null }
+  | { kind: "productRail"; categoryId: string; categoryName: string; products: Product[] }
+  | { kind: "productRow"; rowKey: string; categoryName: string; products: Product[] }
+  | { kind: "seeAllBar"; categoryId: string; categoryName: string; slug: string }
   | { kind: "endStamp" }
-  | {
-      kind: "empty";
-      title: string;
-      message: string;
-      icon: keyof typeof MaterialCommunityIcons.glyphMap;
-      cta?: { label: string; onPress: () => void };
-    };
+  | { kind: "empty"; variant: EmptyVariant };
 
+// ─── Home UI store (leaf subscriptions; keeps `renderItem` free of volatile deps) ──
+// Viewability, scroll state, focus and the live address change constantly or independently of the feed data. Putting
+// them in React state consumed by `renderItem` would recreate `renderItem` and re-render EVERY mounted cell on each
+// change (the P1 class of bug). The sticky cell, header cell and banners cell subscribe to this tiny module store
+// instead (MAP §2.6 #28), so a chip highlight update re-renders one chip strip and nothing else.
 
-/** Neutral blurhash rendered as the image placeholder while the real product image loads. */
-const PLACEHOLDER_BLURHASH = "L6PZfSi_.AyE_3t7t7R**0o#DgR4";
-
-// ─── Product Card (Blinkit / Instamart style) ───────────────────────────────
-type ProductCardProps = {
-  p: Product;
-  cartItem: CartItem | undefined;
-  onAdd: (p: Product) => void;
-  onUpdateQty: (p: Product, delta: number) => void;
-  containerStyle?: StyleProp<ViewStyle>;
+type HomeUi = {
+  /** Category whose section is in view (chip highlight); null before the first viewability callback. */
+  activeName: string | null;
+  /** True while the feed scrolls (pauses the search placeholder rotation). */
+  scrolling: boolean;
+  /** Tab focused. */
+  focused: boolean;
+  /** AppState === 'active'. */
+  appActive: boolean;
+  /** Reverse-geocoded device address; a placeholder for the address pill until a location is set. */
+  liveAddress: string | null;
 };
 
-const ProductCard = React.memo(
-  function ProductCard({
-    p,
-    cartItem,
-    onAdd,
-    onUpdateQty,
-    containerStyle,
-  }: ProductCardProps) {
-    const scale = useSharedValue(1);
-    const hasDiscount = p.original_price != null && p.original_price > p.price;
-    const discountPct = hasDiscount
-      ? Math.round(((p.original_price! - p.price) / p.original_price!) * 100)
-      : 0;
+let homeUi: HomeUi = {
+  activeName: null,
+  scrolling: false,
+  focused: false,
+  appActive: AppState.currentState === "active",
+  liveAddress: null,
+};
+const homeUiListeners = new Set<() => void>();
 
-    const animStyle = useAnimatedStyle(() => ({
-      transform: [{ scale: scale.value }],
-    }));
+function setHomeUi(patch: Partial<HomeUi>): void {
+  let changed = false;
+  for (const key of Object.keys(patch) as (keyof HomeUi)[]) {
+    if (homeUi[key] !== patch[key]) {
+      changed = true;
+      break;
+    }
+  }
+  if (!changed) return;
+  homeUi = { ...homeUi, ...patch };
+  for (const cb of Array.from(homeUiListeners)) cb();
+}
 
-    const handlePressIn = useCallback(() => {
-      scale.value = withSpring(0.97, { damping: 18, stiffness: 280 });
-    }, [scale]);
-    const handlePressOut = useCallback(() => {
-      scale.value = withSpring(1, { damping: 18, stiffness: 280 });
-    }, [scale]);
-    const handlePress = useCallback(() => {
-      router.push(`../product/${p.id}`);
-    }, [p.id]);
-    const handleAdd = useCallback(() => onAdd(p), [onAdd, p]);
-    const handleMinus = useCallback(
-      () => onUpdateQty(p, -1),
-      [onUpdateQty, p],
-    );
-    const handlePlus = useCallback(
-      () => onUpdateQty(p, 1),
-      [onUpdateQty, p],
-    );
+function subscribeHomeUi(cb: () => void): () => void {
+  homeUiListeners.add(cb);
+  return () => {
+    homeUiListeners.delete(cb);
+  };
+}
 
-    return (
-      <View style={[styles.cardOuter, containerStyle]}>
-        <Animated.View
-          style={[animStyle, styles.card, !p.in_stock && styles.cardOutOfStock]}
-        >
-          <Pressable
-            onPressIn={handlePressIn}
-            onPressOut={handlePressOut}
-            onPress={handlePress}
-            accessibilityRole="button"
-          >
-            <View style={styles.imageWrap}>
-              {p.image_url ? (
-                <ExpoImage
-                  source={{ uri: cdnImage(p.image_url, 240) }}
-                  style={styles.image}
-                  contentFit="contain"
-                  transition={120}
-                  cachePolicy="memory-disk"
-                  placeholder={PLACEHOLDER_BLURHASH}
-                  recyclingKey={p.id}
-                  priority="low"
-                />
-              ) : (
-                <View style={styles.imagePlaceholder}>
-                  <MaterialCommunityIcons
-                    name="image-off-outline"
-                    size={24}
-                    color={T.barkLight}
-                  />
-                </View>
-              )}
-
-              {hasDiscount && (
-                <View style={styles.discountFlag}>
-                  <Text style={styles.discountFlagText}>{discountPct}%</Text>
-                  <Text style={styles.discountFlagOff}>OFF</Text>
-                </View>
-              )}
-
-              {!p.in_stock && (
-                <View style={styles.outOfStockOverlay}>
-                  <Text style={styles.outOfStockText}>Sold Out</Text>
-                </View>
-              )}
-            </View>
-
-            <View style={styles.cardBody}>
-              {p.unit ? (
-                <View style={styles.unitPill}>
-                  <MaterialCommunityIcons
-                    name="package-variant-closed"
-                    size={10}
-                    color={T.green}
-                  />
-                  <Text style={styles.unitPillText} numberOfLines={1}>
-                    {p.unit}
-                  </Text>
-                </View>
-              ) : null}
-
-              <Text style={styles.productName} numberOfLines={2}>
-                {p.name}
-              </Text>
-
-              <View style={styles.priceAddRow}>
-                <View style={styles.priceCol}>
-                  <Text
-                    style={[styles.priceValue, hasDiscount && styles.priceValueDeal]}
-                    numberOfLines={1}
-                  >
-                    ₹{p.price}
-                  </Text>
-                  {hasDiscount && (
-                    <Text style={styles.originalPrice}>₹{p.original_price}</Text>
-                  )}
-                </View>
-
-                {p.in_stock ? (
-                  cartItem ? (
-                    <View style={styles.qtyBox}>
-                      <TouchableOpacity
-                        style={styles.qtyBtn}
-                        onPress={handleMinus}
-                        activeOpacity={0.75}
-                        hitSlop={QTY_HIT_SLOP}
-                        accessibilityRole="button"
-                        accessibilityLabel="Decrease quantity"
-                      >
-                        <MaterialCommunityIcons
-                          name="minus"
-                          size={12}
-                          color={T.white}
-                        />
-                      </TouchableOpacity>
-                      <Text style={styles.qtyValue}>{cartItem.quantity}</Text>
-                      <TouchableOpacity
-                        style={styles.qtyBtn}
-                        onPress={handlePlus}
-                        activeOpacity={0.75}
-                        hitSlop={QTY_HIT_SLOP}
-                        accessibilityRole="button"
-                        accessibilityLabel="Increase quantity"
-                      >
-                        <MaterialCommunityIcons
-                          name="plus"
-                          size={12}
-                          color={T.white}
-                        />
-                      </TouchableOpacity>
-                    </View>
-                  ) : (
-                    <TouchableOpacity
-                      style={styles.addBtn}
-                      activeOpacity={0.8}
-                      onPress={handleAdd}
-                      hitSlop={ADD_HIT_SLOP}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Add ${p.name}`}
-                    >
-                      <Text style={styles.addText}>ADD</Text>
-                    </TouchableOpacity>
-                  )
-                ) : (
-                  <View style={styles.soldOutBtn}>
-                    <Text style={styles.soldOutText}>Out</Text>
-                  </View>
-                )}
-              </View>
-            </View>
-          </Pressable>
-        </Animated.View>
-      </View>
-    );
-  },
-  // Custom equality: a card only needs to re-render when *its* product/cart entry changes —
-  // not when unrelated products or cart items mutate.
-  (prev, next) =>
-    prev.p === next.p &&
-    prev.cartItem === next.cartItem &&
-    prev.onAdd === next.onAdd &&
-    prev.onUpdateQty === next.onUpdateQty,
-);
-
-const CAT_TINTS = [
-  "#E8F5E9", "#FFF8E1", "#E3F2FD", "#FCE4EC",
-  "#EDE7F6", "#E0F7FA", "#FBE9E7", "#F9FBE7",
-];
-
-// ─── Category Tile (for the "Shop by Category" visual grid) ─────────────────
-const CategoryTile = React.memo(function CategoryTile({
-  item,
-  index,
-  onPress,
-}: {
-  item: Category;
-  index: number;
-  onPress: () => void;
-}) {
-  const icon = item.icon || FALLBACK_ICONS[index % FALLBACK_ICONS.length];
-  const tint = item.color || CAT_TINTS[index % CAT_TINTS.length];
-  return (
-    <TouchableOpacity
-      style={styles.catTile}
-      activeOpacity={0.8}
-      onPress={onPress}
-      accessibilityRole="button"
-    >
-      <IconWrap size={68} radius={20} bg={tint} style={styles.catTileIconWrap}>
-        {item.image_url ? (
-          <ExpoImage
-            source={{ uri: cdnImage(item.image_url, 180) }}
-            style={styles.catTileImg}
-            contentFit="cover"
-            cachePolicy="memory-disk"
-            transition={100}
-            placeholder={PLACEHOLDER_BLURHASH}
-            recyclingKey={item.id}
-            priority="low"
-          />
-        ) : (
-          <MaterialCommunityIcons
-            name={icon as any}
-            size={30}
-            color={T.green}
-          />
-        )}
-      </IconWrap>
-      <Text style={styles.catTileLabel} numberOfLines={2}>
-        {item.name}
-      </Text>
-    </TouchableOpacity>
-  );
-});
-
-// ─── Section header ──────────────────────────────────────────────────────────
-const SectionHeader = React.memo(function SectionHeader({
-  title,
-  subtitle,
-  onSeeAll,
-  accentColor,
-}: {
-  title: string;
-  subtitle?: string;
-  onSeeAll?: () => void;
-  accentColor?: string;
-}) {
-  return (
-    <View style={styles.sectionHeader}>
-      <View
-        style={[
-          styles.sectionTitleAccent,
-          accentColor ? { backgroundColor: accentColor } : null,
-        ]}
-      />
-      <View style={styles.sectionTitleCol}>
-        <Text style={styles.sectionTitle} numberOfLines={1}>
-          {title}
-        </Text>
-        {subtitle ? (
-          <Text style={styles.sectionSub} numberOfLines={1}>
-            {subtitle}
-          </Text>
-        ) : null}
-      </View>
-      {onSeeAll && (
-        <TouchableOpacity
-          onPress={onSeeAll}
-          activeOpacity={0.7}
-          style={styles.chip}
-          hitSlop={HIT_SLOP}
-          accessibilityRole="button"
-        >
-          <Text style={styles.seeAllText}>See all</Text>
-          <MaterialCommunityIcons
-            name="chevron-right"
-            size={16}
-            color={T.green}
-          />
-        </TouchableOpacity>
-      )}
-    </View>
-  );
-});
-
-// ─── Frequently-bought horizontal section ────────────────────────────────────
-const FrequentlyBoughtSection = React.memo(function FrequentlyBoughtSection({
-  title,
-  products,
-  cartItemsByProductId,
-  onAdd,
-  onUpdateQty,
-}: {
-  title: string;
-  products: Product[];
-  cartItemsByProductId: Map<string, CartItem>;
-  onAdd: (p: Product) => void;
-  onUpdateQty: (p: Product, delta: number) => void;
-}) {
-  const data = useMemo(() => products.slice(0, 10), [products]);
-  const renderItem = useCallback(
-    ({ item: p }: { item: Product }) => (
-      <ProductCard
-        p={p}
-        cartItem={cartItemsByProductId.get(p.id)}
-        onAdd={onAdd}
-        onUpdateQty={onUpdateQty}
-        containerStyle={styles.cardOuterHorizontal}
-      />
-    ),
-    [cartItemsByProductId, onAdd, onUpdateQty],
-  );
-
-  if (!data.length) return null;
-  return (
-    <View style={styles.freqShelf}>
-      {/* Warm terracotta wash marks the deals shelf — same hue as the discount
-          flags at 6% opacity, fading into the feed. Non-interactive. */}
-      <LinearGradient
-        colors={["rgba(234,88,12,0)", "rgba(234,88,12,0.07)", "rgba(234,88,12,0)"]}
-        locations={[0, 0.22, 1]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 0, y: 1 }}
-        style={StyleSheet.absoluteFillObject}
-        pointerEvents="none"
-      />
-      <DoodleBackdrop doodles={FREQ_DOODLES} color={T.deal} baseOpacity={0.06} />
-      <SectionHeader title={title} subtitle="Quick reorder" accentColor={T.deal} />
-      <FlatList
-        data={data}
-        keyExtractor={keyExtractor}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.horizontalListContent}
-        renderItem={renderItem}
-        initialNumToRender={4}
-        maxToRenderPerBatch={4}
-        windowSize={3}
-        removeClippedSubviews
-      />
-    </View>
-  );
-});
-
-// ─── Active orders banner ────────────────────────────────────────────────────
-// Sits above every other home section — an order in flight is the most
-// actionable thing on the screen. One banner fills the row at a time (a
-// single order is the overwhelmingly common case); a second+ active order
-// pages in horizontally on swipe instead of stacking the list taller and
-// pushing the rest of the home feed down.
-const ACTIVE_ORDER_CARD_GAP = 0; // full-bleed, edge-to-edge paging — no gap between pages
-// Approx height of the floating banner block — used to lift the cart pill
-// clear of it instead of overlapping when both float at once.
-const ACTIVE_ORDER_BANNER_FOOTPRINT = 64;
-
-const activeOrderKeyExtractor = (o: Order) => o.id;
-
-const ActiveOrdersSection = React.memo(function ActiveOrdersSection({
-  orders,
-}: {
-  orders: Order[];
-}) {
-  const [pageIndex, setPageIndex] = useState(0);
-  // Live window width, not a module-level Dimensions.get() snapshot — this
-  // app isn't orientation-locked (app.config.js: orientation: "default"),
-  // and a stale width would desync the paging math (snapToInterval vs. the
-  // screen's actual current width) on rotation or Android split-screen/
-  // foldable resize. Found 2026-09-01 during a cross-app audit.
-  const { width: windowWidth } = useWindowDimensions();
-  const cardWidth = windowWidth; // flush with the (full-width) tab bar below it
-  const pageWidth = cardWidth + ACTIVE_ORDER_CARD_GAP;
-  const listRef = useRef<FlatList<Order>>(null);
-
-  const handleMomentumEnd = useCallback(
-    (e: { nativeEvent: { contentOffset: { x: number } } }) => {
-      const next = Math.round(e.nativeEvent.contentOffset.x / pageWidth);
-      setPageIndex(Math.max(0, Math.min(next, orders.length - 1)));
-    },
-    [pageWidth, orders.length],
-  );
-
-  // A background refresh (cache read, poll, realtime) can swap in a new
-  // `orders` array at any time — a status change, a delivered order
-  // dropping out, or the backend simply returning a different sequence.
-  // Without this, a customer who's swiped to page 2+ would keep seeing the
-  // old page's content and page-count label while the FlatList's underlying
-  // data (and its native scroll offset, which nothing here reprograms)
-  // silently fell out of sync — the label could show "2/2" while the list
-  // is actually scrolled past the end, or showing a different order than
-  // the label implies. Reset to page 1 whenever the
-  // actual set of order ids changes (not on every re-render — same ids in
-  // the same order is a no-op) rather than trying to guess which page
-  // still "matches" a set that may have changed shape entirely.
-  const orderIdsKey = orders.map((o) => o.id).join(',');
-  const prevOrderIdsKeyRef = useRef(orderIdsKey);
-  useEffect(() => {
-    if (prevOrderIdsKeyRef.current === orderIdsKey) return;
-    prevOrderIdsKeyRef.current = orderIdsKey;
-    setPageIndex(0);
-    listRef.current?.scrollToOffset({ offset: 0, animated: false });
-  }, [orderIdsKey]);
-
-  if (!orders.length) return null;
-  return (
-    <View style={styles.activeOrdersWrap}>
-      <FlatList
-        ref={listRef}
-        data={orders}
-        keyExtractor={activeOrderKeyExtractor}
-        renderItem={({ item }) => (
-          <ActiveOrderCard
-            order={item}
-            cardWidth={cardWidth}
-            pageLabel={orders.length > 1 ? `${pageIndex + 1}/${orders.length}` : undefined}
-          />
-        )}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        snapToInterval={pageWidth}
-        decelerationRate="fast"
-        snapToAlignment="start"
-        onMomentumScrollEnd={handleMomentumEnd}
-        extraData={[pageIndex, cardWidth]}
-        // Same virtualization tuning FrequentlyBoughtSection already uses above —
-        // this list was missing it despite the identical horizontal-FlatList shape.
-        // Low impact given active-order counts are typically 1-3, but kept
-        // consistent with this file's own convention. Found 2026-09-09.
-        initialNumToRender={4}
-        maxToRenderPerBatch={4}
-        windowSize={3}
-        removeClippedSubviews
-      />
-    </View>
-  );
-});
-
-const ActiveOrderCard = React.memo(function ActiveOrderCard({
-  order,
-  cardWidth,
-  pageLabel,
-}: {
-  order: Order;
-  cardWidth: number;
-  /** "1/4" style page counter — shown only when there's more than one active order. */
-  pageLabel?: string;
-}) {
-  const meta = getStatusMeta(order.order_status);
-  const handlePress = useCallback(() => {
-    router.push(`/order/track/${order.id}` as any);
-  }, [order.id]);
-
-  const itemsSummary = useMemo(() => {
-    const items = order.items ?? [];
-    if (!items.length) return "Your order";
-    const extra = items.length - 1;
-    return extra > 0 ? `${items[0].name} + ${extra} items` : items[0].name;
-  }, [order.items]);
-
-  return (
-    <TouchableOpacity
-      style={[styles.activeOrderCard, { width: cardWidth }]}
-      onPress={handlePress}
-      activeOpacity={0.85}
-    >
-      <View style={[styles.activeOrderIconWrap, { backgroundColor: meta.bg }]}>
-        <MaterialCommunityIcons name={meta.icon} size={18} color={meta.color} />
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.activeOrderTitle} numberOfLines={1}>
-          {meta.label}
-        </Text>
-        <Text style={styles.activeOrderStatus} numberOfLines={1}>
-          {itemsSummary}
-        </Text>
-      </View>
-      {pageLabel && (
-        <Text style={styles.activeOrdersCounterText}>{pageLabel}</Text>
-      )}
-      <View style={styles.activeOrderViewBtn}>
-        <Text style={styles.activeOrderViewBtnText}>VIEW</Text>
-      </View>
-    </TouchableOpacity>
-  );
-});
-
-const keyExtractor = (p: Product) => p.id;
-
-// ─── Skeleton card (shown during cold boot instead of blank screen) ─────────
-const SkeletonCard = React.memo(function SkeletonCard() {
-  return (
-    <View style={[styles.cardOuter, styles.skeletonCardOuter]}>
-      <View style={[styles.card, styles.skeletonCard]}>
-        <View style={styles.imageWrap}>
-          {/* 96 mirrors styles.image height so the skeleton card matches the real card */}
-          <Skeleton height={96} radius={8} color={T.skeletonHi} />
-        </View>
-        <View style={styles.cardBody}>
-          <Skeleton width="40%" height={10} color={T.skeletonLo} />
-          <Skeleton width="90%" height={10} color={T.skeletonLo} style={styles.skeletonMt8} />
-          <Skeleton width="70%" height={10} color={T.skeletonLo} style={styles.skeletonMt6} />
-          <View style={[styles.priceAddRow, styles.skeletonMt8]}>
-            <Skeleton width="30%" height={14} color={T.skeletonLo} />
-            <Skeleton width={46} height={24} radius={8} color={T.skeletonLo} />
-          </View>
-        </View>
-      </View>
-    </View>
-  );
-});
-
-function SkeletonHomeFeed() {
-  return (
-    <View>
-      <View style={styles.sectionHeader}>
-        <Skeleton
-          width={4}
-          height={18}
-          radius={2}
-          color={T.skeletonLo}
-          style={styles.skeletonAccent}
-        />
-        <View style={styles.sectionTitleCol}>
-          <Skeleton width={120} height={16} color={T.skeletonLo} />
-          <Skeleton width={80} height={10} color={T.skeletonLo} style={styles.skeletonMt6} />
-        </View>
-      </View>
-      <View style={styles.gridWrap}>
-        {Array.from({ length: 6 }).map((_, i) => (
-          <SkeletonCard key={i} />
-        ))}
-      </View>
-    </View>
+function useHomeUi<K extends keyof HomeUi>(key: K): HomeUi[K] {
+  return useSyncExternalStore(
+    subscribeHomeUi,
+    () => homeUi[key],
+    () => homeUi[key],
   );
 }
 
-// ─── Main Screen ─────────────────────────────────────────────────────────────
+// ─── Pure helpers ─────────────────────────────────────────────────────────────
+
+/** The nearby view: the global product set restricted to what nearby stores carry, grouped like the service does. */
+function deriveNearbyView(cache: HomeCatalogCache, nearby: NearbyFilter): Record<string, Product[]> {
+  const ids = nearby.productIds;
+  return groupProductsByCategory(cache.products.filter((p) => ids.has(p.id)));
+}
+
+/** One request per filter key at a time; a second caller (another location effect run, pull-to-refresh) shares it. */
+function pullCatalog(key: string, nearbyIds: Set<string> | undefined): Promise<CatalogResult> {
+  const existing = inFlightCatalog.get(key);
+  if (existing) return existing;
+  const promise: Promise<CatalogResult> = loadMasterCatalog({ nearbyIds }).finally(() => {
+    if (inFlightCatalog.get(key) === promise) inFlightCatalog.delete(key);
+  });
+  inFlightCatalog.set(key, promise);
+  return promise;
+}
+
+/** Most-reviewed first, then best-rated — mirrors productService's popularity order for the cold-install fallback. */
+function compareByReviews(a: Product, b: Product): number {
+  const ac = a.reviewCount ?? 0;
+  const bc = b.reviewCount ?? 0;
+  if (bc !== ac) return bc - ac;
+  return (b.avgRating ?? 0) - (a.avgRating ?? 0);
+}
+
+/**
+ * Product ids by how often the customer bought them, most first. Keyed by `master_product_id` (the id the catalog
+ * uses) with the store-specific `product_id` as a fallback for old rows.
+ */
+function topProductIdsFrom(orders: Order[]): string[] {
+  const counts = new Map<string, number>();
+  for (const order of orders) {
+    for (const it of order.items ?? []) {
+      const id = it.master_product_id ?? it.product_id;
+      if (!id) continue;
+      counts.set(id, (counts.get(id) ?? 0) + (it.quantity || 1));
+    }
+  }
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([id]) => id);
+}
+
+function activeKeyOf(active: Order[]): string {
+  return active.map((o) => `${o.id}:${o.order_status}:${o.payment_status}`).join(",");
+}
+
+type CatalogSeed = { categories: Category[]; view: Record<string, Product[]>; phase: Phase; noStores: boolean };
+
+/**
+ * First-render seed: when the global catalog is in memory (splash pre-warm) AND the nearby filter for the active
+ * location is in memory (`peekNearbyProductFilter`), the nearby view is derived synchronously so Home paints with
+ * real local content on frame 1 — no global → nearby flash. Otherwise the skeleton shows until the location effect
+ * resolves. A hydrated store with NO location is ready immediately (the "Set your location" empty state).
+ */
+function seedCatalog(location: ActiveLocation | null, isHydrated: boolean, instant: boolean): CatalogSeed {
+  const cache = getMemoryHomeCache();
+  const categories = cache?.categories ?? peekCategories() ?? [];
+  if (isHydrated && !location) return { categories, view: {}, phase: "ready", noStores: false };
+  if (!cache || !location || !instant) return { categories, view: {}, phase: "booting", noStores: false };
+  const nearby = peekNearbyProductFilter(location.latitude, location.longitude);
+  if (!nearby) return { categories, view: {}, phase: "booting", noStores: false };
+  const noStores = nearby.storeIds.length === 0;
+  return { categories, view: noStores ? {} : deriveNearbyView(cache, nearby), phase: "ready", noStores };
+}
+
+type OrdersSeed = { active: Order[]; topIds: string[]; activeKey: string; topKey: string };
+
+/** Orders already in the memory mirror (a previous mount, the Orders tab) paint the banner on frame 1. */
+function seedOrders(): OrdersSeed {
+  const orders = getMemoryOrders();
+  if (!orders) return { active: [], topIds: [], activeKey: "", topKey: "" };
+  const active = splitActivePast(orders).active;
+  const topIds = topProductIdsFrom(orders);
+  return { active, topIds, activeKey: activeKeyOf(active), topKey: topIds.join(",") };
+}
+
+// ─── Navigation (silent — pure navigation never plays feedback) ─────────────────
+
+function goToSelectLocation(): void {
+  router.push("/select-location");
+}
+
+function goToCategories(): void {
+  router.push("/(tabs)/categories");
+}
+
+// ─── FlashList helpers (module-level so their identity never changes) ──────────
+
+const keyExtractor = (item: HomeListItem): string => {
+  switch (item.kind) {
+    case "header":
+      return "header";
+    case "search":
+      return "search";
+    case "banners":
+      return "banners";
+    case "catTileGrid":
+      return "tiles";
+    case "freqBought":
+      return "freq";
+    case "sectionHeader":
+      return `hdr-${item.categoryId}`;
+    case "productRail":
+      return `rail-${item.categoryId}`;
+    case "productRow":
+      return `row-${item.rowKey}`;
+    case "seeAllBar":
+      return `seeall-${item.categoryId}`;
+    case "endStamp":
+      return "end";
+    case "empty":
+      return `empty-${item.variant}`;
+  }
+};
+
+/** Tells FlashList to recycle cells of the same type — stable per kind. */
+const getItemType = (item: HomeListItem): string => item.kind;
+
+// ─── Main screen ──────────────────────────────────────────────────────────────
+
 export default function HomeScreen() {
-  // Synchronous read of the prewarmed cache. If the splash-time prewarm has
-  // populated `memoryHomeCache`, we hydrate state on the very first render —
-  // the home screen paints with real content on frame 1 instead of frame 2+
-  // (the difference between "cached UI is visible immediately" vs "blank
-  // skeleton flashes for 60–200 ms before the cache finishes parsing").
-  const initialCache = getMemoryHomeCache();
-  const insets = useSafeAreaInsets();
-
-  const [loading, setLoading] = useState(!initialCache);
-  const [categories, setCategories] = useState<Category[]>(
-    initialCache?.categories ?? [],
-  );
-  const [productsByCategory, setProductsByCategory] = useState<
-    Record<string, Product[]>
-  >(initialCache?.productsByCategory ?? {});
-  const [userTopProductIds, setUserTopProductIds] = useState<string[]>([]);
-  const [activeOrders, setActiveOrders] = useState<Order[]>([]);
-
-  const [activeCategory, setActiveCategory] = useState("All");
-  const [refreshing, setRefreshing] = useState(false);
-  const [showProfileMenu, setShowProfileMenu] = useState(false);
-
-  const [liveAddress, setLiveAddress] = useState<string | null>(__liveAddressCache);
-  const [locationFetching, setLocationFetching] = useState(false);
-
-  // null = no location set (show all); Set = computed filter (may be empty = no stores)
-  const [nearbyIds, setNearbyIds] = useState<Set<string> | null>(null);
-  const [noStoresNearby, setNoStoresNearby] = useState(false);
-  const lastFilteredLocationKey = useRef<string | null>(null);
-
   const { location, isHydrated } = useLocation();
-  const { addItem, incrementQty } = useCart();
-  const cartItemsByProductId = useCartItemMap();
-  const totalQty = useMemo(() => {
-    let n = 0;
-    for (const v of cartItemsByProductId.values()) n += v.quantity;
-    return n;
-  }, [cartItemsByProductId]);
-  const hasCart = cartItemsByProductId.size > 0;
-  const { userId } = useAuth();
+  const { userId, isAuthenticated } = useAuth();
+  const { refreshUnread } = useProfileMenu();
+  const { request: requestDeviceAddress } = useDeviceAddress();
+  const cartBarFootprint = useCartBarFootprint();
+  const reduced = useMotionReduced();
+  const focused = useHomeUi("focused");
+  const appActive = useHomeUi("appActive");
 
+  const inhibitBanners = useDevFlag("Dev_Deneb_inhibit_Feature");
+  const inhibitTileCap = useDevFlag("Dev_Home_inhibit_TileCap");
+  const inhibitRails = useDevFlag("Dev_Home_inhibit_Rails");
+  const inhibitInstantNearby = useDevFlag("Dev_Kepler_inhibit_InstantNearby");
+  const inhibitKepler = useDevFlag("Dev_Kepler_inhibit_Feature");
+  const inhibitActivePoll = useDevFlag("Dev_Vega_inhibit_ActivePoll");
+  /** Instant in-memory nearby view (kepler); off under either flag → the network path runs per location change. */
+  const instantNearby = !inhibitInstantNearby && !inhibitKepler;
+
+  // ── Catalog state (seeded synchronously from the memory caches) ────────────
+  const [catalogSeed] = useState(() => seedCatalog(location, isHydrated, instantNearby));
+  const [categories, setCategories] = useState<Category[]>(catalogSeed.categories);
+  const [view, setView] = useState<Record<string, Product[]>>(catalogSeed.view);
+  const [phase, setPhase] = useState<Phase>(catalogSeed.phase);
+  const [noStores, setNoStores] = useState(catalogSeed.noStores);
+  const [remoteBanners, setRemoteBanners] = useState<Banner[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const [retryTick, setRetryTick] = useState(0);
+
+  // ── Orders state ───────────────────────────────────────────────────────────
+  const [ordersSeed] = useState(seedOrders);
+  const [activeOrders, setActiveOrders] = useState<Order[]>(ordersSeed.active);
+  const [userTopProductIds, setUserTopProductIds] = useState<string[]>(ordersSeed.topIds);
+
+  // ── Refs (written in handlers/effects only — never read during render) ─────
   const listRef = useRef<FlashListRef<HomeListItem> | null>(null);
-  const didInitialFetch = useRef(false);
+  /**
+   * Discards a slower-resolving catalog writer superseded by a newer one (two quick location changes, a refresh
+   * during a location change): each writer captures the sequence when it starts and compares before every setState.
+   */
+  const seqRef = useRef(0);
+  /** Same shape for the orders writers (seed, focus refetch, poll, reconnect) — a stale fetch never clobbers fresher state. */
+  const ordersSeqRef = useRef(0);
+  const activeKeyRef = useRef(ordersSeed.activeKey);
+  const topKeyRef = useRef(ordersSeed.topKey);
+  const lastOrdersFetchAtRef = useRef(0);
+  const activeCountRef = useRef(ordersSeed.active.length);
+  /** The resolved nearby filter for the current location (pull-to-refresh re-pulls with it). */
+  const nearbyRef = useRef<{ key: string; filter: NearbyFilter } | null>(null);
+  const categoriesRef = useRef(categories);
+  const listDataRef = useRef<HomeListItem[]>([]);
+  const stickyHeightRef = useRef(HOME_ITEM_SIZE.searchWithChips);
+  const reducedRef = useRef(reduced);
+  const scrollIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastBackPressRef = useRef(0);
+  const firstPaintRef = useRef(false);
+  const wasAuthenticatedRef = useRef(isAuthenticated);
 
+  useEffect(() => {
+    categoriesRef.current = categories;
+  }, [categories]);
+  useEffect(() => {
+    reducedRef.current = reduced;
+  }, [reduced]);
+  useEffect(() => {
+    activeCountRef.current = activeOrders.length;
+  }, [activeOrders.length]);
+
+  // Mount: mirror the module caches into the UI store; unmount: supersede every in-flight writer and clear timers.
+  useEffect(() => {
+    setHomeUi({ liveAddress: getLiveAddressCache().address, activeName: null, scrolling: false });
+    return () => {
+      seqRef.current += 1;
+      ordersSeqRef.current += 1;
+      if (scrollIdleTimerRef.current) clearTimeout(scrollIdleTimerRef.current);
+    };
+  }, []);
+
+  // ── Catalog writers ────────────────────────────────────────────────────────
+
+  /** Applies a catalog view for a still-current writer sequence. */
+  const paintView = useCallback((seq: number, byCategory: Record<string, Product[]>, categoriesData?: Category[]) => {
+    if (seq !== seqRef.current) return;
+    setView(byCategory);
+    if (categoriesData && categoriesData.length > 0) setCategories(categoriesData);
+    setPhase("ready");
+  }, []);
+
+  /**
+   * The ONE global pull: every active master product carried by any verified + online store. It is the only fetch
+   * that is written to the shared home cache — never the location-scoped nearby subset, which would poison the cache
+   * with one location's results for every other location (the pre-2026-10-01 `!filter` gate silently stopped
+   * caching after the 2026-09-03 radius fix made every caller pass a Set; see bug_fixes doc, finding C1). When
+   * `nearby` is given and the writer is still current, the nearby view is re-derived from the fresh set and painted.
+   */
+  const refreshGlobal = useCallback(
+    async (seq: number, nearby: NearbyFilter | null) => {
+      // The whole platform catalog in one paged pull, then restricted to the active-id set IN MEMORY — never
+      // `.in('id', <every active id>)`, which blows the 16 KB URL limit on a dense platform (MAP §7.11 C6, W3 R1-05).
+      const [activeIds, raw] = await Promise.all([getAllActiveProductIds(), pullCatalog("global", undefined)]);
+      const result: CatalogResult =
+        activeIds.size > 0 ? { ...raw, products: raw.products.filter((p) => activeIds.has(p.id)) } : raw;
+      // JSON.stringify of a few thousand rows is JS-thread work — keep it off the paint.
+      InteractionManager.runAfterInteractions(() => {
+        void writeHomeCatalogCache({ products: result.products, categories: result.categories });
+      });
+      if (seq !== seqRef.current || !nearby || nearby.storeIds.length === 0) return;
+      const ids = nearby.productIds;
+      paintView(seq, groupProductsByCategory(result.products.filter((p) => ids.has(p.id))), result.categories);
+    },
+    [paintView],
+  );
+
+  const lat = location?.latitude;
+  const lng = location?.longitude;
+
+  // ── Nearby store filter + catalog — the location effect owns every catalog fetch ──
+  // Runs after isHydrated so it never blocks the first paint. Keyed on the rounded coordinates (~110 m grid) so GPS
+  // jitter never re-fires it; a remount re-runs it, which costs a synchronous derive and at most one network pull per
+  // 5-minute staleness window.
+  useEffect(() => {
+    if (!isHydrated) return;
+    const seq = ++seqRef.current;
+    let cancelled = false;
+
+    if (lat == null || lng == null) {
+      // No location set — show nothing rather than the whole platform catalog. The 0-4 km radius filter can't run
+      // without coordinates, and silently falling back to every active store's products (as this used to) defeats
+      // the radius restriction entirely. Clearing the catalog here lets the "Set your location" empty state render
+      // instead. See bug_fixes doc, 2026-09-03.
+      nearbyRef.current = null;
+      setNoStores(false);
+      setView({});
+      setPhase("ready");
+      // Warm the global cache while the user picks an address so the first pick derives instantly (no pull for a
+      // located user here — the branch below owns that).
+      const cache = getMemoryHomeCache();
+      if (cache && isHomeCatalogCacheFresh(cache)) return;
+      const handle = InteractionManager.runAfterInteractions(() => {
+        if (cancelled) return;
+        refreshGlobal(seq, null).catch((err) => logSilentFailure("Warm home cache", err));
+      });
+      return () => {
+        cancelled = true;
+        handle.cancel?.();
+      };
+    }
+
+    const key = nearbyKey(lat, lng);
+    let painted = false;
+    (async () => {
+      try {
+        const nearby = await getNearbyProductFilter(lat, lng);
+        if (cancelled || seq !== seqRef.current) return;
+        if (!nearby) {
+          setPhase("error");
+          return;
+        }
+        nearbyRef.current = { key, filter: nearby };
+        const noStoresNow = nearby.storeIds.length === 0;
+        setNoStores(noStoresNow);
+        if (noStoresNow) {
+          // filter.productIds is already an empty Set when no store is within radius — passing it through (instead
+          // of `undefined`) is what used to make the fetch load zero products instead of silently falling back to
+          // the entire unfiltered platform catalog (bug_fixes doc, 2026-09-03). Nothing to fetch: paint the
+          // "No stores near you" state directly.
+          paintView(seq, {});
+          return;
+        }
+
+        // Derive, don't refetch (speed-and-ease #5): the nearby view is the global set ∩ nearby ids.
+        let cache = getMemoryHomeCache();
+        if (!cache) {
+          cache = await readHomeCatalogCache();
+          if (cancelled || seq !== seqRef.current) return;
+        }
+        if (cache && instantNearby) {
+          paintView(seq, deriveNearbyView(cache, nearby));
+          painted = true;
+          // Stale → ONE background global pull, written to the cache and re-derived; fresh → zero requests.
+          if (!isHomeCatalogCacheFresh(cache)) await refreshGlobal(seq, nearby);
+          return;
+        }
+
+        // No cache yet (cold install) or the instant view is inhibited: pull the nearby subset for the first paint.
+        const result = await pullCatalog(`nearby:${key}`, nearby.productIds);
+        if (cancelled || seq !== seqRef.current) return;
+        paintView(seq, result.productsByCategory, result.categories);
+        painted = true;
+        if (!cache) {
+          // Cold install: warm the shared cache once, off the paint, so the next address switch / cold start derives.
+          InteractionManager.runAfterInteractions(() => {
+            refreshGlobal(-1, null).catch((err) => logSilentFailure("Warm home cache", err));
+          });
+        }
+      } catch (error) {
+        logSilentFailure("Load home", error);
+        if (cancelled || seq !== seqRef.current) return;
+        // Keep a derived view on screen (stale-while-revalidate); only an unpainted session shows the error state.
+        if (!painted) setPhase("error");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isHydrated, lat, lng, instantNearby, retryTick, paintView, refreshGlobal]);
+
+  // ── Categories + remote banners: once per mount (both cached / non-throwing in the services) ──
+  useEffect(() => {
+    let cancelled = false;
+    getAllCategories().then((data) => {
+      if (!cancelled && data.length > 0) setCategories(data);
+    });
+    getRemoteBanners().then((remote) => {
+      if (!cancelled) setRemoteBanners(remote);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // ── Live reverse-geocode from device GPS (placeholder for the address pill while no location is set) ──
+  // Deferred past first paint: GPS + reverse-geocode is a 500–2000 ms chain that competes with the catalog request
+  // on the same connection. Scheduling it via InteractionManager lets the feed paint first (how Blinkit behaves on a
+  // cold start). `useDeviceAddress` wraps the permission dialog in `beginNativePrompt()` so welcome/index redirect
+  // pollers wait it out (MAP §7.6). Runs only when no location exists and once per app launch (module flag), so a
+  // remount from select-location never replays the chain.
+  useEffect(() => {
+    if (!isHydrated || location || getLiveAddressCache().resolved) return;
+    let cancelled = false;
+    const handle = InteractionManager.runAfterInteractions(() => {
+      if (cancelled) return;
+      requestDeviceAddress().then((result) => {
+        // Denied or resolved — either way never replay this launch; `request()` itself never throws.
+        setLiveAddressCache(result ? result.address : null, true);
+        if (!result) return;
+        setHomeUi({ liveAddress: result.address });
+      });
+    });
+    return () => {
+      cancelled = true;
+      handle.cancel?.();
+    };
+  }, [isHydrated, location, requestDeviceAddress]);
+
+  // Logout = authenticated true → false transition (MAP §7.14): drop the previous user's live address (C30).
+  useEffect(() => {
+    if (isAuthenticated) {
+      wasAuthenticatedRef.current = true;
+      return;
+    }
+    if (!wasAuthenticatedRef.current) return;
+    wasAuthenticatedRef.current = false;
+    // The module mirror itself is cleared by AuthContext.clearStoredSession(); this only resets the UI store.
+    clearLiveAddressCache();
+    setHomeUi({ liveAddress: null });
+  }, [isAuthenticated]);
+
+  // ── Focus: unread dot refresh, UI store focus flag ─────────────────────────
+  useFocusEffect(
+    useCallback(() => {
+      setHomeUi({ focused: true });
+      // rev. 2: the avatar dot is fed by lib/notificationService through the context; the 60 s cache keeps this cheap.
+      refreshUnread();
+      return () => {
+        setHomeUi({ focused: false, scrolling: false });
+      };
+    }, [refreshUnread]),
+  );
+
+  // AppState is watched only while focused (no listener on a blurred tab).
+  useEffect(() => {
+    if (!focused) return;
+    const sub = AppState.addEventListener("change", (state) => setHomeUi({ appActive: state === "active" }));
+    return () => sub.remove();
+  }, [focused]);
+
+  // ── Android back: toast first, exit on the second press within 2 s (zephyr, motion M24) ──
   useFocusEffect(
     useCallback(() => {
       if (Platform.OS !== "android") return;
       const sub = BackHandler.addEventListener("hardwareBackPress", () => {
-        BackHandler.exitApp();
+        const now = Date.now();
+        if (getDevFlag("Dev_Shell_inhibit_BackToExitToast") || now - lastBackPressRef.current < BACK_EXIT_WINDOW_MS) {
+          BackHandler.exitApp();
+          return true;
+        }
+        lastBackPressRef.current = now;
+        notify({ id: "back-exit", title: "Press back again to exit", duration: BACK_EXIT_WINDOW_MS });
         return true;
       });
       return () => sub.remove();
     }, []),
   );
 
-  // ── Active orders banner: re-sync on every return to Home, then keep polling ──
-  // The two mount-time effects above (cache read + getUserOrders) only run
-  // once when `userId` becomes available, so an order that transitions to
-  // delivered/cancelled — or just changes status (preparing -> picked up ->
-  // on the way) — while the customer is elsewhere stayed stuck showing its
-  // old state in the floating banner until the next full app restart.
-  // Re-fetching on focus (skipping the very first focus, which the mount
-  // effects already cover) handles "left and came back." But a customer who
-  // just sits on Home watching the banner, without ever navigating away,
-  // would still see a frozen status — there's no realtime option here
-  // (customer_orders' RLS-based realtime policies are dead for this app's
-  // phone-OTP auth model, same reason useOrderTracking.ts's FALLBACK_POLL_MS
-  // exists), so this polls at a lighter cadence appropriate for a compact
-  // summary banner rather than the tracking screen's own 5s detail poll.
-  // Three independent places write setActiveOrders (the cache-read effect below,
-  // this focus-effect's refresh, and the InteractionManager-deferred mount
-  // effect further down) with no ordering guarantee between them — a slower
-  // fetch resolving after a faster/fresher one used to be able to clobber
-  // newer state with stale data (e.g. resurrecting an order that just went
-  // terminal). Same fix shape as fetchFreshSeqRef below: each writer captures
-  // a token when it starts and only applies its result if no newer write has
-  // started since. Found 2026-09-09.
-  const activeOrdersSeqRef = useRef(0);
-
-  // Shared by both places that actually fetch fresh orders from the network
-  // (this focus-effect's refresh, and the InteractionManager-deferred mount
-  // effect further down) — previously only the mount effect recomputed
-  // "frequently bought," so a refocus-triggered refresh updated the active-
-  // orders banner but silently left that carousel stale until the next full
-  // remount. One implementation now, applied by both triggers. Found 2026-09-09.
+  // ── Active orders (vega): diffed, gated, deduped poll ───────────────────────
+  // There's no realtime option here (customer_orders' RLS-based realtime policies are dead for this app's phone-OTP
+  // auth model, same reason useOrderTracking.ts's FALLBACK_POLL_MS exists), so this polls at a light cadence — and
+  // only sets state when the active set (id/status/payment) or the top-product order actually changed, so an idle
+  // Home never re-renders its feed every 20 s. Found 2026-09-09 / speed-and-ease #9.
   const applyFetchedOrders = useCallback((orders: Order[]) => {
-    setActiveOrders(orders.filter((o) => !(TERMINAL_STATUSES as string[]).includes(o.order_status)));
-    const counts: Record<string, number> = {};
-    for (const order of orders) {
-      for (const it of order.items || []) {
-        if (!it.product_id) continue;
-        counts[it.product_id] = (counts[it.product_id] || 0) + (it.quantity || 1);
-      }
+    const active = splitActivePast(orders).active;
+    const activeKey = activeKeyOf(active);
+    const topIds = topProductIdsFrom(orders);
+    const topKey = topIds.join(",");
+    let changed = false;
+    if (activeKey !== activeKeyRef.current) {
+      activeKeyRef.current = activeKey;
+      setActiveOrders(active);
+      changed = true;
     }
-    const ids = Object.entries(counts)
-      .sort(([, a], [, b]) => b - a)
-      .map(([id]) => id);
-    setUserTopProductIds(ids);
-  }, []);
-
-  const activeOrdersFocusedOnce = useRef(false);
-  useFocusEffect(
-    useCallback(() => {
-      if (!userId) return;
-      let cancelled = false;
-      const refresh = () => {
-        const mySeq = ++activeOrdersSeqRef.current;
-        getUserOrders(userId)
-          .then((orders) => {
-            if (!cancelled && mySeq === activeOrdersSeqRef.current) {
-              applyFetchedOrders(orders);
-            }
-          })
-          .catch((err) => logSilentFailure("Refresh active orders", err));
-      };
-      if (!activeOrdersFocusedOnce.current) {
-        activeOrdersFocusedOnce.current = true;
-      } else {
-        refresh();
-      }
-      const interval = setInterval(refresh, ACTIVE_ORDERS_POLL_MS);
-      return () => {
-        cancelled = true;
-        clearInterval(interval);
-      };
-    }, [userId, applyFetchedOrders]),
-  );
-
-  const derivedCategoryCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const [k, v] of Object.entries(productsByCategory)) {
-      counts[k.toLowerCase().trim()] = v.length;
+    if (topKey !== topKeyRef.current) {
+      topKeyRef.current = topKey;
+      setUserTopProductIds(topIds);
+      changed = true;
     }
-    return counts;
-  }, [productsByCategory]);
-
-  // Discards a slower-resolving fetch superseded by a newer one (e.g. two
-  // quick location changes) — the existing per-effect `cancelled` flags at
-  // each call site only stop a superseded effect from *starting* a new
-  // fetchFresh call, they don't stop an already-in-flight call's late
-  // response from overwriting fresher state once it resolves.
-  const fetchFreshSeqRef = useRef(0);
-
-  /**
-   * Full background refresh — fetches the entire catalog and overwrites cache.
-   * Pass `filter` when the user has a location set so only nearby products load.
-   */
-  const fetchFresh = useCallback(async (filter?: Set<string>, options?: { cacheable?: boolean }) => {
-    const myId = ++fetchFreshSeqRef.current;
-    try {
-      const [categoriesData, catalog] = await Promise.all([
-        getAllCategories(),
-        loadMasterCatalog({ nearbyIds: filter }),
-      ]);
-      if (myId !== fetchFreshSeqRef.current) return;
-      setCategories(categoriesData);
-      setProductsByCategory(catalog.productsByCategory);
-      // Cache only the cold-start "all active products platform-wide" fetch
-      // (options.cacheable, set by callers passing getAllActiveProductIds()'s
-      // global filter) — never the location-scoped nearby filter from
-      // getNearbyProductFilter(), which would poison the shared cache with one
-      // location's results for every other location. Previously gated on
-      // `!filter`: after the 2026-09-03 radius fix made every real caller pass a
-      // truthy Set (global or nearby), this branch stopped running in practice —
-      // order-again.tsx/categories.tsx's "paint instantly from cache" path
-      // silently fell through to a live fetch on every single run. Found
-      // 2026-10-01 (bug_fixes doc, finding C1).
-      if (options?.cacheable) {
-        InteractionManager.runAfterInteractions(() => {
-          writeHomeCatalogCache({
-            products: catalog.products,
-            productsByCategory: catalog.productsByCategory,
-            categories: categoriesData,
-          });
-        });
-      }
-    } catch (error) {
-      logSilentFailure("Load home", error);
+    if (!changed && __DEV__ && !loggedOrdersNoChange) {
+      loggedOrdersNoChange = true;
+      console.log("[home] orders poll: nothing changed — no setState");
     }
   }, []);
 
-  /**
-   * Cold-start fast path — fetches only the top-500 most-popular products
-   * (one round-trip) so the home grid paints with real data quickly.
-   * Pass `filter` to restrict results to nearby-store inventory.
-   */
-  const fetchFreshFast = useCallback(async (filter?: Set<string>, options?: { cacheable?: boolean }) => {
-    try {
-      const [categoriesData, fastCatalog] = await Promise.all([
-        getAllCategories(),
-        loadMasterCatalogFast(500, filter),
-      ]);
-      setCategories(categoriesData);
-      setProductsByCategory(fastCatalog.productsByCategory);
-      setLoading(false);
-      // Background-fill: hydrate the rest of the catalog.
-      InteractionManager.runAfterInteractions(() => {
-        loadMasterCatalog({ nearbyIds: filter })
-          .then((full) => {
-            setProductsByCategory(full.productsByCategory);
-            // See fetchFresh's matching comment — cacheable only for the
-            // cold-start global active-ids filter, never a location-scoped one.
-            if (options?.cacheable) {
-              writeHomeCatalogCache({
-                products: full.products,
-                productsByCategory: full.productsByCategory,
-                categories: categoriesData,
-              });
-            }
-          })
-          .catch((err) => logSilentFailure("Background-fill full catalog", err));
-      });
-    } catch (error) {
-      logSilentFailure("Load home (fast)", error);
-      await fetchFresh(filter, options);
-      setLoading(false);
-    }
-  }, [fetchFresh]);
+  /** `force` bypasses the 20 s list TTL — the poll tick must hit the network every time (W3 R1-03). */
+  const fetchOrders = useCallback((opts?: { force?: boolean }) => {
+    if (!userId) return;
+    const seq = ++ordersSeqRef.current;
+    getUserOrders(userId, { force: opts?.force })
+      .then((orders) => {
+        if (seq !== ordersSeqRef.current) return;
+        lastOrdersFetchAtRef.current = Date.now();
+        applyFetchedOrders(orders);
+      })
+      .catch((err) => logSilentFailure("Refresh active orders", err));
+  }, [userId, applyFetchedOrders]);
 
-  /**
-   * Single boot effect — handles three cases:
-   *   1. memory cache hit (set in initial state) → render is already done;
-   *      kick off background refresh only if cache is stale.
-   *   2. cold start, AsyncStorage cache exists → paint it ASAP, refresh in bg.
-   *   3. cold start, no cache → run the *fast* network path so first paint
-   *      happens in <500 ms instead of waiting on the full catalog fetch.
-   *
-   * Note: no dependency on LocationContext.isHydrated. The catalog is
-   * location-independent on cold start; the location effect below applies
-   * the nearby filter once hydration completes.
-   */
-  useEffect(() => {
-    if (didInitialFetch.current) return;
-    didInitialFetch.current = true;
-    let cancelled = false;
-
-    (async () => {
-      // Case 1: memory cache already used in initial state.
-      if (initialCache) {
-        if (!isHomeCatalogCacheFresh(initialCache)) {
-          InteractionManager.runAfterInteractions(async () => {
-            if (cancelled) return;
-            const filter = await getAllActiveProductIds();
-            if (!cancelled) fetchFresh(filter.size > 0 ? filter : undefined, { cacheable: true });
-          });
-        }
-        return;
-      }
-
-      // Case 2: AsyncStorage may still hold a cache the prewarm hasn't surfaced yet.
-      const cached = await readHomeCatalogCache();
-      if (cancelled) return;
-      if (cached) {
-        setCategories(cached.categories);
-        setProductsByCategory(cached.productsByCategory);
-        setLoading(false);
-        if (!isHomeCatalogCacheFresh(cached)) {
-          InteractionManager.runAfterInteractions(async () => {
-            if (cancelled) return;
-            const filter = await getAllActiveProductIds();
-            if (!cancelled) fetchFresh(filter.size > 0 ? filter : undefined, { cacheable: true });
-          });
-        }
-        return;
-      }
-
-      // Case 3: no cache at all → get active store filter then fast network path.
-      const filter = await getAllActiveProductIds();
-      if (!cancelled) await fetchFreshFast(filter.size > 0 ? filter : undefined, { cacheable: true });
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // ── Nearby store filter — recompute when user location changes ────────────
-  // Runs after isHydrated so we never block the cold-start paint. When the
-  // location changes significantly (>~110 m) we compute a new nearby filter
-  // and reload the catalog so the user only sees products from active stores
-  // within 4 km of their delivery address.
-  useEffect(() => {
-    if (!isHydrated || !location) {
-      // No location set — show nothing rather than the whole platform
-      // catalog. The 0-4 km radius filter can't run without coordinates, and
-      // silently falling back to every active store's products (as this used
-      // to) defeats the radius restriction entirely. Clearing the catalog
-      // here lets the existing "Set your location" empty state render
-      // instead. See bug_fixes doc, 2026-09-03.
-      if (nearbyIds !== null || Object.keys(productsByCategory).length > 0) {
-        setNearbyIds(null);
-        setNoStoresNearby(false);
-        setProductsByCategory({});
-      }
-      return;
-    }
-
-    // Round to 3 decimal places (~110 m grid) to avoid re-firing on GPS jitter.
-    const key = `${location.latitude.toFixed(3)},${location.longitude.toFixed(3)}`;
-    if (lastFilteredLocationKey.current === key) return;
-    lastFilteredLocationKey.current = key;
-
-    let cancelled = false;
-    (async () => {
-      const filter = await getNearbyProductFilter(location.latitude, location.longitude);
-      if (cancelled || !filter) return;
-      const noStores = filter.storeIds.length === 0;
-      setNearbyIds(filter.productIds);
-      setNoStoresNearby(noStores);
-      // filter.productIds is already an empty Set when no store is within
-      // radius — passing it through (instead of `undefined`) is what makes
-      // fetchFresh load zero products instead of silently falling back to
-      // the entire unfiltered platform catalog. See bug_fixes doc, 2026-09-03.
-      await fetchFresh(filter.productIds);
-    })();
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location?.latitude, location?.longitude, isHydrated]);
-
-  // ── Live reverse-geocode from device GPS ──────────────────────────────────
-  // Deferred past first paint: GPS + reverse-geocode is a 500–2000 ms call
-  // chain that competes with the home catalog network request on the same
-  // connection. By scheduling it via InteractionManager, the home grid paints
-  // first and the live address fills in a moment later — exactly how Blinkit
-  // / Instamart behave on cold start.
-  //
-  // Guarded by a module-level flag so remounts (e.g. coming back from
-  // select-location) don't replay the full GPS → reverse-geocode chain and
-  // visibly stall the home transition.
-  useEffect(() => {
-    if (__liveAddressResolved) return;
-    let cancelled = false;
-    const handle = InteractionManager.runAfterInteractions(async () => {
-      if (cancelled) return;
-      try {
-        setLocationFetching(true);
-        // A real native dialog only appears here on a clean install (permission
-        // still undetermined); marked pending regardless so welcome.tsx's
-        // auto-advance timer waits it out on the rare occasion it does — see
-        // lib/pendingNativePrompts.ts and bug_fixes_2026-07-23.md, 2026-09-09.
-        const releasePrompt = beginNativePrompt();
-        let status: string;
-        try {
-          status = (await ExpoLocation.requestForegroundPermissionsAsync()).status;
-        } finally {
-          releasePrompt();
-        }
-        if (status !== "granted" || cancelled) return;
-        const pos = await ExpoLocation.getCurrentPositionAsync({
-          accuracy: ExpoLocation.Accuracy.Balanced,
-        });
-        if (cancelled) return;
-        const [result] = await ExpoLocation.reverseGeocodeAsync({
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-        });
-        if (cancelled) return;
-        if (result) {
-          const parts = [result.name, result.street, result.district, result.city]
-            .filter(Boolean);
-          const addr =
-            parts.slice(0, 2).join(", ") || result.city || "Your location";
-          __liveAddressCache = addr;
-          setLiveAddress(addr);
-        }
-        __liveAddressResolved = true;
-      } catch {
-        // silently fall back to context location
-      } finally {
-        if (!cancelled) setLocationFetching(false);
-      }
-    });
-    return () => {
-      cancelled = true;
-      handle.cancel?.();
-    };
-  }, []);
-
-  // ── Active orders banner: instant cache paint, then background refresh ────
-  // A stale-while-revalidate read of the same order-history cache the
-  // deferred effect below also warms — the cache read is cheap (AsyncStorage)
-  // so it runs immediately rather than waiting on InteractionManager, letting
-  // the banner appear on first paint instead of popping in a beat later.
+  // Instant banner paint on a cold start: the per-user disk row, applied only while no network fetch has landed.
   useEffect(() => {
     if (!userId) {
+      activeKeyRef.current = "";
+      topKeyRef.current = "";
       setActiveOrders([]);
+      setUserTopProductIds([]);
       return;
     }
+    if (getMemoryOrders()) return;
     let cancelled = false;
-    const mySeq = ++activeOrdersSeqRef.current;
-    (async () => {
-      const cached = await readUserOrdersCache(userId);
-      if (cancelled || !cached || mySeq !== activeOrdersSeqRef.current) return;
-      setActiveOrders(cached.filter((o) => !(TERMINAL_STATUSES as string[]).includes(o.order_status)));
-    })();
+    readUserOrdersCache(userId)
+      .then((cached) => {
+        if (cancelled || !cached || lastOrdersFetchAtRef.current !== 0) return;
+        applyFetchedOrders(cached);
+      })
+      .catch((err) => logSilentFailure("Read orders cache", err));
     return () => {
       cancelled = true;
-    };
-  }, [userId]);
-
-  // ── Build user's "frequently bought" list from past orders ────────────────
-  // Also deferred: this hits Supabase to read up to 50 historical orders to
-  // compute popularity. It feeds the "Frequently bought" carousel which is
-  // *below* the fold on first paint, so there's no reason to block the
-  // initial render on it. Falling back to "bought by other customers" while
-  // this loads is the desired UX anyway. The same fetch also refreshes the
-  // active-orders banner above, so there's only ever one network round trip.
-  useEffect(() => {
-    if (!userId) return;
-    let cancelled = false;
-    const handle = InteractionManager.runAfterInteractions(async () => {
-      if (cancelled) return;
-      const mySeq = ++activeOrdersSeqRef.current;
-      try {
-        const orders = await getUserOrders(userId);
-        if (cancelled) return;
-        if (mySeq === activeOrdersSeqRef.current) {
-          applyFetchedOrders(orders);
-        }
-      } catch {
-        /* fall back silently to "bought by others"; active orders keep showing the cached view */
-      }
-    });
-    return () => {
-      cancelled = true;
-      handle.cancel?.();
     };
   }, [userId, applyFetchedOrders]);
 
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await fetchFresh(noStoresNearby ? undefined : nearbyIds ?? undefined);
-    setRefreshing(false);
-  }, [fetchFresh, nearbyIds, noStoresNearby]);
+  // Focus refetch — skipped while there is no active order and the last fetch is younger than 2 min.
+  useFocusEffect(
+    useCallback(() => {
+      if (!userId) return;
+      const idle = activeCountRef.current === 0 && Date.now() - lastOrdersFetchAtRef.current < ORDERS_IDLE_REFRESH_MS;
+      if (!idle) fetchOrders();
+    }, [userId, fetchOrders]),
+  );
+
+  // 20 s poll only while an order is active, Home is focused and the app is active; `Dev_Vega_inhibit_ActivePoll`
+  // disables the interval. Resuming from background fetches at once when the last fetch is older than a tick.
+  const hasActiveOrders = activeOrders.length > 0;
+  useEffect(() => {
+    if (!userId || !focused || !appActive || !hasActiveOrders || inhibitActivePoll) return;
+    if (Date.now() - lastOrdersFetchAtRef.current >= ACTIVE_ORDERS_POLL_MS) fetchOrders();
+    const id = setInterval(() => fetchOrders({ force: true }), ACTIVE_ORDERS_POLL_MS);
+    return () => clearInterval(id);
+  }, [userId, focused, appActive, hasActiveOrders, inhibitActivePoll, fetchOrders]);
+
+  useRefetchOnReconnect(() => fetchOrders(), !!userId && focused);
+
+  // CartBar lifts over the banner while it shows (CONTRACTS §4.10); reset on blur / hide / unmount.
+  const bannerVisible = hasActiveOrders && focused;
+  useEffect(() => {
+    setCartBarExtraBottom(bannerVisible ? ACTIVE_ORDER_BANNER_FOOTPRINT : 0);
+    return () => setCartBarExtraBottom(0);
+  }, [bannerVisible]);
+
+  // ── Derived feed data ──────────────────────────────────────────────────────
+  const counts = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const [key, list] of Object.entries(view)) out[key.toLowerCase().trim()] = list.length;
+    return out;
+  }, [view]);
 
   const categoriesWithProducts = useMemo(
-    () =>
-      categories.filter(
-        (c) => getCountForCategoryName(derivedCategoryCounts, c.name) > 0,
-      ),
-    [categories, derivedCategoryCounts],
+    () => categories.filter((c) => getCountForCategoryName(c.name, counts) > 0),
+    [categories, counts],
   );
 
-  useEffect(() => {
-    if (activeCategory === "All") return;
-    const stillValid = categoriesWithProducts.some(
-      (c) => c.name === activeCategory,
-    );
-    if (!stillValid) setActiveCategory("All");
-  }, [activeCategory, categoriesWithProducts]);
+  /** Per category id (CategoryTileGrid reads it into the tile's accessibility label). */
+  const tileCounts = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const c of categoriesWithProducts) out[c.id] = getCountForCategoryName(c.name, counts);
+    return out;
+  }, [categoriesWithProducts, counts]);
 
-  const handleSelectCategory = useCallback(
-    (name: string) => {
-      if (name === activeCategory) return;
-      setActiveCategory(name);
-      requestAnimationFrame(() =>
-        listRef.current?.scrollToOffset({ offset: 0, animated: true }),
-      );
-    },
-    [activeCategory],
-  );
+  const categoryNames = useMemo(() => categoriesWithProducts.map((c) => c.name), [categoriesWithProducts]);
 
-  const filteredProducts = useMemo(() => {
-    if (activeCategory === "All") return [] as Product[];
-    return getProductsForCategoryName(productsByCategory, activeCategory);
-  }, [activeCategory, productsByCategory]);
+  /** id → product of the nearby view (one pass per view; the personalised and popular picks both go through it). */
+  const viewById = useMemo(() => {
+    const map = new Map<string, Product>();
+    for (const list of Object.values(view)) for (const p of list) map.set(p.id, p);
+    return map;
+  }, [view]);
 
-  /** Frequently bought section: personalized first, fall back to newest products. */
+  /** Frequently bought: the customer's own top products that are nearby, else the most popular nearby products. */
   const frequentlyBought = useMemo(() => {
-    const flat: Product[] = [];
-    for (const arr of Object.values(productsByCategory)) flat.push(...arr);
-    if (!flat.length) return { title: "", products: [] as Product[] };
-
-    if (userTopProductIds.length > 0) {
-      const byId = new Map<string, Product>();
-      for (const p of flat) byId.set(p.id, p);
-      const personalized: Product[] = [];
-      for (const id of userTopProductIds) {
-        const p = byId.get(id);
-        if (p) personalized.push(p);
-        if (personalized.length >= 10) break;
-      }
-      if (personalized.length > 0) {
-        return { title: "Frequently bought", products: personalized };
-      }
+    if (viewById.size === 0) return EMPTY_PRODUCTS;
+    const personalised: Product[] = [];
+    for (const id of userTopProductIds) {
+      const p = viewById.get(id);
+      if (p) personalised.push(p);
+      if (personalised.length >= RAIL_LENGTH) break;
     }
+    if (personalised.length > 0) return personalised;
+    // Popularity order is precomputed per catalog set by the service; intersect with the nearby view.
+    const popular: Product[] = [];
+    for (const p of getPopularProducts(POPULAR_CANDIDATES)) {
+      const nearbyProduct = viewById.get(p.id);
+      if (nearbyProduct) popular.push(nearbyProduct);
+      if (popular.length >= RAIL_LENGTH) break;
+    }
+    if (popular.length > 0) return popular;
+    // Cold install (no memory catalog yet): rank the nearby view itself.
+    return Array.from(viewById.values()).sort(compareByReviews).slice(0, RAIL_LENGTH);
+  }, [viewById, userTopProductIds]);
 
-    // Fallback: most recently added, in-stock first.
-    const popular = [...flat]
-      .sort((a, b) => {
-        if (a.in_stock !== b.in_stock) return a.in_stock ? -1 : 1;
-        return (b.created_at ?? "").localeCompare(a.created_at ?? "");
-      })
-      .slice(0, 10);
-    return {
-      title: "Frequently bought by other customers",
-      products: popular,
-    };
-  }, [productsByCategory, userTopProductIds]);
+  const banners = useMemo(() => getActiveBanners(Date.now(), [...BANNERS, ...remoteBanners]), [remoteBanners]);
 
-  const profileScale = useSharedValue(1);
-  const profileAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: profileScale.value }],
-  }));
-  const handleProfilePressIn = useCallback(() => {
-    profileScale.value = withSpring(0.93, { damping: 16, stiffness: 260 });
-  }, [profileScale]);
-  const handleProfilePressOut = useCallback(() => {
-    profileScale.value = withSpring(1, { damping: 16, stiffness: 260 });
-  }, [profileScale]);
+  const hasLocation = location != null;
 
-  const handleAdd = useCallback(
-    (p: Product) =>
-      addItem({
-        product_id: p.id,
-        name: p.name,
-        price: p.price,
-        unit: p.unit,
-        image_url: p.image_url,
-        isLoose: p.isLoose,
-      }),
-    [addItem],
-  );
-
-  const handleUpdateQty = useCallback(
-    (p: Product, delta: number) => incrementQty(p.id, delta),
-    [incrementQty],
-  );
-
-  // ── Build the virtualized list data ──────────────────────────────────────
-  // NOTE: this hook (and `renderHomeItem` below) MUST be declared before any
-  // conditional `return` — moving them after the `loading` early-return
-  // violates the Rules of Hooks (different hook count between renders).
+  // ── The virtualized list data ──────────────────────────────────────────────
   const listData = useMemo<HomeListItem[]>(() => {
-    const out: HomeListItem[] = [{ kind: "search" }];
+    const out: HomeListItem[] = [{ kind: "header" }, { kind: "search", names: categoryNames }];
 
-    if (activeCategory === "All") {
-      if (frequentlyBought.products.length > 0) {
-        out.push({
-          kind: "freqBought",
-          title: frequentlyBought.title,
-          products: frequentlyBought.products,
-        });
-      }
-
-      if (categoriesWithProducts.length > 0) {
-        out.push({
-          kind: "sectionHeader",
-          title: "Shop by category",
-          subtitle: "Everything you need",
-        });
-        out.push({
-          kind: "catTileGrid",
-          categories: categoriesWithProducts,
-        });
-      }
-
-      if (categoriesWithProducts.length === 0) {
-        const emptyItem: HomeListItem = (() => {
-          if (!location) {
-            return {
-              kind: "empty" as const,
-              icon: "store-off-outline" as const,
-              title: "Set your location",
-              message: "We'll show you what's fresh and available nearby.",
-              cta: { label: "Choose Location", onPress: () => router.push("/location") },
-            };
-          }
-          if (noStoresNearby) {
-            return {
-              kind: "empty" as const,
-              icon: "map-marker-off-outline" as const,
-              title: "No stores near you",
-              message: "We don't have a delivery store within 4 km of your location yet.",
-              cta: { label: "Change Location", onPress: () => router.push("/location") },
-            };
-          }
-          return {
-            kind: "empty" as const,
-            icon: "package-variant-closed" as const,
-            title: "No products found",
-            message: "No products available near you at the moment.",
-          };
-        })();
-        out.push(emptyItem);
-      } else {
-        for (const c of categoriesWithProducts) {
-          const products = getProductsForCategoryName(productsByCategory, c.name);
-          if (!products.length) continue;
-          const visible = products.slice(0, SECTION_VISIBLE_PRODUCTS);
-
-          out.push({
-            kind: "sectionHeader",
-            title: c.name,
-            subtitle: "Top picks",
-            onSeeAll:
-              products.length > SECTION_VISIBLE_PRODUCTS
-                ? () => handleSelectCategory(c.name)
-                : undefined,
-          });
-
-          for (let i = 0; i < visible.length; i += ROW_COUNT) {
-            out.push({
-              kind: "productRow",
-              products: visible.slice(i, i + ROW_COUNT),
-              rowKey: `${c.id}-r${i}`,
-            });
-          }
-
-          if (products.length > SECTION_VISIBLE_PRODUCTS) {
-            out.push({
-              kind: "seeAllBar",
-              categoryName: c.name,
-              onPress: () => handleSelectCategory(c.name),
-            });
-          }
-        }
-        out.push({ kind: "endStamp" });
-      }
-    } else {
-      out.push({
-        kind: "sectionHeader",
-        title: activeCategory,
-        subtitle: "Fresh picks near you",
-        onSeeAll: () => handleSelectCategory("All"),
-      });
-      if (filteredProducts.length === 0) {
-        out.push({
-          kind: "empty",
-          icon: "package-variant-closed",
-          title: `No products in ${activeCategory}`,
-          message: "Check back soon or explore other categories.",
-        });
-      } else {
-        for (let i = 0; i < filteredProducts.length; i += ROW_COUNT) {
-          out.push({
-            kind: "productRow",
-            products: filteredProducts.slice(i, i + ROW_COUNT),
-            rowKey: `${activeCategory}-r${i}`,
-          });
-        }
-      }
+    if (phase === "error") {
+      out.push({ kind: "empty", variant: "error" });
+      return out;
     }
 
+    if (categoriesWithProducts.length === 0) {
+      out.push({ kind: "empty", variant: !hasLocation ? "noLocation" : noStores ? "noStores" : "noProducts" });
+      return out;
+    }
+
+    if (!inhibitBanners && banners.length > 0) out.push({ kind: "banners", banners });
+    out.push({ kind: "catTileGrid", categories: categoriesWithProducts, counts: tileCounts, capped: !inhibitTileCap });
+    if (frequentlyBought.length > 0) out.push({ kind: "freqBought", products: frequentlyBought });
+
+    for (const c of categoriesWithProducts) {
+      const products = getProductsForCategoryName(c.name, view);
+      if (products.length === 0) continue;
+      const slug = c.slug ?? resolveCategorySlug(c.name, categories);
+      out.push({ kind: "sectionHeader", categoryId: c.id, categoryName: c.name, slug });
+      if (inhibitRails) {
+        const visible = products.slice(0, LEGACY_SECTION_VISIBLE);
+        for (let i = 0; i < visible.length; i += LEGACY_ROW_COUNT) {
+          out.push({ kind: "productRow", rowKey: `${c.id}-r${i}`, categoryName: c.name, products: visible.slice(i, i + LEGACY_ROW_COUNT) });
+        }
+        if (products.length > LEGACY_SECTION_VISIBLE && slug) {
+          out.push({ kind: "seeAllBar", categoryId: c.id, categoryName: c.name, slug });
+        }
+      } else {
+        out.push({ kind: "productRail", categoryId: c.id, categoryName: c.name, products: products.slice(0, RAIL_LENGTH) });
+      }
+    }
+    out.push({ kind: "endStamp" });
     return out;
   }, [
-    activeCategory,
-    frequentlyBought,
+    phase,
+    categoryNames,
     categoriesWithProducts,
-    productsByCategory,
-    filteredProducts,
-    location,
-    noStoresNearby,
-    handleSelectCategory,
+    hasLocation,
+    noStores,
+    inhibitBanners,
+    banners,
+    tileCounts,
+    inhibitTileCap,
+    frequentlyBought,
+    view,
+    categories,
+    inhibitRails,
   ]);
 
-  // ── List item renderer (lean, since each row recycles independently) ─────
-  const renderHomeItem = useCallback(
+  useEffect(() => {
+    listDataRef.current = listData;
+  }, [listData]);
+
+  // Boot timeline: the first non-empty catalog paint.
+  const hasProducts = categoriesWithProducts.length > 0;
+  useEffect(() => {
+    if (hasProducts) markBoot("catalog-painted");
+  }, [hasProducts]);
+
+  // Warm expo-image with the first rails' first cards (honours Dev_Images_inhibit_Prefetch inside the service).
+  useEffect(() => {
+    if (categoriesWithProducts.length === 0) return;
+    const urls: (string | undefined)[] = [];
+    for (const c of categoriesWithProducts.slice(0, PREFETCH_RAILS)) {
+      for (const p of getProductsForCategoryName(c.name, view).slice(0, PREFETCH_PER_RAIL)) urls.push(p.image_url);
+    }
+    prefetchImages(urls, PREFETCH_WIDTH);
+  }, [categoriesWithProducts, view]);
+
+  // ── Handlers (all identity-stable, so `renderItem` never changes) ──────────
+
+  const retry = useCallback(() => {
+    setPhase("booting");
+    setRetryTick((t) => t + 1);
+  }, []);
+
+  const handleTileSelect = useCallback((category: Category) => {
+    const slug = category.slug ?? resolveCategorySlug(category.name, categoriesRef.current);
+    if (!slug) {
+      logSilentFailure("Home tile without slug", new Error(category.name));
+      return;
+    }
+    router.push(`/category/${slug}`);
+  }, []);
+
+  /** Chip press → scroll the feed so that category's header lands just under the sticky band (lyra / BP-10). */
+  const handleChipSelect = useCallback((name: string) => {
+    const index = listDataRef.current.findIndex((it) => it.kind === "sectionHeader" && it.categoryName === name);
+    if (index < 0) return;
+    setHomeUi({ activeName: name });
+    try {
+      listRef.current
+        ?.scrollToIndex({ index, viewOffset: stickyHeightRef.current, animated: !reducedRef.current })
+        .catch((err) => logSilentFailure("Scroll to category", err));
+    } catch (err) {
+      logSilentFailure("Scroll to category", err);
+    }
+  }, []);
+
+  const handleStickyLayout = useCallback((e: LayoutChangeEvent) => {
+    const h = e.nativeEvent.layout.height;
+    if (h > 0) stickyHeightRef.current = h;
+  }, []);
+
+  /** The highlighted chip follows the first category section in view. */
+  const handleViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: ViewToken<HomeListItem>[] }) => {
+    let name: string | null = null;
+    for (const token of viewableItems) {
+      const it = token.item;
+      if (
+        it &&
+        (it.kind === "sectionHeader" || it.kind === "productRail" || it.kind === "productRow" || it.kind === "seeAllBar")
+      ) {
+        name = it.categoryName;
+        break;
+      }
+    }
+    setHomeUi({ activeName: name });
+  }, []);
+
+  /** Pauses the search placeholder rotation while the feed moves (motion M31); resumes after 250 ms of quiet. */
+  const handleScroll = useCallback(() => {
+    setHomeUi({ scrolling: true });
+    if (scrollIdleTimerRef.current) clearTimeout(scrollIdleTimerRef.current);
+    scrollIdleTimerRef.current = setTimeout(() => {
+      scrollIdleTimerRef.current = null;
+      setHomeUi({ scrolling: false });
+    }, SCROLL_IDLE_MS);
+  }, []);
+
+  const onRefresh = useCallback(async () => {
+    feedback.tapSound();
+    setRefreshing(true);
+    // Only supersede the catalog writers when a nearby filter has resolved — otherwise the location effect still owns
+    // the first paint and a bumped sequence would strand it.
+    const current = nearbyRef.current;
+    const seq = current ? ++seqRef.current : seqRef.current;
+    try {
+      await Promise.all([
+        getAllCategories({ force: true }).then((data) => {
+          if (seq === seqRef.current && data.length > 0) setCategories(data);
+        }),
+        getRemoteBanners().then((remote) => {
+          if (seq === seqRef.current) setRemoteBanners(remote);
+        }),
+        current && current.filter.storeIds.length > 0
+          ? instantNearby
+            ? refreshGlobal(seq, current.filter)
+            : pullCatalog(`nearby:${current.key}`, current.filter.productIds).then((result) =>
+                paintView(seq, result.productsByCategory, result.categories),
+              )
+          : Promise.resolve(),
+      ]);
+    } catch (err) {
+      logSilentFailure("Refresh home", err);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [instantNearby, refreshGlobal, paintView]);
+
+  const primaryOrder = activeOrders[0] ?? null;
+  const primaryOrderId = primaryOrder?.id;
+  const handleOrderPress = useCallback(() => {
+    if (primaryOrderId) router.push(`/order/track/${primaryOrderId}`);
+  }, [primaryOrderId]);
+
+  const handleRootLayout = useCallback(() => {
+    if (firstPaintRef.current) return;
+    firstPaintRef.current = true;
+    markBoot("home-first-paint");
+  }, []);
+
+  // ── Item renderer: no cart state, no volatile state — every dep is identity-stable ──
+  const renderItem = useCallback(
     ({ item }: ListRenderItemInfo<HomeListItem>) => {
       switch (item.kind) {
+        case "header":
+          return <HeaderCell />;
         case "search":
-          return (
-            <View style={styles.stickyWrap}>
-              <DoodleBackdrop doodles={SEARCH_DOODLES} />
-              <TouchableOpacity
-                style={styles.searchBar}
-                activeOpacity={0.8}
-                onPress={() => router.push("../support/search")}
-                accessibilityRole="search"
-                accessibilityLabel="Search products"
-              >
-                <IconWrap
-                  size={30}
-                  radius={10}
-                  bg={T.greenXLight}
-                  icon="magnify"
-                  iconSize={19}
-                  iconColor={T.green}
-                />
-                <Text style={styles.searchPlaceholder}>
-                  Search groceries, dairy, snacks…
-                </Text>
-              </TouchableOpacity>
-            </View>
-          );
-
-        case "freqBought":
-          return (
-            <FrequentlyBoughtSection
-              title={item.title}
-              products={item.products}
-              cartItemsByProductId={cartItemsByProductId}
-              onAdd={handleAdd}
-              onUpdateQty={handleUpdateQty}
-            />
-          );
-
+          return <StickyCell names={item.names} onSelect={handleChipSelect} onLayout={handleStickyLayout} />;
+        case "banners":
+          return <BannersCell banners={item.banners} />;
         case "catTileGrid":
           return (
-            <View style={styles.catTileGrid}>
-              {/* Soft rounded panel grounds the tile field on the cream bg —
-                  same zoning idea as the freq shelf's terracotta wash. */}
-              <SoftPanel />
-              <DoodleBackdrop doodles={GRID_PANEL_DOODLES} baseOpacity={0.07} />
-              {item.categories.map((c, i) => (
-                <CategoryTile
-                  key={c.id}
-                  item={c}
-                  index={i}
-                  onPress={() => handleSelectCategory(c.name)}
-                />
-              ))}
-            </View>
-          );
-
-        case "sectionHeader":
-          return (
-            <SectionHeader
-              title={item.title}
-              subtitle={item.subtitle}
-              onSeeAll={item.onSeeAll}
+            <CategoryTileGrid
+              categories={item.categories}
+              counts={item.counts}
+              capped={item.capped}
+              onSelect={handleTileSelect}
+              onSeeAll={goToCategories}
+              testID="home-tiles"
             />
           );
-
+        case "freqBought":
+          return <ProductRail title="Frequently bought" accent={C.deal} products={item.products} testID="home-freq" />;
+        case "sectionHeader":
+          return <SectionHeader name={item.categoryName} slug={item.slug} />;
+        case "productRail":
+          return <ProductRail products={item.products} testID={`home-rail-${item.categoryId}`} />;
         case "productRow":
-          return (
-            <View style={styles.productRow}>
-              {item.products.map((p) => (
-                <ProductCard
-                  key={p.id}
-                  p={p}
-                  cartItem={cartItemsByProductId.get(p.id)}
-                  onAdd={handleAdd}
-                  onUpdateQty={handleUpdateQty}
-                />
-              ))}
-              {/* Pad short last rows so cards don't stretch to full width */}
-              {item.products.length < ROW_COUNT &&
-                Array.from({ length: ROW_COUNT - item.products.length }).map(
-                  (_, i) => <View key={`pad-${i}`} style={styles.cardOuter} />,
-                )}
-            </View>
-          );
-
+          return <LegacyProductRow products={item.products} />;
         case "seeAllBar":
-          return (
-            <TouchableOpacity
-              style={styles.seeAllBar}
-              onPress={item.onPress}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-            >
-              <Text style={styles.seeAllBarText} numberOfLines={1}>
-                See all products in {item.categoryName}
-              </Text>
-              <MaterialCommunityIcons
-                name="arrow-right"
-                size={16}
-                color={T.green}
-              />
-            </TouchableOpacity>
-          );
-
+          return <LegacySeeAllBar name={item.categoryName} slug={item.slug} />;
         case "endStamp":
-          return (
-            <View style={styles.endStamp}>
-              <MaterialCommunityIcons name="leaf" size={14} color={T.green} />
-              <Text style={styles.endStampText}>
-                That&apos;s everything fresh near you
-              </Text>
-            </View>
-          );
-
+          return <EndStamp />;
         case "empty":
-          return (
-            <View style={styles.empty}>
-              <IconWrap
-                size={80}
-                circle
-                bg={T.greenXLight}
-                icon={item.icon}
-                iconSize={40}
-                iconColor={T.green}
-                style={styles.emptyIconWrap}
-              />
-              <Text style={styles.emptyTitle} numberOfLines={2}>
-                {item.title}
-              </Text>
-              <Text style={styles.emptyText}>{item.message}</Text>
-              {item.cta && (
-                <TouchableOpacity
-                  style={styles.emptyBtn}
-                  onPress={item.cta.onPress}
-                  activeOpacity={0.8}
-                  accessibilityRole="button"
-                >
-                  <LinearGradient
-                    colors={[T.greenLight, T.green]}
-                    style={styles.emptyBtnGradient}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                  >
-                    <MaterialCommunityIcons
-                      name="map-marker-outline"
-                      size={16}
-                      color={T.white}
-                    />
-                    <Text style={styles.emptyBtnText}>{item.cta.label}</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-              )}
-            </View>
-          );
+          return <EmptyCell variant={item.variant} onRetry={retry} />;
       }
     },
-    [cartItemsByProductId, handleAdd, handleUpdateQty, handleSelectCategory],
+    [handleChipSelect, handleStickyLayout, handleTileSelect, retry],
   );
 
-  // ── Loading (skeleton, not spinner) ──────────────────────────────────────
-  if (loading) {
-    return (
-      <Screen bg={T.cream} edges={["top"]}>
-        <DoodleBackdrop doodles={PAGE_WALLPAPER_DOODLES} baseOpacity={0.05} />
-        <AddressBarBlock
-          liveAddress={liveAddress}
-          location={location}
-          locationFetching={locationFetching}
-          profileAnimatedStyle={profileAnimatedStyle}
-          onPressIn={handleProfilePressIn}
-          onPressOut={handleProfilePressOut}
-          onProfilePress={() => setShowProfileMenu(true)}
-        />
-        <View style={styles.stickyWrap}>
-          <DoodleBackdrop doodles={SEARCH_DOODLES} />
-          <View style={[styles.searchBar, styles.searchBarSkeleton]}>
-            <Skeleton width={30} height={30} radius={10} color={T.skeletonLo} />
-            <Skeleton width="60%" height={12} color={T.skeletonLo} />
-          </View>
-        </View>
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          accessibilityElementsHidden
-          importantForAccessibility="no-hide-descendants"
-        >
-          <SkeletonHomeFeed />
-          <SkeletonHomeFeed />
-        </ScrollView>
-        <ProfileMenu
-          visible={showProfileMenu}
-          onClose={() => setShowProfileMenu(false)}
-        />
-      </Screen>
-    );
-  }
+  // List padding composes the absolute tab bar, the active-orders banner and the global CartBar (MAP §7.3).
+  const contentContainerStyle = useMemo(
+    () => ({
+      paddingBottom: layout.scrollBottomTab + (hasActiveOrders ? ACTIVE_ORDER_BANNER_FOOTPRINT : 0) + cartBarFootprint,
+    }),
+    [hasActiveOrders, cartBarFootprint],
+  );
 
-  // ── Render ───────────────────────────────────────────────────────────────
+  // ── Loading (skeleton-first) ───────────────────────────────────────────────
+  const loading = phase === "booting";
+  const showSkeleton = useForceSkeleton(loading);
+  const slow = useSlowLoad(loading);
+
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <Screen bg={T.cream} edges={["top"]}>
-      {/* Fixed wallpaper: the list scrolls over it, opaque cards mask most of
-          it, and only the cream gutters reveal the faint glyphs. */}
-      <DoodleBackdrop doodles={PAGE_WALLPAPER_DOODLES} baseOpacity={0.05} />
-      <FlashList
-        ref={listRef}
-        data={listData}
-        renderItem={renderHomeItem}
-        keyExtractor={homeListKeyExtractor}
-        getItemType={homeListItemType}
-        stickyHeaderIndices={[0]}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-        contentContainerStyle={
-          activeOrders.length > 0
-            ? // The active-orders banner floats above the tab bar (doesn't
-              // reserve list space the way it did before that redesign) — on
-              // a high-inset device (large gesture-nav bottom inset) its own
-              // height can exceed the static 150px content padding below,
-              // covering the last row of the feed. Add the banner's actual
-              // footprint (card height + safe-area inset) on top of the
-              // existing padding whenever it's actually showing. Found
-              // 2026-09-01 during a cross-app audit.
-              { ...styles.flashListContent, paddingBottom: styles.flashListContent.paddingBottom + ACTIVE_ORDER_BANNER_FOOTPRINT + insets.bottom }
-            : styles.flashListContent
-        }
-        ListHeaderComponent={
-          <AddressBarBlock
-            liveAddress={liveAddress}
-            location={location}
-            locationFetching={locationFetching}
-            profileAnimatedStyle={profileAnimatedStyle}
-            onPressIn={handleProfilePressIn}
-            onPressOut={handleProfilePressOut}
-            onProfilePress={() => setShowProfileMenu(true)}
+    <Screen bg={C.bg} edges={["top"]}>
+      <View style={styles.root} onLayout={handleRootLayout}>
+        {showSkeleton ? (
+          <HomeSkeleton slow={slow} onRetry={retry} testID="home-skeleton" />
+        ) : (
+          <FlashList
+            ref={listRef}
+            data={listData}
+            renderItem={renderItem}
+            keyExtractor={keyExtractor}
+            getItemType={getItemType}
+            stickyHeaderIndices={STICKY_INDICES}
+            drawDistance={400}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={contentContainerStyle}
+            onScroll={handleScroll}
+            scrollEventThrottle={64}
+            viewabilityConfig={VIEWABILITY_CONFIG}
+            onViewableItemsChanged={handleViewableItemsChanged}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} colors={[C.primary]} />
+            }
+            testID="home-feed"
           />
-        }
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={T.green}
-            colors={[T.green]}
+        )}
+
+        {primaryOrder ? (
+          <ActiveOrdersBanner
+            order={primaryOrder}
+            extraCount={activeOrders.length - 1}
+            onPress={handleOrderPress}
+            testID="home-active-order"
           />
-        }
-      />
-
-      {/* ── Active-order banner, docked just above the tab bar ───────────── */}
-      {activeOrders.length > 0 && (
-        <View
-          style={[
-            styles.activeOrdersFloatWrap,
-            // Flush against the tab bar's top edge — no gap — so the banner
-            // reads as one connected surface with it, not a separate floating card.
-            { bottom: TAB_BAR_BASE_HEIGHT + insets.bottom },
-          ]}
-          pointerEvents="box-none"
-        >
-          <ActiveOrdersSection orders={activeOrders} />
-        </View>
-      )}
-
-      {/* ── Cart CTA pill (centered, compact) ──────────────────────────── */}
-      {hasCart && (
-        <Animated.View
-          entering={FadeInUp.duration(340).springify()}
-          exiting={FadeOutDown.duration(220)}
-          style={[
-            styles.cartBar,
-            // Lift clear of the active-order banner instead of overlapping it
-            // when both float above the tab bar at once.
-            activeOrders.length > 0 && { bottom: styles.cartBar.bottom + ACTIVE_ORDER_BANNER_FOOTPRINT },
-          ]}
-          pointerEvents="box-none"
-        >
-          <Pressable
-            onPress={() => router.push("/support/checkout")}
-            style={({ pressed }) => [
-              styles.cartPill,
-              pressed && styles.cartPillPressed,
-            ]}
-            accessibilityRole="button"
-            accessibilityLabel={`View cart, ${totalQty} ${totalQty === 1 ? "item" : "items"}`}
-          >
-            <LinearGradient
-              colors={[T.greenLight, T.green]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.cartPillGradient}
-            >
-              <View style={[styles.cartCircle, styles.cartQtyBubble]}>
-                <Text style={styles.cartQtyText}>{totalQty}</Text>
-              </View>
-              <Text style={styles.cartPillLabel}>
-                {totalQty === 1 ? "item in cart" : "items in cart"}
-              </Text>
-              <View style={styles.cartCircle}>
-                <MaterialCommunityIcons
-                  name="arrow-right"
-                  size={16}
-                  color={T.green}
-                />
-              </View>
-            </LinearGradient>
-          </Pressable>
-        </Animated.View>
-      )}
-
-      <ProfileMenu
-        visible={showProfileMenu}
-        onClose={() => setShowProfileMenu(false)}
-      />
+        ) : null}
+      </View>
     </Screen>
   );
 }
 
-// ─── FlashList helpers ──────────────────────────────────────────────────────
-const homeListKeyExtractor = (item: HomeListItem, index: number): string => {
-  switch (item.kind) {
-    case "search":
-      return "search";
-    case "freqBought":
-      return "freq";
-    case "catTileGrid":
-      return "tilegrid";
-    case "sectionHeader":
-      return `hdr-${item.title}-${index}`;
-    case "productRow":
-      return `row-${item.rowKey}`;
-    case "seeAllBar":
-      return `seeall-${item.categoryName}`;
-    case "endStamp":
-      return "end";
-    case "empty":
-      return `empty-${item.title}`;
-  }
+// ─── Cells ────────────────────────────────────────────────────────────────────
+
+/** Item 0: the TabHeader. Reads its own inputs so a location / unread / live-address change re-renders this cell only. */
+function HeaderCell() {
+  const { location } = useLocation();
+  const { open, unreadCount } = useProfileMenu();
+  const { user } = useAuth();
+  const liveAddress = useHomeUi("liveAddress");
+  // A location the customer explicitly set (a saved address, a manual pin drop) must always win over the device's
+  // live GPS reverse-geocode — liveAddress is only a cold-start placeholder for before any location is known, never
+  // a silent override of a deliberate choice. See bug_fixes doc, 2026-09-03.
+  const addressLine = location ? (location.address ?? null) : liveAddress;
+  return (
+    <TabHeader
+      variant="home"
+      addressLabel={location?.label ?? null}
+      addressLine={addressLine}
+      onAddressPress={goToSelectLocation}
+      avatarInitial={user?.name}
+      unread={unreadCount > 0}
+      onAvatarPress={open}
+      testID="home-header"
+    />
+  );
+}
+
+/** Item 1 (sticky): the search band + the category chip strip on an opaque C.bg band with a hairline under it. */
+const StickyCell = React.memo(function StickyCell({
+  names,
+  onSelect,
+  onLayout,
+}: {
+  names: readonly string[];
+  onSelect: (name: string) => void;
+  onLayout: (e: LayoutChangeEvent) => void;
+}) {
+  const activeName = useHomeUi("activeName");
+  const scrolling = useHomeUi("scrolling");
+  const focused = useHomeUi("focused");
+  return (
+    <View style={styles.sticky} onLayout={onLayout}>
+      <SearchBand mode="button" rotate={!scrolling && focused} style={styles.searchBand} testID="home-search" />
+      <CategoryChipStrip names={names} activeName={activeName} onSelect={onSelect} testID="home-chips" />
+    </View>
+  );
+});
+
+/** Banners: auto-advance only while the tab is focused and the app is active (deneb). */
+function BannersCell({ banners }: { banners: Banner[] }) {
+  const focused = useHomeUi("focused");
+  const appActive = useHomeUi("appActive");
+  return <BannerCarousel banners={banners} focused={focused && appActive} style={styles.banners} testID="home-banners" />;
+}
+
+/** Category section header: `text.h3` + "See all ›" (12/700 C.primary, silent navigation; hidden when no slug). */
+const SectionHeader = React.memo(function SectionHeader({ name, slug }: { name: string; slug: string | null }) {
+  const handlePress = useCallback(() => {
+    if (slug) router.push(`/category/${slug}`);
+  }, [slug]);
+  return (
+    <View style={styles.sectionHeader}>
+      <Text style={styles.sectionTitle} numberOfLines={1} maxFontSizeMultiplier={1.3} accessibilityRole="header">
+        {name}
+      </Text>
+      {slug ? (
+        <PressableScale
+          scale={motion.scale.row}
+          onPress={handlePress}
+          hitSlop={SEE_ALL_HIT_SLOP}
+          accessibilityRole="button"
+          accessibilityLabel={`See all ${name}`}
+          innerStyle={styles.seeAll}
+          pressedStyle={styles.seeAllPressed}
+        >
+          <Text style={styles.seeAllText} maxFontSizeMultiplier={1.3}>
+            See all ›
+          </Text>
+        </PressableScale>
+      ) : null}
+    </View>
+  );
+});
+
+/** Legacy 3-column grid row (`Dev_Home_inhibit_Rails`): `ProductCard variant="grid"`, short rows padded. */
+const LegacyProductRow = React.memo(function LegacyProductRow({ products }: { products: Product[] }) {
+  const pad = LEGACY_ROW_COUNT - products.length;
+  return (
+    <View style={styles.legacyRow}>
+      {products.map((p) => (
+        <ProductCard key={p.id} variant="grid" product={p} style={styles.legacyCard} recycled />
+      ))}
+      {pad > 0 ? Array.from({ length: pad }, (_, i) => <View key={`pad-${i}`} style={styles.legacyCard} />) : null}
+    </View>
+  );
+});
+
+/** Legacy "See all products in X" bar (`Dev_Home_inhibit_Rails`) — silent navigation to the category screen. */
+const LegacySeeAllBar = React.memo(function LegacySeeAllBar({ name, slug }: { name: string; slug: string }) {
+  const handlePress = useCallback(() => {
+    router.push(`/category/${slug}`);
+  }, [slug]);
+  return (
+    <PressableScale
+      scale={motion.scale.cta}
+      onPress={handlePress}
+      accessibilityRole="button"
+      accessibilityLabel={`See all ${name}`}
+      style={styles.legacySeeAllOuter}
+      innerStyle={styles.legacySeeAll}
+      pressedStyle={styles.legacySeeAllPressed}
+    >
+      <Text style={styles.legacySeeAllText} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+        {`See all products in ${name}`}
+      </Text>
+      <MaterialCommunityIcons name="arrow-right" size={16} color={C.primary} />
+    </PressableScale>
+  );
+});
+
+function EndStamp() {
+  return (
+    <View style={styles.endStamp} accessible accessibilityRole="text">
+      <MaterialCommunityIcons name="leaf" size={14} color={C.textSub} />
+      <Text style={styles.endStampText} maxFontSizeMultiplier={1.3}>
+        That&apos;s everything fresh near you
+      </Text>
+    </View>
+  );
+}
+
+const EMPTY_COPY: Record<
+  EmptyVariant,
+  { icon: IconName; title: string; text: string; action: { label: string; kind: "location" | "retry" } }
+> = {
+  noLocation: {
+    icon: "map-marker-outline",
+    title: "Set your location",
+    text: "We'll show stores that deliver to you",
+    action: { label: "Choose location", kind: "location" },
+  },
+  noStores: {
+    icon: "storefront-outline",
+    title: "No stores near you",
+    text: "Try a different address within 4 km of a store",
+    action: { label: "Change location", kind: "location" },
+  },
+  noProducts: {
+    icon: "package-variant-closed",
+    title: "Nothing in stock right now",
+    text: "Pull down to refresh, or try again in a moment",
+    action: { label: "Retry", kind: "retry" },
+  },
+  error: {
+    icon: "alert-circle-outline",
+    title: "Couldn't load products",
+    text: "Check your connection and try again",
+    action: { label: "Retry", kind: "retry" },
+  },
 };
 
-/** Tells FlashList to recycle cells of the same type — huge perf win on scroll. */
-const homeListItemType = (item: HomeListItem): string => item.kind;
-
-// ─── Address-bar block (memoized so live-location updates don't bust list memo) ──
-const AddressBarBlock = React.memo(function AddressBarBlock({
-  liveAddress,
-  location,
-  locationFetching,
-  profileAnimatedStyle,
-  onPressIn,
-  onPressOut,
-  onProfilePress,
-}: {
-  liveAddress: string | null;
-  location: { label?: string; address?: string } | null | undefined;
-  locationFetching: boolean;
-  profileAnimatedStyle: any;
-  onPressIn: () => void;
-  onPressOut: () => void;
-  onProfilePress: () => void;
-}) {
-  const locationLabel = location?.label;
-  // A location the customer explicitly set (a saved address, a manual pin
-  // drop) must always win over the device's live GPS reverse-geocode —
-  // liveAddress is only a cold-start placeholder for before any location is
-  // known, never a silent override of a deliberate choice. See bug_fixes
-  // doc, 2026-09-03.
-  const addressText = location?.address
-    ? location.address
-    : location?.label
-      ? location.label
-      : liveAddress
-        ? liveAddress
-        : null;
-
+/** Empty AND error states, one `EmptyState` each; location CTAs go to /select-location (U35), the rest Retry. */
+const EmptyCell = React.memo(function EmptyCell({ variant, onRetry }: { variant: EmptyVariant; onRetry: () => void }) {
+  const copy = EMPTY_COPY[variant];
   return (
-    <View style={styles.addressBarBg}>
-      {/* Fresh-green wash fading into the cream sticky-search band below, with
-          scattered grocery line-art over it — the top of the screen reads as
-          one continuous branded surface instead of a flat white bar. Both
-          layers are non-interactive. */}
-      <LinearGradient
-        colors={[T.greenWash, T.greenXLight, T.cream]}
-        locations={[0, 0.55, 1]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 0, y: 1 }}
-        style={StyleSheet.absoluteFillObject}
-        pointerEvents="none"
+    <View style={styles.emptyWrap}>
+      <EmptyState
+        fill
+        iconWrap
+        icon={copy.icon}
+        title={copy.title}
+        text={copy.text}
+        action={{ label: copy.action.label, onPress: copy.action.kind === "location" ? goToSelectLocation : onRetry }}
+        testID={`home-empty-${variant}`}
       />
-      <DoodleBackdrop doodles={TAB_HEADER_DOODLES} />
-      <View style={styles.appBar}>
-        <Pressable
-          style={({ pressed }) => [
-            styles.addressPressable,
-            pressed && styles.pressed,
-          ]}
-          onPress={() => router.push("/select-location")}
-          android_ripple={{ color: "rgba(45,122,79,0.08)", borderless: false }}
-          hitSlop={ADDRESS_HIT_SLOP}
-          accessibilityRole="button"
-          accessibilityLabel="Change delivery address"
-        >
-          <View style={styles.deliveryLabelRow}>
-            <View style={styles.deliveryDot} />
-            <Text style={styles.deliveryLabelText} numberOfLines={1}>
-              {locationLabel ?? "Delivery to"}
-            </Text>
-            {locationFetching && (
-              <ActivityIndicator
-                size="small"
-                color={T.green}
-                style={styles.locationSpinner}
-              />
-            )}
-          </View>
-          <View style={styles.locationInlineRow}>
-            <Text style={styles.deliveryAddressText} numberOfLines={1}>
-              {addressText ?? "Set delivery address"}
-            </Text>
-            <MaterialCommunityIcons
-              name="chevron-down"
-              size={15}
-              color={T.barkLight}
-            />
-          </View>
-        </Pressable>
-
-        <View style={styles.headerActions}>
-          <TouchableOpacity
-            style={styles.chip}
-            activeOpacity={0.8}
-            onPress={() => router.push("/wallet" as any)}
-            hitSlop={HIT_SLOP}
-            accessibilityRole="button"
-          >
-            <MaterialCommunityIcons name="wallet-outline" size={15} color={T.green} />
-            <Text style={styles.walletText}>Wallet</Text>
-          </TouchableOpacity>
-
-          <Animated.View style={profileAnimatedStyle}>
-            <Pressable
-              onPressIn={onPressIn}
-              onPressOut={onPressOut}
-              onPress={onProfilePress}
-              style={styles.profileBtn}
-              accessibilityRole="button"
-              accessibilityLabel="Account menu"
-            >
-              <LinearGradient
-                colors={[T.greenLight, T.green]}
-                style={styles.profileAvatar}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-              >
-                <MaterialCommunityIcons
-                  name="account-outline"
-                  size={20}
-                  color={T.white}
-                />
-              </LinearGradient>
-            </Pressable>
-          </Animated.View>
-        </View>
-      </View>
     </View>
   );
 });
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  flashListContent: { paddingBottom: 150 },
-  productRow: {
-    flexDirection: "row",
-    paddingHorizontal: 16,
-    justifyContent: "space-between",
-    columnGap: 8,
-    marginBottom: 12,
-  },
+  root: { flex: 1 },
 
-  // ── Skeleton helpers ─────────────────────────────────────────────────────
-  skeletonCardOuter: { opacity: 0.92 },
-  skeletonCard: { borderColor: "transparent" },
-  skeletonAccent: { marginRight: 2 },
-  skeletonMt8: { marginTop: 8 },
-  skeletonMt6: { marginTop: 6 },
-  pressed: { opacity: 0.7 },
-
-  // ── Address bar block (scrolls away) ─────────────────────────────────────
-  addressBarBg: {
-    // Gradient fades to T.cream and the sticky search band below is also
-    // cream, so no divider here — the hairline under the search band is the
-    // single separator for the whole header surface.
-    backgroundColor: T.cream,
-    overflow: "hidden", // clips the doodle glyphs; no shadow here, so safe on Android
-  },
-  freqShelf: {
-    paddingBottom: 4,
-  },
-  appBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 14,
-    gap: 12,
-  },
-  addressPressable: { flex: 1, borderRadius: 10 },
-  deliveryLabelRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 4,
-  },
-  deliveryDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: T.green,
-  },
-  deliveryLabelText: {
-    fontSize: 11,
-    color: T.green,
-    fontFamily: "PlusJakartaSans_800ExtraBold",
-    letterSpacing: 0.5,
-    textTransform: "uppercase",
-    flexShrink: 1,
-  },
-  locationSpinner: { marginLeft: 4, transform: [{ scale: 0.75 }] },
-  deliveryAddressText: { fontFamily: "PlusJakartaSans_700Bold",
-    fontSize: 15,
-    color: T.bark,
-    letterSpacing: -0.2,
-    flex: 1,
-  },
-  locationInlineRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-  headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
-  /** Shared green chip (Wallet, See all). */
-  chip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: T.greenXLight,
-    borderWidth: 1,
-    borderColor: T.greenBorder,
-  },
-  walletText: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 12, color: T.green },
-  profileBtn: { padding: 3 },
-  profileAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: T.green,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 5,
-  },
-
-  // ── Sticky search ────────────────────────────────────────────────────────
-  stickyWrap: {
-    backgroundColor: T.cream,
-    paddingHorizontal: 16,
-    paddingBottom: 12,
+  // Sticky cell: opaque so the feed never shows through once stuck; the hairline is the one separator for the header.
+  sticky: {
+    backgroundColor: C.bg,
     paddingTop: 4,
+    paddingBottom: 4,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: T.cardBorder,
-    // Sticky cell: clip the doodle glyphs so nothing paints over the feed
-    // scrolling underneath once the band is stuck to the top.
-    overflow: "hidden",
+    borderBottomColor: C.hairline,
   },
+  searchBand: { marginHorizontal: layout.gutter },
 
-  // ── Active orders banner ─────────────────────────────────────────────────
-  // Docked flush against the tab bar's top edge (bottom offset set inline
-  // from safe-area insets, with zero gap) so it reads as one connected
-  // surface with the tab bar below it, not a separate floating card.
-  activeOrdersFloatWrap: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-  },
-  activeOrdersWrap: {
-    position: "relative",
-  },
-  activeOrderCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    // Rounded where it meets the page content above, square where it meets
-    // the tab bar below — reads as an extension of the tab bar, not a card
-    // sitting on top of it.
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    // Solid brand green (not the pale greenXLight tint used elsewhere) — the
-    // page background and every other card here are light cream/white, so a
-    // solid dark card is what actually reads as "a distinct floating unit"
-    // rather than blending in. Text/icon colors below are all picked for
-    // contrast against this, not against a light card.
-    backgroundColor: T.green,
-    // Shadow points up (negative height), same direction as the tab bar's
-    // own shadow — both read as one raised unit above the page content.
-    shadowColor: T.shadowDark,
-    shadowOffset: { width: 0, height: -3 },
-    shadowOpacity: 0.18,
-    shadowRadius: 8,
-    elevation: 10,
-  },
-  activeOrderIconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  activeOrderTitle: {
-    fontSize: 13.5,
-    fontWeight: "800",
-    color: T.white,
-  },
-  activeOrderStatus: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "rgba(255,255,255,0.78)",
-    marginTop: 2,
-  },
-  activeOrderViewBtn: {
-    backgroundColor: T.white,
-    borderRadius: 999,
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-  },
-  activeOrderViewBtnText: {
-    fontSize: 11.5,
-    fontWeight: "800",
-    color: T.green,
-    letterSpacing: 0.3,
-  },
-  // "1/N" page counter, inline and centered in the card's row — adjacent to
-  // the VIEW button, not overlapping it (an earlier top-right overlaid
-  // version did).
-  activeOrdersCounterText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "rgba(255,255,255,0.85)",
-    fontVariant: ["tabular-nums"],
-  },
+  banners: { paddingTop: 12 },
 
-  // ── Search bar ────────────────────────────────────────────────────────────
-  searchBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderRadius: 14,
-    backgroundColor: T.white,
-    borderWidth: 1.5,
-    borderColor: T.cardBorder,
-    shadowColor: T.shadowDark,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.5,
-    shadowRadius: 6,
-    elevation: 3,
-  },
-  searchBarSkeleton: {
-    backgroundColor: T.skeletonHi,
-    borderColor: "transparent",
-    shadowOpacity: 0,
-    elevation: 0,
-  },
-  searchPlaceholder: { fontFamily: "PlusJakartaSans_500Medium",
-    color: T.barkLight,
-    fontSize: 14,
-    flex: 1,
-  },
-
-  // ── Section header ───────────────────────────────────────────────────────
+  // 44 px: h3 line height 22 + 12 above + 10 below (HOME_ITEM_SIZE.sectionHeader).
   sectionHeader: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 16,
-    paddingTop: 20,
-    marginBottom: 12,
-    gap: 10,
+    gap: 8,
+    paddingHorizontal: layout.gutter,
+    paddingTop: 12,
+    paddingBottom: 10,
   },
-  sectionTitleCol: { flex: 1 },
-  sectionTitleAccent: {
-    width: 4,
-    height: 18,
-    borderRadius: 2,
-    backgroundColor: T.green,
-    marginRight: 2,
-  },
-  sectionTitle: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    fontSize: 17,
-    color: T.bark,
-    letterSpacing: -0.3,
-  },
-  sectionSub: { fontFamily: "PlusJakartaSans_500Medium",
-    fontSize: 11.5,
-    color: T.barkLight,
-    marginTop: 2,
-  },
-  seeAllText: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    fontSize: 12,
-    color: T.green,
-    letterSpacing: 0.2,
-  },
+  sectionTitle: { ...text.h3, flex: 1 },
+  seeAll: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.md },
+  seeAllPressed: { backgroundColor: C.primaryXLight },
+  seeAllText: { fontFamily: fontFamily.bold, fontSize: 12, lineHeight: 16, color: C.primary },
 
-  horizontalListContent: { paddingHorizontal: 16, gap: 8 },
-
-  gridWrap: {
+  legacyRow: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    paddingHorizontal: 16,
-    justifyContent: "space-between",
-    rowGap: 12,
+    paddingHorizontal: layout.gutter,
+    columnGap: layout.gridGap,
+    marginBottom: layout.gridGap,
   },
-
-  seeAllBar: {
+  legacyCard: { flex: 1 },
+  legacySeeAllOuter: { marginHorizontal: layout.gutter, marginBottom: layout.gridGap },
+  legacySeeAll: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-    marginHorizontal: 16,
     paddingVertical: 10,
-    borderRadius: 14,
-    backgroundColor: T.white,
-    borderWidth: 1.5,
-    borderColor: "rgba(45,122,79,0.25)",
-    borderStyle: "dashed",
+    borderRadius: radius.xxl,
+    backgroundColor: C.card,
+    borderWidth: 1,
+    borderColor: C.border,
   },
-  seeAllBarText: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: T.green,
-    fontSize: 13,
-    letterSpacing: 0.2,
-    flexShrink: 1,
-  },
-
-  // ── Shop-by-category tile grid ───────────────────────────────────────────
-  catTileGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    paddingHorizontal: 12,
-    justifyContent: "flex-start",
-  },
-  catTile: {
-    width: "25%",
-    alignItems: "center",
-    paddingHorizontal: 4,
-    paddingVertical: 12,
-    gap: 8,
-  },
-  // Clips the cover image to the IconWrap's 20px radius; the tinted bg is the only depth cue.
-  catTileIconWrap: { overflow: "hidden" },
-  catTileImg: { width: "100%", height: "100%" },
-  catTileLabel: { fontFamily: "PlusJakartaSans_700Bold",
-    fontSize: 11,
-    color: T.bark,
-    textAlign: "center",
-    letterSpacing: 0.1,
-    lineHeight: 14,
-  },
+  legacySeeAllPressed: { backgroundColor: C.bgSoft },
+  legacySeeAllText: { fontFamily: fontFamily.bold, fontSize: 13, lineHeight: 18, color: C.primary, flexShrink: 1 },
 
   endStamp: {
     marginTop: 24,
@@ -2169,287 +1283,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    paddingHorizontal: 14,
+    paddingHorizontal: layout.gutter,
     paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: T.greenXLight,
-    borderWidth: 1,
-    borderColor: T.greenGlow,
   },
-  endStampText: { fontFamily: "PlusJakartaSans_700Bold",
-    fontSize: 12,
-    color: T.green,
-    letterSpacing: 0.2,
-  },
+  endStampText: { fontFamily: fontFamily.semibold, fontSize: 12, lineHeight: 16, color: C.textSub },
 
-  // ── Product card ──────────────────────────────────────────────────────────
-  cardOuter: { width: "31.8%" },
-  cardOuterHorizontal: { width: 132 },
-  // overflow:hidden clips iOS layer shadows, so the card relies on its 1px border for
-  // definition — identical on both platforms.
-  card: {
-    flex: 1,
-    backgroundColor: T.white,
-    borderRadius: 14,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: T.cardBorder,
-  },
-  cardOutOfStock: { opacity: 0.62 },
-  imageWrap: {
-    position: "relative",
-    backgroundColor: T.white,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-  },
-  image: { width: "100%", height: 96 },
-  imagePlaceholder: {
-    width: "100%",
-    height: 96,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  discountFlag: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    backgroundColor: T.deal,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    borderBottomRightRadius: 8,
-    borderTopLeftRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  discountFlagText: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: T.white,
-    fontSize: 10,
-    lineHeight: 11,
-    letterSpacing: 0.2,
-  },
-  discountFlagOff: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: T.white,
-    fontSize: 7.5,
-    lineHeight: 9,
-    letterSpacing: 0.8,
-  },
-
-  outOfStockOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.38)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  outOfStockText: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: T.white,
-    fontSize: 11,
-    letterSpacing: 0.6,
-  },
-
-  cardBody: { padding: 8 },
-  unitPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    alignSelf: "flex-start",
-    gap: 4,
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-    borderRadius: 6,
-    backgroundColor: T.greenXLight,
-    marginBottom: 4,
-  },
-  unitPillText: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: T.green,
-    fontSize: 9,
-    letterSpacing: 0.2,
-  },
-  productName: { fontFamily: "PlusJakartaSans_700Bold",
-    fontSize: 11.5,
-    color: T.bark,
-    lineHeight: 14.5,
-    minHeight: 29,
-    marginBottom: 6,
-  },
-  priceAddRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 4,
-  },
-  priceCol: { flexShrink: 1 },
-  priceValue: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: T.bark,
-    fontSize: 13,
-    letterSpacing: -0.3,
-    lineHeight: 15,
-  },
-  priceValueDeal: {
-    color: T.dealDark,
-  },
-  originalPrice: { fontFamily: "PlusJakartaSans_500Medium",
-    color: T.barkLight,
-    fontSize: 10,
-    textDecorationLine: "line-through",
-    marginTop: 1,
-  },
-  addBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    borderColor: T.green,
-    backgroundColor: T.greenXLight,
-    minWidth: 46,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  addText: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    fontSize: 11.5,
-    color: T.green,
-    letterSpacing: 0.8,
-  },
-  soldOutBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
-    backgroundColor: T.sand,
-    borderWidth: 1.5,
-    borderColor: T.cardBorder,
-  },
-  soldOutText: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: T.barkLight,
-    fontSize: 10.5,
-    letterSpacing: 0.4,
-  },
-  qtyBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: T.green,
-    borderRadius: 8,
-    paddingHorizontal: 2,
-    paddingVertical: 2,
-    minWidth: 68,
-  },
-  qtyBtn: {
-    width: 22,
-    height: 22,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 6,
-    backgroundColor: T.green,
-  },
-  qtyValue: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: T.white,
-    fontSize: 12,
-    minWidth: 14,
-    textAlign: "center",
-  },
-
-  // ── Empty state ───────────────────────────────────────────────────────────
-  empty: {
-    marginTop: 48,
-    alignItems: "center",
-    paddingHorizontal: 32,
-    gap: 12,
-  },
-  emptyIconWrap: {
-    borderWidth: 1.5,
-    borderColor: "rgba(45,122,79,0.15)",
-  },
-  emptyTitle: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: T.bark,
-    fontSize: 17,
-    letterSpacing: -0.2,
-    textAlign: "center",
-  },
-  emptyText: { fontFamily: "PlusJakartaSans_500Medium",
-    color: T.barkLight,
-    fontSize: 14,
-    textAlign: "center",
-    lineHeight: 21,
-  },
-  // Solid bg + no overflow:hidden here so the iOS shadow renders; the gradient clips itself.
-  emptyBtn: {
-    marginTop: 8,
-    borderRadius: 14,
-    backgroundColor: T.green,
-    shadowColor: T.green,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.28,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  emptyBtnGradient: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 14,
-    overflow: "hidden",
-  },
-  emptyBtnText: { fontFamily: "PlusJakartaSans_800ExtraBold", color: T.white, fontSize: 14 },
-
-  // ── Cart pill ─────────────────────────────────────────────────────────────
-  cartBar: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 110,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 24,
-  },
-  // Solid bg + no overflow:hidden so the iOS shadow renders (it was clipped before);
-  // elevation 14 is the Android stacking order above the tab bar — keep it.
-  cartPill: {
-    alignSelf: "center",
-    borderRadius: 999,
-    backgroundColor: T.green,
-    shadowColor: T.green,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.25,
-    shadowRadius: 12,
-    elevation: 14,
-  },
-  cartPillPressed: { transform: [{ scale: 0.97 }], opacity: 0.95 },
-  cartPillGradient: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 8,
-    paddingLeft: 8,
-    paddingRight: 8,
-    gap: 10,
-    borderWidth: 1.5,
-    borderColor: "rgba(255,255,255,0.35)",
-    borderRadius: 999,
-    overflow: "hidden",
-  },
-  /** White 30px circle used for both the qty bubble and the arrow. */
-  cartCircle: {
-    minWidth: 30,
-    height: 30,
-    borderRadius: 999,
-    backgroundColor: T.white,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.18,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  cartQtyBubble: { paddingHorizontal: 8 },
-  cartQtyText: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: T.green,
-    fontSize: 14,
-    letterSpacing: 0.2,
-  },
-  cartPillLabel: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: T.white,
-    fontSize: 14,
-    letterSpacing: 0.3,
-  },
+  emptyWrap: { minHeight: EMPTY_MIN_HEIGHT, justifyContent: "center" },
 });

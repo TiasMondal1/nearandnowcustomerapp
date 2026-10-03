@@ -1,221 +1,178 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+// Category screen — a real 3-column grid of `ProductCard variant="grid"` (fixes MAP C2 via the Stepper's isLoose
+// and C3 via `width: "100%"` inside the FlashList cell), sort chips, a "Delivery in N min · N items" subtitle and the
+// CartBar footprint (design/blinkit-parity §3.4 / BP-15 · speed-and-ease #4, #13, #15). Data: the cached category
+// and the cached nearby filter resolve in one Promise.all, products seed synchronously from the memory catalog for an
+// instant paint and are replaced by `getProductsByCategory`. No codename header: the screen has none in CONTRACTS
+// §10 — the ProductCard / Stepper it renders carry rigel.
 import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { InteractionManager, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+
 import {
-    InteractionManager,
-    RefreshControl,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
-} from "react-native";
-import { Image } from "expo-image";
-
-import { BackButton, EmptyState, Screen, ScreenHeader, Skeleton } from "../../components/ui";
+  Chip,
+  discountPercent,
+  EmptyState,
+  PrimaryButton,
+  ProductCard,
+  Screen,
+  ScreenHeader,
+  SkeletonProductCard,
+  SkeletonScreen,
+  useCartBarFootprint,
+} from "../../components/ui";
 import { C } from "../../constants/colors";
-import { opacity, shadow } from "../../constants/ui";
-import { getCategoryBySlug, type Category } from "../../lib/categoryService";
-import { useCart, useCartItemMap } from "../../context/CartContext";
-import { useLocation } from "../../context/LocationContext";
-import { cdnImage } from "../../lib/imageUrl";
+import { fontFamily, layout } from "../../constants/ui";
+import { useLocation, type ActiveLocation } from "../../context/LocationContext";
+import { useDeliveryEta } from "../../hooks/useDeliveryEta";
+import { useForceSkeleton, useSlowLoad } from "../../hooks/useSlowLoad";
+import { getCategoryBySlug, peekCategories, type Category } from "../../lib/categoryService";
+import { formatEtaShort } from "../../lib/deliveryEta";
+import { useDevFlag } from "../../lib/devFlags";
+import { feedback } from "../../lib/feedback";
 import { logError } from "../../lib/logError";
-import { getProductsByCategory, type Product as ServiceProduct } from "../../lib/productService";
-import { getNearbyProductFilter } from "../../lib/storeService";
-import StarRating from "../../components/StarRating";
+import { getMemoryHomeCache, getProductsByCategory, getProductsForCategoryName, type Product } from "../../lib/productService";
+import { getNearbyProductFilter, peekNearbyProductFilter } from "../../lib/storeService";
 
-const FALLBACK_COLORS = [
-  "#FF6B6B", "#51CF66", "#FFD43B", "#845EF7",
-  "#339AF0", "#FAB005", "#E599F7", "#74C0FC"
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const NUM_COLUMNS = 3;
+/** Skeleton: three rows of three grid twins. */
+const SKELETON_CELLS = [0, 1, 2, 3, 4, 5, 6, 7, 8] as const;
+/** FlashList render-ahead in px (speed-and-ease #13). */
+const DRAW_DISTANCE = 400;
+
+type SortKey = "popular" | "priceAsc" | "priceDesc" | "discount";
+const SORT_OPTIONS: readonly { key: SortKey; label: string }[] = [
+  { key: "popular", label: "Popular" },
+  { key: "priceAsc", label: "Price: low to high" },
+  { key: "priceDesc", label: "Price: high to low" },
+  { key: "discount", label: "Discount" },
 ];
 
-const FALLBACK_ICONS = [
-  "apple", "leaf", "cow", "cookie",
-  "cup", "sack", "face-woman-shimmer", "home-outline"
-];
+// ─── Module-level list callbacks (stable identities — MAP P1 / §7.18) ─────────
 
-// Extra reach for the ADD button so the effective target clears 44pt.
-const ADD_HIT_SLOP = { top: 4, bottom: 4 };
-const SKELETON_CARDS = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+const keyExtractor = (item: Product) => item.id;
+const getItemType = () => "product";
+const renderItem = ({ item }: ListRenderItemInfo<Product>) => (
+  <View style={styles.cell}>
+    <ProductCard variant="grid" product={item} style={styles.card} recycled />
+  </View>
+);
 
-type ProductCardProps = {
-  item: ServiceProduct;
-  cartQty: number;
-  onAdd: (product: Omit<import("../../context/CartContext").CartItem, "quantity">) => void;
-  onUpdateQty: (productId: string, delta: number) => void;
-};
+// ─── Pure helpers ─────────────────────────────────────────────────────────────
 
-const ProductCard = React.memo(function ProductCard({ item, cartQty, onAdd, onUpdateQty }: ProductCardProps) {
-  const hasDiscount = item.original_price != null && item.original_price > item.price;
-  const discountPct = hasDiscount
-    ? Math.round(((item.original_price! - item.price) / item.original_price!) * 100)
-    : 0;
+/** Pure client sort. "popular" keeps the server order (rating → rating_count → newest); the others are stable sorts over it. */
+function sortProducts(list: Product[], key: SortKey): Product[] {
+  if (key === "popular") return list;
+  const sorted = list.slice();
+  if (key === "priceAsc") sorted.sort((a, b) => a.price - b.price);
+  else if (key === "priceDesc") sorted.sort((a, b) => b.price - a.price);
+  else sorted.sort((a, b) => (discountPercent(b.price, b.original_price) ?? 0) - (discountPercent(a.price, a.original_price) ?? 0));
+  return sorted;
+}
 
-  return (
-    <View style={[styles.card, !item.in_stock && styles.cardOutOfStock]}>
-      <TouchableOpacity
-        activeOpacity={opacity.pressCard}
-        onPress={() => router.push(`../product/${item.id}`)}
-        accessibilityRole="button"
-        accessibilityLabel={item.name}
-      >
-        {item.image_url ? (
-          <Image
-            source={{ uri: cdnImage(item.image_url, 240) }}
-            style={styles.image}
-            contentFit="contain"
-            cachePolicy="memory-disk"
-            transition={120}
-            recyclingKey={item.id}
-            priority="low"
-          />
-        ) : (
-          <View style={styles.imagePlaceholder}>
-            <MaterialCommunityIcons name="image-off-outline" size={24} color={C.textLight} />
-          </View>
-        )}
-        {hasDiscount && (
-          <View style={styles.discountBadge}>
-            <Text style={styles.discountText}>{discountPct}% OFF</Text>
-          </View>
-        )}
-        {!item.in_stock && (
-          <View style={styles.outOfStockOverlay}>
-            <Text style={styles.outOfStockText}>Out of Stock</Text>
-          </View>
-        )}
-      </TouchableOpacity>
+/** The cached category for the slug (memory only; inactive → null). */
+function seedCategory(slug: string | undefined): Category | null {
+  if (!slug) return null;
+  const hit = peekCategories()?.find((c) => c.slug === slug);
+  return hit && hit.is_active !== false ? hit : null;
+}
 
-      <View style={styles.cardBody}>
-        <Text style={styles.name} numberOfLines={2}>{item.name}</Text>
-        <View style={styles.priceRow}>
-          <Text style={styles.price}>₹{item.price}</Text>
-          {hasDiscount && (
-            <Text style={styles.originalPrice}>₹{item.original_price}</Text>
-          )}
-          <Text style={styles.unit} numberOfLines={1}>{item.unit}</Text>
-        </View>
+/**
+ * Instant paint (speed-and-ease #15): the memory catalog's products for the category, restricted to the nearby
+ * filter when it is already in memory for this location. `[]` whenever any piece is missing — the fetch decides.
+ * With no location there is nothing to seed: the radius filter cannot run (see the fetch comment).
+ */
+function seedProducts(category: Category | null, location: ActiveLocation | null): Product[] {
+  if (!category || !location) return [];
+  const cache = getMemoryHomeCache();
+  if (!cache) return [];
+  const filter = peekNearbyProductFilter(location.latitude, location.longitude);
+  if (!filter) return [];
+  const all = getProductsForCategoryName(category.name, cache.productsByCategory);
+  return all.filter((p) => filter.productIds.has(p.id));
+}
 
-        <View style={styles.ratingWrap}>
-          <StarRating rating={item.avgRating ?? 0} reviewCount={item.reviewCount} />
-        </View>
+// dismissTo pops to the live tabs route (merging {screen}) instead of pushing a second tab navigator (W3 R6-01).
+function browseCategories(): void {
+  router.dismissTo("/(tabs)/categories");
+}
 
-        {item.in_stock ? (
-          cartQty > 0 ? (
-            <View style={styles.qtyRow}>
-              <TouchableOpacity
-                style={styles.qtyBtn}
-                onPress={() => onUpdateQty(item.id, -1)}
-                hitSlop={6}
-                activeOpacity={opacity.pressIcon}
-                accessibilityRole="button"
-                accessibilityLabel="Decrease quantity"
-              >
-                <MaterialCommunityIcons name="minus" size={16} color="#fff" />
-              </TouchableOpacity>
-              <Text style={styles.qtyText}>{cartQty}</Text>
-              <TouchableOpacity
-                style={styles.qtyBtn}
-                onPress={() => onUpdateQty(item.id, 1)}
-                hitSlop={6}
-                activeOpacity={opacity.pressIcon}
-                accessibilityRole="button"
-                accessibilityLabel="Increase quantity"
-              >
-                <MaterialCommunityIcons name="plus" size={16} color="#fff" />
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <TouchableOpacity
-              style={styles.addBtn}
-              hitSlop={ADD_HIT_SLOP}
-              activeOpacity={opacity.pressCta}
-              accessibilityRole="button"
-              accessibilityLabel={`Add ${item.name}`}
-              onPress={() =>
-                onAdd({
-                  product_id: item.id,
-                  name: item.name,
-                  price: item.price,
-                  unit: item.unit,
-                  image_url: item.image_url,
-                })
-              }
-            >
-              <Text style={styles.addText}>ADD</Text>
-            </TouchableOpacity>
-          )
-        ) : (
-          <View style={styles.soldOutBtn}>
-            <Text style={styles.soldOutText}>Sold Out</Text>
-          </View>
-        )}
-      </View>
-    </View>
-  );
-});
+// ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function CategorySlugScreen() {
   const { slug } = useLocalSearchParams<{ slug: string }>();
-  const [category, setCategory] = useState<Category | null>(null);
-  const [products, setProducts] = useState<ServiceProduct[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { location, isHydrated } = useLocation();
+  const eta = useDeliveryEta();
+  const cartBarFootprint = useCartBarFootprint();
+  const inhibitSortChips = useDevFlag("Dev_Category_inhibit_SortChips");
+
+  // SWR seed (MAP §2.6 #27): category + products from memory so a warm app paints the grid on the first frame.
+  const [seed] = useState(() => {
+    const category = seedCategory(slug);
+    return { category, products: seedProducts(category, location) };
+  });
+  const [category, setCategory] = useState<Category | null>(seed.category);
+  const [products, setProducts] = useState<Product[]>(seed.products);
+  const [loading, setLoading] = useState(seed.products.length === 0);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const { addItem, incrementQty } = useCart();
-  const cartItemsByProductId = useCartItemMap();
-  const { location, isHydrated } = useLocation();
+  const [notFound, setNotFound] = useState(false);
+  const [sort, setSort] = useState<SortKey>("popular");
 
   // Discards a slower-resolving response from a previously-viewed category —
   // without this, opening category A then quickly navigating to category B
   // could let A's response land after B's and show A's data under B's route.
-  const requestIdRef = useRef(0);
+  const seqRef = useRef(0);
 
-  const fetchData = useCallback(async (isRefresh = false) => {
-    if (!slug) return;
-    const myId = ++requestIdRef.current;
-    try {
-      setError(null);
-      if (!isRefresh) setLoading(true);
-
-      const categoryData = await getCategoryBySlug(slug);
-      if (myId !== requestIdRef.current) return;
-      if (!categoryData) {
-        setCategory(null);
-        setProducts([]);
-        return;
-      }
-      let nearbyIds: Set<string> | undefined;
-      if (location) {
-        const filter = await getNearbyProductFilter(location.latitude, location.longitude);
-        if (myId !== requestIdRef.current) return;
-        nearbyIds = filter?.productIds;
-      } else {
+  const fetchData = useCallback(
+    async (isRefresh = false) => {
+      if (!slug) return;
+      const myId = ++seqRef.current;
+      try {
+        setError(null);
+        // Both are cache hits after Home (speed-and-ease #4): one round trip at most per location per 5 min.
+        const [categoryData, filter] = await Promise.all([
+          getCategoryBySlug(slug),
+          location ? getNearbyProductFilter(location.latitude, location.longitude) : Promise.resolve(null),
+        ]);
+        if (myId !== seqRef.current) return;
+        if (!categoryData) {
+          setCategory(null);
+          setProducts([]);
+          setNotFound(true);
+          return;
+        }
         // No location yet — the 0-4 km radius filter can't run without
         // coordinates. Show nothing rather than falling back to every
         // active store's catalog platform-wide, which would defeat the
-        // radius restriction. See bug_fixes doc, 2026-09-03.
-        nearbyIds = new Set();
+        // radius restriction. See bug_fixes doc, 2026-09-03. The same empty
+        // Set covers a null filter (non-finite coordinates): `nearbyIds` is
+        // never `undefined` here (MAP §7.11).
+        const nearbyIds = location ? (filter?.productIds ?? new Set<string>()) : new Set<string>();
+        const productsData = await getProductsByCategory(categoryData.name, { nearbyIds });
+        if (myId !== seqRef.current) return;
+        setNotFound(false);
+        setCategory(categoryData);
+        setProducts(productsData);
+      } catch (err) {
+        if (myId !== seqRef.current) return;
+        logError("Load category", err);
+        setError("Couldn't load products");
+      } finally {
+        if (myId === seqRef.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
-      const productsData = await getProductsByCategory(categoryData.name, { nearbyIds });
-      if (myId !== requestIdRef.current) return;
-
-      setCategory(categoryData);
-      setProducts(productsData);
-    } catch (err) {
-      if (myId !== requestIdRef.current) return;
-      logError("Load category", err);
-      setError("Failed to load products");
-    } finally {
-      if (myId === requestIdRef.current) {
-        setLoading(false);
-        setRefreshing(false);
-      }
-    }
-  }, [slug, location]);
+    },
+    [slug, location],
+  );
 
   useEffect(() => {
+    // LocationContext hydrates from AsyncStorage; until then `location === null`
+    // does not yet mean "no location", so the fetch waits (see search.tsx).
     if (!isHydrated) return;
     const task = InteractionManager.runAfterInteractions(() => {
       fetchData();
@@ -224,323 +181,190 @@ export default function CategorySlugScreen() {
   }, [isHydrated, fetchData]);
 
   const onRefresh = useCallback(() => {
+    feedback.tapSound();
     setRefreshing(true);
     fetchData(true);
   }, [fetchData]);
 
-  const isEmpty = !loading && products.length === 0;
+  const retry = useCallback(() => {
+    setLoading(true);
+    fetchData();
+  }, [fetchData]);
 
-  // Memoized render callback — stable reference across re-renders so FlashList
-  // doesn't recreate every cell when unrelated state (e.g. loading) changes.
-  const renderItem = useCallback(
-    ({ item }: ListRenderItemInfo<ServiceProduct>) => (
-      <ProductCard
-        item={item}
-        cartQty={cartItemsByProductId.get(item.id)?.quantity ?? 0}
-        onAdd={addItem}
-        onUpdateQty={incrementQty}
-      />
-    ),
-    [cartItemsByProductId, addItem, incrementQty],
+  const sorted = useMemo(() => sortProducts(products, sort), [products, sort]);
+  const showSkeleton = useForceSkeleton(loading);
+  const slow = useSlowLoad(loading);
+  const isEmpty = !loading && !error && products.length === 0;
+
+  const etaShort = formatEtaShort(eta);
+  const etaText = etaShort == null ? null : eta.minutes != null ? `Delivery in ${eta.minutes} min` : "Store closed";
+  const countText = products.length > 0 ? `${products.length} ${products.length === 1 ? "item" : "items"}` : null;
+  const subtitle = [etaText, countText].filter(Boolean).join(" · ") || undefined;
+
+  const listContent = useMemo(
+    () => ({ paddingHorizontal: 12, paddingTop: 8, paddingBottom: layout.scrollBottom + cartBarFootprint }),
+    [cartBarFootprint],
   );
 
-  if (!category && !loading) {
+  if (notFound && !loading) {
     return (
       <Screen>
-        <ScreenHeader title="Category" />
-        <EmptyState fill iconWrap icon="tag-off-outline" title="Category not found" />
+        <ScreenHeader size="md" align="left" title="Category" backFallbackHref="/(tabs)/categories" />
+        <EmptyState
+          fill
+          iconWrap
+          icon="tag-off-outline"
+          title="Category not found"
+          text="It may have moved or been removed"
+          action={{ label: "Browse categories", onPress: browseCategories }}
+        />
       </Screen>
     );
   }
 
-  const categoryColor = category?.color || FALLBACK_COLORS[0];
-  const categoryIcon = category?.icon || FALLBACK_ICONS[0];
-
   return (
     <Screen>
-      <View style={styles.header}>
-        <BackButton />
+      <ScreenHeader
+        size="md"
+        align="left"
+        title={category?.name ?? "Category"}
+        subtitle={subtitle}
+        backFallbackHref="/(tabs)/categories"
+        testID="category-header"
+      />
 
-        <View style={styles.headerTitleWrap}>
-          {category?.image_url ? (
-            <Image
-              source={{ uri: cdnImage(category.image_url, 48) }}
-              style={styles.headerImage}
-              contentFit="cover"
-              cachePolicy="memory-disk"
-              transition={120}
-            />
-          ) : (
-            <MaterialCommunityIcons
-              name={categoryIcon as any}
-              size={20}
-              color={categoryColor}
-            />
-          )}
-          <Text style={styles.headerTitle} numberOfLines={1} accessibilityRole="header">
-            {category?.name || "Category"}
-          </Text>
-        </View>
-
-        <View style={styles.headerSpacer} />
-      </View>
-
-      {loading ? (
-        <View
-          style={styles.skeletonGrid}
-          accessible
-          accessibilityRole="progressbar"
-          accessibilityLabel="Loading products..."
-        >
-          {SKELETON_CARDS.map((i) => (
-            <View key={i} style={styles.card}>
-              <View style={styles.image} />
-              <View style={styles.cardBody}>
-                <Skeleton width="90%" height={12} color={C.border} />
-                <Skeleton width="60%" height={12} color={C.border} style={styles.skeletonGap} />
-                <Skeleton width="45%" height={14} color={C.border} style={styles.skeletonGap} />
-                <Skeleton width="100%" height={40} radius={10} color={C.bgSoft} style={styles.skeletonBtn} />
-              </View>
-            </View>
-          ))}
-        </View>
+      {showSkeleton ? (
+        <CategorySkeleton slow={slow} onRetry={retry} />
       ) : error ? (
         <EmptyState
           fill
+          tone="error"
           icon="alert-circle-outline"
-          iconSize={48}
-          iconColor={C.danger}
           title={error}
-          action={{ label: "Retry", onPress: () => fetchData() }}
+          text="Check your connection and try again"
+          action={{ label: "Retry", onPress: retry }}
         />
       ) : isEmpty ? (
-        <EmptyState fill iconWrap icon="package-variant-closed-remove" title="No products available" />
-      ) : (
-        <FlashList
-          data={products}
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          numColumns={3}
-          contentContainerStyle={styles.list}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor={categoryColor}
-              colors={[categoryColor]}
-            />
-          }
+        <EmptyState
+          fill
+          iconWrap
+          icon="package-variant-closed-remove"
+          title="Nothing here yet"
+          text="Try another category or check back soon"
+          action={{ label: "Browse categories", onPress: browseCategories }}
         />
+      ) : (
+        <>
+          {inhibitSortChips ? null : <SortChips value={sort} onChange={setSort} />}
+          <FlashList
+            data={sorted}
+            keyExtractor={keyExtractor}
+            getItemType={getItemType}
+            renderItem={renderItem}
+            numColumns={NUM_COLUMNS}
+            drawDistance={DRAW_DISTANCE}
+            contentContainerStyle={listContent}
+            showsVerticalScrollIndicator={false}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} colors={[C.primary]} />}
+            accessibilityLabel={`${category?.name ?? "Category"} products`}
+            testID="category-grid"
+          />
+        </>
       )}
     </Screen>
   );
 }
 
+// ─── Sort chips ───────────────────────────────────────────────────────────────
+
+/**
+ * 44 px row of `Chip size="sm"` (8 px gaps, 16 px gutters) in a `tablist`; the selected chip fills. Pressing a chip
+ * changes the sort — a state change — so Chip's default `select` haptic is kept. Chip has no `accessibilityRole`
+ * prop, so each chip announces `selected` with role "button" inside the tablist (see crossFileNotes).
+ */
+const SortChips = React.memo(function SortChips({ value, onChange }: { value: SortKey; onChange: (key: SortKey) => void }) {
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={styles.sortScroll}
+      contentContainerStyle={styles.sortRow}
+      accessibilityRole="tablist"
+      accessibilityLabel="Sort products"
+      testID="category-sort"
+    >
+      {SORT_OPTIONS.map((opt) => (
+        <SortChip key={opt.key} option={opt} selected={opt.key === value} onChange={onChange} />
+      ))}
+    </ScrollView>
+  );
+});
+
+/** One memoised sort chip; the per-key closure lives here so the row hands every chip the same `onChange`. */
+const SortChip = React.memo(function SortChip({
+  option,
+  selected,
+  onChange,
+}: {
+  option: { key: SortKey; label: string };
+  selected: boolean;
+  onChange: (key: SortKey) => void;
+}) {
+  return (
+    <Chip
+      label={option.label}
+      size="sm"
+      selected={selected}
+      accessibilityRole="tab"
+      onPress={() => onChange(option.key)}
+      accessibilityLabel={`Sort by ${option.label}`}
+      testID={`category-sort-${option.key}`}
+    />
+  );
+});
+
+// ─── Skeleton ─────────────────────────────────────────────────────────────────
+
+/** Nine `SkeletonProductCard variant="grid"` twins in the real cell geometry; the slow hint + Retry sit outside the progressbar wrapper so the button stays reachable. */
+function CategorySkeleton({ slow, onRetry }: { slow: boolean; onRetry: () => void }) {
+  return (
+    <View style={styles.skeletonRoot}>
+      <SkeletonScreen label="Loading products…">
+        <View style={styles.skeletonGrid}>
+          {SKELETON_CELLS.map((i) => (
+            <View key={i} style={[styles.cell, styles.skeletonCell]}>
+              <SkeletonProductCard variant="grid" />
+            </View>
+          ))}
+        </View>
+      </SkeletonScreen>
+      {slow ? (
+        <View style={styles.slow} accessibilityLiveRegion="polite">
+          <Text style={styles.slowText} maxFontSizeMultiplier={1.3}>
+            Still loading… check your connection
+          </Text>
+          <PrimaryButton size="xs" variant="ghost" label="Retry" onPress={onRetry} />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: C.card,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  headerTitleWrap: {
-    flex: 1,
-    minWidth: 0,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    marginHorizontal: 8,
-  },
-  headerTitle: { color: C.text, fontSize: 18, fontFamily: "PlusJakartaSans_800ExtraBold", flexShrink: 1 },
-  headerImage: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-  },
-  headerSpacer: { width: 38 },
+  // FlashList enforces the cell width (listWidth / 3); the card fills it and the cell carries the gutters (C3).
+  cell: { paddingHorizontal: 4, paddingBottom: 8 },
+  card: { width: "100%" },
 
-  list: {
-    padding: 16,
-    paddingBottom: 120,
-  },
+  // RN's horizontal ScrollView defaults to flexGrow 1; pinned to its content height so the grid below keeps flex 1.
+  sortScroll: { flexGrow: 0, flexShrink: 0 },
+  // 8 above + 28 chip + 8 below = 44.
+  sortRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: layout.gutter, paddingVertical: 8 },
 
-  // Loading skeleton — mirrors the 3-column grid (list padding + 32% cards)
-  skeletonGrid: {
-    flex: 1,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-    padding: 16,
-    overflow: "hidden",
-  },
-  skeletonGap: { marginTop: 6 },
-  skeletonBtn: { marginTop: 8 },
-
-  card: {
-    width: "32%",
-    backgroundColor: C.card,
-    borderRadius: 14,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: C.border,
-    ...shadow.card,
-    marginBottom: 8,
-  },
-
-  cardOutOfStock: {
-    opacity: 0.65,
-  },
-
-  cardBody: {
-    padding: 10,
-  },
-
-  image: {
-    width: "100%",
-    aspectRatio: 1,
-    backgroundColor: C.bgSoft,
-  },
-
-  imagePlaceholder: {
-    width: "100%",
-    aspectRatio: 1,
-    backgroundColor: C.bgSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  discountBadge: {
-    position: "absolute",
-    top: 8,
-    left: 8,
-    backgroundColor: C.deal, // deal accent, not error-red — discounts are good news
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-
-  discountText: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: "#fff",
-    fontSize: 11,
-    letterSpacing: 0.3,
-  },
-
-  outOfStockOverlay: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "rgba(0,0,0,0.35)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  outOfStockText: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: "#fff",
-    fontSize: 12,
-    letterSpacing: 0.5,
-  },
-
-  name: { fontFamily: "PlusJakartaSans_600SemiBold",
-    color: C.text,
-    fontSize: 12,
-    lineHeight: 16,
-    minHeight: 32,
-    marginBottom: 6,
-  },
-
-  priceRow: {
-    flexDirection: "row",
-    alignItems: "baseline",
-    gap: 4,
-    marginBottom: 6,
-  },
-
-  price: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: C.primary,
-    fontSize: 14,
-  },
-
-  originalPrice: { fontFamily: "PlusJakartaSans_500Medium",
-    color: C.textLight,
-    fontSize: 11,
-    textDecorationLine: "line-through",
-  },
-
-  unit: { fontFamily: "PlusJakartaSans_500Medium",
-    color: C.textSub,
-    fontSize: 11,
-    flexShrink: 1,
-  },
-
-  ratingWrap: {
-    marginBottom: 6,
-  },
-
-  addBtn: {
-    alignSelf: "stretch",
-    backgroundColor: C.primary,
-    minHeight: 40,
-    paddingVertical: 10,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  addText: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: "#fff",
-    fontSize: 13,
-    letterSpacing: 0.8,
-  },
-
-  soldOutBtn: {
-    borderRadius: 10,
-    minHeight: 40,
-    paddingVertical: 10,
-    backgroundColor: C.bgSoft,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1.5,
-    borderColor: C.border,
-  },
-
-  soldOutText: { fontFamily: "PlusJakartaSans_700Bold",
-    color: C.textSub,
-    fontSize: 13,
-  },
-
-  qtyRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: C.primaryXLight,
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: C.primaryLight,
-    paddingHorizontal: 4,
-    paddingVertical: 4,
-  },
-
-  qtyBtn: {
-    width: 32,
-    height: 32,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 8,
-    backgroundColor: C.primary,
-  },
-
-  qtyText: { fontFamily: "PlusJakartaSans_700Bold",
-    color: C.primary,
-    fontSize: 14,
-    minWidth: 20,
-    textAlign: "center",
-  },
+  skeletonRoot: { flex: 1, overflow: "hidden" },
+  skeletonGrid: { flexDirection: "row", flexWrap: "wrap", paddingHorizontal: 12, paddingTop: 8 },
+  skeletonCell: { width: `${100 / NUM_COLUMNS}%` },
+  slow: { alignItems: "center", gap: 8, paddingHorizontal: layout.gutter, paddingVertical: 16 },
+  slowText: { fontFamily: fontFamily.medium, fontSize: 12, lineHeight: 16, color: C.textSub, textAlign: "center" },
 });

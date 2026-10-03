@@ -1,271 +1,176 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { FlashList } from "@shopify/flash-list";
-import { router } from "expo-router";
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import {
-    ActivityIndicator,
-    Alert,
-    InteractionManager,
-    RefreshControl,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
-} from "react-native";
+// codename: vega
+// "My orders": Active | Past segments, flat pressable rows (components/orders/OrderRow), Reorder / Rate / Track /
+// Pay now, focus refresh, a 20 s poll only while an active order exists (focused + foregrounded), reconnect
+// refetch, pull-to-refresh and client-side windowing of the cached list (the API is unpaginated — DECISIONS D6).
+import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
+import { router, useFocusEffect } from "expo-router";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AppState, InteractionManager, RefreshControl, StyleSheet, Text, View } from "react-native";
 
 import { PaymentProcessingOverlay } from "../components/PaymentProcessingOverlay";
+import { OrderRow, orderDateLabel, reorderOrder, snapshotRatedOrders } from "../components/orders/OrderRow";
 import {
-    Badge,
-    Card,
-    EmptyState,
-    PrimaryButton,
-    Screen,
-    ScreenHeader,
-    Skeleton,
+  EmptyState,
+  notify,
+  PrimaryButton,
+  Screen,
+  ScreenHeader,
+  SegmentedControl,
+  Skeleton,
+  SkeletonScreen,
+  type Segment,
 } from "../components/ui";
 import { C } from "../constants/colors";
-import { CANCELLED_STATUSES, getStatusMeta } from "../constants/orderStatus";
-import { text } from "../constants/ui";
+import { CANCELLED_STATUSES } from "../constants/orderStatus";
+import { layout, radius, text } from "../constants/ui";
 import { useAuth } from "../context/AuthContext";
 import { usePaymentFlow } from "../hooks/usePaymentFlow";
-import {
-    getUserOrders,
-    readUserOrdersCache,
-    type Order,
-} from "../lib/orderService";
+import { useRefetchOnReconnect } from "../hooks/useRefetchOnReconnect";
+import { useForceSkeleton, useSlowLoad } from "../hooks/useSlowLoad";
+import { getDevFlag, useDevFlag } from "../lib/devFlags";
+import { feedback } from "../lib/feedback";
 import { logError } from "../lib/logError";
-import { formatQuantityDisplay } from "../lib/quantityFormat";
+import { logSilentFailure } from "../lib/logSilentFailure";
+import { markOrderPlaced } from "../lib/orderHistoryFlag";
+import {
+  getMemoryOrders,
+  getUserOrders,
+  invalidateOrders,
+  isActiveOrder,
+  readUserOrdersCache,
+  splitActivePast,
+  type Order,
+} from "../lib/orderService";
+import { clearSavedPaymentMethodsCache } from "../lib/razorpayService";
 import { payOrderWithWallet } from "../lib/walletService";
-import { isInvoiceAvailable } from "../lib/invoiceEligibility";
 
-function formatDate(iso: string) {
-  const d = new Date(iso);
-  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) +
-    " · " +
-    d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+type SegmentKey = "active" | "past";
+
+/** Rows rendered per "Show more" step (client-side windowing — no new endpoint). */
+const PAGE_SIZE = 20;
+/** Mirrors Home's active-orders cadence; runs only while an active order exists, the screen is focused and the app is foregrounded. */
+const ACTIVE_POLL_MS = 20_000;
+const SKELETON_ROWS = [0, 1, 2, 3] as const;
+const CANCELLED = new Set<string>(CANCELLED_STATUSES);
+const PAY_TOAST_ID = "pay-now";
+
+const keyExtractor = (item: Order) => item.id;
+
+/** Same ids + statuses in the same order → keep the previous array so memoised rows are not re-rendered by a poll tick. */
+function sameOrders(prev: Order[], next: Order[]): boolean {
+  if (prev.length !== next.length) return false;
+  for (let i = 0; i < prev.length; i += 1) {
+    const a = prev[i];
+    const b = next[i];
+    if (a.id !== b.id || a.order_status !== b.order_status || a.payment_status !== b.payment_status) return false;
+  }
+  return true;
 }
 
-const OrderCard = React.memo(function OrderCard({
-  item,
-  paymentPhase,
-  walletPayingOrderId,
-  onRetryPayment,
-}: {
-  item: Order;
-  paymentPhase: string;
-  walletPayingOrderId: string | null;
-  onRetryPayment: (order: Order) => void;
-}) {
-  const status = item.order_status ?? "";
-  const meta = getStatusMeta(status);
+function orderNumber(order: Order): string {
+  return order.order_number || order.id.slice(0, 8).toUpperCase();
+}
 
-  const paymentMethod = (item.payment_method ?? "").toLowerCase();
-  const isOnline = paymentMethod !== "cod" && paymentMethod !== "cash_on_delivery";
-  const isCancelled = CANCELLED_STATUSES.includes(status as any);
-  const isDelivered = status === "order_delivered";
-  const needsPayment =
-    isOnline && item.payment_status === "pending" && !isCancelled;
+// dismissTo pops to the live tabs route instead of leaving the original (tabs) underneath (W3 R6-04).
+function goHome() {
+  router.dismissTo("/(tabs)/home");
+}
 
-  const totalLabel = item.payment_status === "paid" ? "Total paid" : "Total payable";
-
+/** Placeholder with the row's geometry (thumbs · badge + date · total / names / two xs buttons). */
+function SkeletonOrderRow() {
   return (
-    <Card shadow="card" style={styles.card}>
-      <View style={styles.cardHeader}>
-        <View style={styles.headerText}>
-          <Text style={styles.orderNum} numberOfLines={1}>
-            #{item.order_number || item.id.slice(0, 8).toUpperCase()}
-          </Text>
-          <Text style={styles.orderDate}>{formatDate(item.created_at)}</Text>
+    <View style={styles.skelRow}>
+      <View style={styles.skelTop}>
+        <View style={styles.skelThumbs}>
+          <Skeleton width={40} height={40} radius={radius.md} />
+          <Skeleton width={40} height={40} radius={radius.md} style={styles.skelThumbOverlap} />
+          <Skeleton width={40} height={40} radius={radius.md} style={styles.skelThumbOverlap} />
         </View>
-        <View style={styles.badgeCol}>
-          <Badge
-            label={meta.label}
-            bg={meta.bg}
-            color={meta.color}
-            pill
-            style={styles.statusBadge}
-            textStyle={styles.statusText}
-          />
-          {needsPayment && (
-            <Badge
-              label="Payment pending"
-              bg={C.warningLight}
-              color={C.warning}
-              pill
-              style={styles.statusBadge}
-              textStyle={styles.statusText}
-            />
-          )}
+        <View style={styles.skelMeta}>
+          <Skeleton width={84} height={18} radius={radius.pill} />
+          <Skeleton width={140} height={12} />
         </View>
+        <Skeleton width={56} height={16} />
       </View>
-
-      <View style={styles.itemsWrap}>
-        {item.items?.slice(0, 3).map((it, idx) => (
-          <Text key={idx} style={styles.itemLine} numberOfLines={1}>
-            • {it.name} ×{formatQuantityDisplay(it.quantity)}
-          </Text>
-        ))}
-        {(item.items?.length ?? 0) > 3 && (
-          <Text style={styles.moreItems}>+{item.items!.length - 3} more items</Text>
-        )}
+      <Skeleton width="85%" height={13} />
+      <View style={styles.skelActions}>
+        <Skeleton width={96} height={36} radius={radius.xl} />
+        <Skeleton width={112} height={36} radius={radius.xl} />
       </View>
-
-      <View style={styles.cardFooter}>
-        <View style={styles.totalCol}>
-          <Text style={styles.totalLabel}>{totalLabel}</Text>
-          <Text style={styles.total} numberOfLines={1}>
-            ₹{Number(item.order_total).toFixed(2)}
-          </Text>
-        </View>
-        {needsPayment ? (
-          <View style={styles.actionRow}>
-            <PrimaryButton
-              size="xs"
-              variant="secondary"
-              label="Details"
-              onPress={() => router.push(`/order/${item.id}` as any)}
-              style={styles.actionBtn}
-            />
-            <TouchableOpacity
-              style={[
-                styles.actionBtn,
-                styles.actionBtnShadow,
-                styles.payNowBtn,
-                (paymentPhase !== "idle" || walletPayingOrderId === item.id) && styles.btnDisabled,
-              ]}
-              onPress={() => onRetryPayment(item)}
-              disabled={paymentPhase !== "idle" || walletPayingOrderId === item.id}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityState={{
-                disabled: paymentPhase !== "idle" || walletPayingOrderId === item.id,
-                busy: walletPayingOrderId === item.id,
-              }}
-            >
-              {walletPayingOrderId === item.id ? (
-                <ActivityIndicator size="small" color={C.card} />
-              ) : (
-                <MaterialCommunityIcons name="credit-card-fast-outline" size={16} color={C.card} />
-              )}
-              <Text style={styles.payNowText}>{walletPayingOrderId === item.id ? "Paying…" : "Pay now"}</Text>
-            </TouchableOpacity>
-          </View>
-        ) : isDelivered && isInvoiceAvailable(item) ? (
-          <PrimaryButton
-            size="xs"
-            variant="success"
-            icon="file-document-outline"
-            iconSize={16}
-            label="View Invoice"
-            onPress={() => router.push(`/order/invoice/${item.id}` as any)}
-            style={[styles.actionBtn, styles.actionBtnShadow]}
-          />
-        ) : isCancelled || isDelivered ? (
-          <PrimaryButton
-            size="xs"
-            icon="information-outline"
-            iconSize={16}
-            label="View Details"
-            onPress={() => router.push(`/order/${item.id}` as any)}
-            style={[styles.actionBtn, styles.actionBtnShadow, styles.detailsBtn]}
-          />
-        ) : (
-          <PrimaryButton
-            size="xs"
-            icon="map-marker-path"
-            iconSize={16}
-            label="Track Order"
-            onPress={() => router.push(`/order/track/${item.id}` as any)}
-            style={[styles.actionBtn, styles.actionBtnShadow]}
-          />
-        )}
-      </View>
-    </Card>
-  );
-});
-
-/** Placeholder with the exact OrderCard geometry, shown while the first fetch is in flight. */
-function SkeletonOrderCard() {
-  return (
-    <Card shadow="card" style={styles.card}>
-      <View style={styles.cardHeader}>
-        <View style={styles.headerText}>
-          <Skeleton width={110} height={14} />
-          <Skeleton width={150} height={10} style={styles.skelGap} />
-        </View>
-        <Skeleton width={84} height={22} radius={999} />
-      </View>
-      <View style={styles.itemsWrap}>
-        <Skeleton width="70%" height={13} />
-        <Skeleton width="55%" height={13} />
-        <Skeleton width="62%" height={13} />
-      </View>
-      <View style={styles.cardFooter}>
-        <View>
-          <Skeleton width={56} height={10} />
-          <Skeleton width={88} height={18} style={styles.skelGap} />
-        </View>
-        <Skeleton width={110} height={44} radius={12} />
-      </View>
-    </Card>
+    </View>
   );
 }
 
 export default function OrdersScreen() {
   const { userId, user, customer } = useAuth();
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [loading, setLoading] = useState(true);
+  const inhibitFeature = useDevFlag("Dev_Vega_inhibit_Feature");
+  const inhibitPoll = useDevFlag("Dev_Vega_inhibit_ActivePoll");
+  const inhibitReorder = useDevFlag("Dev_Vega_inhibit_Reorder");
+
+  // Seed synchronously from the memory mirror (Home / Order again may have fetched already); the disk cache and
+  // the network follow in the mount effect.
+  const [orders, setOrders] = useState<Order[]>(() => getMemoryOrders() ?? []);
+  const [loading, setLoading] = useState(() => getMemoryOrders() === null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pickedSegment, setPickedSegment] = useState<SegmentKey | null>(null);
+  const [limit, setLimit] = useState(PAGE_SIZE);
+  const [focused, setFocused] = useState(false);
+  const [appActive, setAppActive] = useState(() => AppState.currentState === "active");
+  // Snapshot of the rated-this-session set, refreshed on every focus so rows hide "Rate order" after rating.
+  const [ratedIds, setRatedIds] = useState<ReadonlySet<string>>(() => snapshotRatedOrders());
+
   const { phase: paymentPhase, payForOrder, RazorpayUI } = usePaymentFlow();
-  // Wallet retry bypasses usePaymentFlow entirely (it has no "wallet" phase),
-  // so paymentPhase never reflects it and the Pay-now button never actually
-  // disables — mirrors usePaymentFlow's own inFlight ref to guard against a
-  // fast double-tap firing two concurrent wallet debits. walletPayingId is
-  // the state twin of the same guard, used only to drive the button's
-  // loading/disabled UI (the ref remains the actual synchronous guard —
-  // state updates aren't guaranteed to have committed before a second tap).
+  // Wallet retry bypasses usePaymentFlow entirely (it has no "wallet" phase), so paymentPhase never reflects it
+  // and the Pay-now button would never actually disable — mirrors usePaymentFlow's own inFlight ref to guard
+  // against a fast double-tap firing two concurrent wallet debits. walletPayingId is the state twin of the same
+  // guard, used only to drive the button's loading/disabled UI (the ref remains the synchronous guard).
   const walletPaymentInFlight = useRef(false);
   const [walletPayingId, setWalletPayingId] = useState<string | null>(null);
 
-  const fetchOrders = useCallback(async (isRefresh = false) => {
-    try {
+  // Monotonic sequence so a slow response never overwrites a newer one (MAP §2.8 #30).
+  const seqRef = useRef(0);
+  const firstFocusRef = useRef(true);
+
+  const fetchOrders = useCallback(
+    async (opts?: { force?: boolean; background?: boolean }) => {
       if (!userId) {
         setOrders([]);
         setLoading(false);
         return;
       }
-      if (!isRefresh) setLoading(true);
-      const data = await getUserOrders(userId);
-      setOrders(data);
-      setError(null);
-    } catch (err) {
-      logError("Fetch orders", err);
-      const message =
-        err instanceof Error
-          ? err.message
-          : "Failed to load orders. Please try again.";
-      setError(message);
-      setOrders([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [userId]);
+      const seq = ++seqRef.current;
+      try {
+        const data = await getUserOrders(userId, { force: opts?.force });
+        if (seq !== seqRef.current) return;
+        setOrders((prev) => (sameOrders(prev, data) ? prev : data));
+        setError(null);
+      } catch (err) {
+        if (seq !== seqRef.current) return;
+        if (opts?.background) logSilentFailure("Poll orders", err);
+        else logError("Fetch orders", err);
+        setError(err instanceof Error ? err.message : "Couldn't load your orders");
+      } finally {
+        if (seq === seqRef.current) setLoading(false);
+      }
+    },
+    [userId],
+  );
 
+  // Mount: disk cache (when the memory mirror was empty) → network after interactions.
   useEffect(() => {
     if (!userId) {
       setLoading(false);
       return;
     }
     let cancelled = false;
-    (async () => {
-      const cached = await readUserOrdersCache(userId);
-      if (cancelled) return;
-      if (cached && cached.length > 0) {
-        setOrders(cached);
+    if (getMemoryOrders() === null) {
+      readUserOrdersCache(userId).then((cached) => {
+        if (cancelled || !cached || cached.length === 0) return;
+        setOrders((prev) => (prev.length === 0 ? cached : prev));
         setLoading(false);
-      }
-    })();
+      });
+    }
     const task = InteractionManager.runAfterInteractions(() => {
       if (!cancelled) fetchOrders();
     });
@@ -275,129 +180,279 @@ export default function OrdersScreen() {
     };
   }, [fetchOrders, userId]);
 
+  // Focus: track focus for the poll, re-check rated orders, and refresh (statuses change on the tracking screen).
+  useFocusEffect(
+    useCallback(() => {
+      setFocused(true);
+      setRatedIds(snapshotRatedOrders());
+      if (firstFocusRef.current) {
+        firstFocusRef.current = false;
+      } else if (!getDevFlag("Dev_Vega_inhibit_Feature")) {
+        fetchOrders({ background: true });
+      }
+      return () => setFocused(false);
+    }, [fetchOrders]),
+  );
+
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => setAppActive(state === "active"));
+    return () => sub.remove();
+  }, []);
+
+  const { active, past } = useMemo(() => splitActivePast(orders), [orders]);
+  const hasActive = active.length > 0;
+
+  // Poll: only with an active order, focused, foregrounded, and not inhibited. `force` skips the 20 s memory TTL
+  // (otherwise a tick inside the TTL window would just return the cached list).
+  useEffect(() => {
+    if (!userId || !hasActive || !focused || !appActive || inhibitPoll || inhibitFeature) return;
+    const intervalId = setInterval(() => fetchOrders({ force: true, background: true }), ACTIVE_POLL_MS);
+    return () => clearInterval(intervalId);
+  }, [userId, hasActive, focused, appActive, inhibitPoll, inhibitFeature, fetchOrders]);
+
+  // Vega off = mount-only fetch (CONTRACTS §7): reconnect must not refetch either (W3 R2-16).
+  useRefetchOnReconnect(() => fetchOrders({ force: true, background: true }), focused && !inhibitFeature);
+
   const onRefresh = useCallback(async () => {
+    feedback.tapSound();
     setRefreshing(true);
-    await fetchOrders(true);
+    await fetchOrders({ force: true });
     setRefreshing(false);
   }, [fetchOrders]);
 
+  // ─── Pay now (retry) ────────────────────────────────────────────────────────
   const handleRetryPayment = useCallback(
     async (order: Order) => {
-      const paymentMethod = (order.payment_method ?? "").toLowerCase();
-      if (paymentMethod === "wallet") {
+      const number = orderNumber(order);
+      const method = (order.payment_method ?? "").toLowerCase();
+
+      if (method === "wallet") {
         if (walletPaymentInFlight.current) return;
         walletPaymentInFlight.current = true;
         setWalletPayingId(order.id);
         try {
           await payOrderWithWallet(order.id);
-          Alert.alert("Payment successful", "Your order has been paid from your wallet.");
+          feedback.success(); // payment completed for a placed order — the same money moment as placement (lead: W3 F7 carve-out)
+          notify({
+            id: PAY_TOAST_ID,
+            tone: "success",
+            title: "Payment successful",
+            message: `Order ${number} was paid from your wallet`,
+          });
         } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : "Please try again.";
-          Alert.alert("Payment failed", message);
+          feedback.error();
+          notify({
+            id: PAY_TOAST_ID,
+            tone: "error",
+            title: "Payment failed",
+            message: err instanceof Error ? err.message : "Please try again",
+          });
         } finally {
           walletPaymentInFlight.current = false;
           setWalletPayingId(null);
-          fetchOrders(true);
+          invalidateOrders(userId);
+          fetchOrders({ force: true, background: true });
         }
         return;
       }
 
       const result = await payForOrder({
         internalOrderId: order.id,
+        userId,
         amount: order.order_total,
         customer: {
           name: user?.name || "Customer",
           email: user?.email || undefined,
           phone: user?.phone || customer?.phone || undefined,
         },
-        description: `Payment for order #${order.order_number || order.id.slice(0, 8).toUpperCase()}`,
+        description: `Payment for order #${number}`,
       });
 
       if (result.status === "paid") {
-        Alert.alert("Payment successful", "Your order has been paid.");
-        fetchOrders(true);
+        // Same post-payment housekeeping as checkout (W3 R2-14).
+        clearSavedPaymentMethodsCache();
+        markOrderPlaced().catch((err) => logSilentFailure("Mark order-placed flag", err));
+        feedback.success(); // payment completed for a placed order — the same money moment as placement (lead: W3 F7 carve-out)
+        notify({ id: PAY_TOAST_ID, tone: "success", title: "Payment successful", message: `Order ${number} is confirmed` });
+        invalidateOrders(userId);
+        fetchOrders({ force: true, background: true });
         return;
       }
       if (result.status === "error") {
-        Alert.alert("Payment unavailable", result.message);
+        feedback.error();
+        notify({ id: PAY_TOAST_ID, tone: "error", title: "Payment unavailable", message: result.message });
         return;
       }
-      fetchOrders(true);
+      invalidateOrders(userId);
+      fetchOrders({ force: true, background: true });
+      // A user-dismissed gateway sheet is not an error.
       if (result.reason === "cancelled") return;
-      Alert.alert("Payment not completed", result.message ?? "Please try again.");
+      feedback.error();
+      notify({
+        id: PAY_TOAST_ID,
+        tone: "error",
+        title: "Payment not completed",
+        message: result.message ?? "Please try again",
+        // "Money may have been debited" deserves a longer read.
+        duration: result.reason === "unverified" ? 6000 : undefined,
+      });
     },
-    [payForOrder, user, customer, fetchOrders],
+    [payForOrder, user, customer, fetchOrders, userId],
   );
 
-  const renderOrder = useCallback(({ item }: { item: Order }) => (
-    <OrderCard item={item} paymentPhase={paymentPhase} walletPayingOrderId={walletPayingId} onRetryPayment={handleRetryPayment} />
-  ), [paymentPhase, walletPayingId, handleRetryPayment]);
+  const handleReorder = useCallback((order: Order) => {
+    reorderOrder(order);
+  }, []);
 
-  const Header = (
-    <ScreenHeader
-      title="Previous Orders"
-      subtitle={orders.length > 0 ? `${orders.length} order${orders.length !== 1 ? "s" : ""}` : undefined}
-      align="left"
-      onBack={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)/home"))}
-    />
+  // ─── Segments / windowing ──────────────────────────────────────────────────
+  // Default to Past when nothing is active (an empty Active tab on open is a dead end).
+  const segment: SegmentKey = pickedSegment ?? (hasActive ? "active" : "past");
+  const list = inhibitFeature ? orders : segment === "active" ? active : past;
+  const visible = useMemo(() => (list.length > limit ? list.slice(0, limit) : list), [list, limit]);
+  const remaining = list.length - visible.length;
+
+  const segments = useMemo<Segment<SegmentKey>[]>(
+    () => [
+      { key: "active", label: "Active", count: active.length },
+      { key: "past", label: "Past", count: past.length },
+    ],
+    [active.length, past.length],
   );
 
-  if (loading) {
+  const onSegmentChange = useCallback((key: SegmentKey) => {
+    setPickedSegment(key);
+    setLimit(PAGE_SIZE);
+  }, []);
+
+  const payDisabled = paymentPhase !== "idle" || walletPayingId !== null;
+
+  const renderItem = useCallback(
+    ({ item }: ListRenderItemInfo<Order>) => {
+      const status = item.order_status ?? "";
+      const activeOrder = isActiveOrder(item);
+      const method = (item.payment_method ?? "").toLowerCase();
+      // An empty / null method (legacy rows) is NOT an online order to retry (W3 R2-21).
+      const isOnline = !!method && method !== "cod" && method !== "cash_on_delivery";
+      const needsPayment = isOnline && item.payment_status === "pending" && !CANCELLED.has(status);
+      return (
+        <OrderRow
+          order={item}
+          dateLabel={orderDateLabel(item)}
+          isActive={activeOrder}
+          showReorder={!activeOrder && !inhibitReorder && !inhibitFeature}
+          showRate={status === "order_delivered" && !ratedIds.has(item.id)}
+          needsPayment={needsPayment}
+          isPaying={walletPayingId === item.id}
+          payDisabled={payDisabled}
+          onReorder={handleReorder}
+          onPayNow={handleRetryPayment}
+        />
+      );
+    },
+    [inhibitReorder, inhibitFeature, walletPayingId, payDisabled, handleReorder, handleRetryPayment, ratedIds],
+  );
+
+  // ─── States ────────────────────────────────────────────────────────────────
+  const showSkeleton = useForceSkeleton(loading && orders.length === 0);
+  const slow = useSlowLoad(showSkeleton);
+  const count = orders.length;
+  const subtitle = count > 0 ? `${count} order${count === 1 ? "" : "s"}` : undefined;
+
+  const header = <ScreenHeader size="lg" title="My orders" subtitle={subtitle} backFallbackHref="/(tabs)/home" />;
+
+  if (showSkeleton) {
     return (
-      <Screen>
-        {Header}
-        <View style={styles.list} accessible accessibilityLabel="Loading your orders">
-          <SkeletonOrderCard />
-          <SkeletonOrderCard />
-          <SkeletonOrderCard />
-        </View>
+      <Screen bg={C.card}>
+        {header}
+        {!inhibitFeature ? (
+          <View style={styles.segmentWrap}>
+            <Skeleton height={36} radius={radius.lg} />
+          </View>
+        ) : null}
+        <SkeletonScreen label="Loading your orders">
+          {SKELETON_ROWS.map((i) => (
+            <SkeletonOrderRow key={i} />
+          ))}
+        </SkeletonScreen>
+        {slow ? (
+          <View style={styles.slowWrap}>
+            <Text style={styles.slowText}>Still loading… check your connection</Text>
+            <PrimaryButton size="xs" variant="ghost" label="Retry" onPress={() => fetchOrders({ force: true })} />
+          </View>
+        ) : null}
       </Screen>
     );
   }
 
   if (error && orders.length === 0) {
     return (
-      <Screen>
-        {Header}
+      <Screen bg={C.card}>
+        {header}
         <EmptyState
           fill
+          tone="error"
           icon="alert-circle-outline"
-          iconSize={64}
-          iconColor={C.danger}
-          title="Connection Error"
+          title="Couldn't load your orders"
           text={error}
-          action={{ label: "Retry", icon: "refresh", onPress: () => fetchOrders() }}
+          action={{ label: "Retry", icon: "refresh", onPress: () => fetchOrders({ force: true }) }}
         />
       </Screen>
     );
   }
 
+  const listEmpty =
+    !inhibitFeature && segment === "active" ? (
+      <EmptyState
+        iconWrap
+        icon="bike-fast"
+        title="No active orders"
+        text="Hungry? Fresh groceries in minutes"
+        action={{ label: "Start shopping", onPress: goHome }}
+      />
+    ) : (
+      <EmptyState
+        iconWrap
+        icon="package-variant-closed"
+        title="No orders yet"
+        text="Your order history will appear here"
+        action={{ label: "Start shopping", onPress: goHome }}
+      />
+    );
+
   return (
-    <Screen>
-      {Header}
+    <Screen bg={C.card}>
+      {header}
+      {!inhibitFeature ? (
+        <View style={styles.segmentWrap}>
+          <SegmentedControl segments={segments} value={segment} onChange={onSegmentChange} />
+        </View>
+      ) : null}
 
       <FlashList
-        data={orders}
-        keyExtractor={(item) => item.id}
+        data={visible}
+        keyExtractor={keyExtractor}
+        renderItem={renderItem}
         contentContainerStyle={styles.list}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={C.primary}
-            colors={[C.primary]}
-          />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} colors={[C.primary]} />
         }
-        ListEmptyComponent={
-          <EmptyState
-            icon="package-variant-closed"
-            title="No orders yet"
-            text="Your order history will appear here"
-          />
+        ListEmptyComponent={listEmpty}
+        ListFooterComponent={
+          remaining > 0 ? (
+            <View style={styles.footer}>
+              <PrimaryButton
+                size="sm"
+                variant="ghost"
+                label={`Show ${Math.min(PAGE_SIZE, remaining)} more`}
+                onPress={() => setLimit((l) => l + PAGE_SIZE)}
+                accessibilityLabel={`Show ${Math.min(PAGE_SIZE, remaining)} more orders, ${remaining} remaining`}
+              />
+            </View>
+          ) : null
         }
-        renderItem={renderOrder}
       />
+
       {RazorpayUI}
       <PaymentProcessingOverlay phase={paymentPhase} />
     </Screen>
@@ -405,67 +460,24 @@ export default function OrdersScreen() {
 }
 
 const styles = StyleSheet.create({
-  list: { paddingTop: 16, paddingBottom: 40 },
+  segmentWrap: {
+    paddingHorizontal: layout.gutter,
+    paddingVertical: 10,
+    backgroundColor: C.card,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+  },
+  list: { paddingBottom: layout.scrollBottom },
+  footer: { alignItems: "center", paddingVertical: 12 },
 
-  card: {
-    marginHorizontal: 16,
-    marginBottom: 12,
-    padding: 16,
-  },
-  cardHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: 12,
-    gap: 10,
-  },
-  headerText: { flex: 1 },
-  orderNum: { color: C.text, fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 16 },
-  orderDate: { fontFamily: "PlusJakartaSans_700Bold", color: C.textSub, fontSize: 12, marginTop: 4 },
-  badgeCol: { alignItems: "flex-end", gap: 6, flexShrink: 1, maxWidth: "55%" },
-  statusBadge: { alignSelf: "flex-end", paddingVertical: 4 },
-  statusText: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 11 },
+  slowWrap: { alignItems: "center", gap: 6, paddingVertical: 12 },
+  slowText: { ...text.caption, textAlign: "center" },
 
-  itemsWrap: { gap: 4, marginBottom: 12 },
-  itemLine: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.textSub, fontSize: 13 },
-  moreItems: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.textLight, fontSize: 12 },
-
-  cardFooter: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: C.border,
-  },
-  totalCol: { flexShrink: 1, marginRight: 12 },
-  totalLabel: { fontFamily: "PlusJakartaSans_600SemiBold",
-    color: C.textSub,
-    fontSize: 11,
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-    marginBottom: 2,
-  },
-  total: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 18 },
-  actionRow: { flexDirection: "row", gap: 8, flexShrink: 0 },
-  // Overrides on PrimaryButton size="xs" (r10 pv10) so every footer action clears a 44pt target.
-  actionBtn: { paddingVertical: 12, minHeight: 44, borderRadius: 12 },
-  actionBtnShadow: { shadowOpacity: 0.15, shadowRadius: 4, elevation: 2 },
-  detailsBtn: { backgroundColor: C.textSub },
-  // Pay now stays a local touchable: it swaps the icon for a spinner while keeping the
-  // "Paying…" label visible, which PrimaryButton's `loading` mode does not do.
-  payNowBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingHorizontal: 16,
-    backgroundColor: C.warning,
-    shadowColor: C.warning,
-    shadowOffset: { width: 0, height: 2 },
-  },
-  payNowText: { ...text.buttonXs },
-  btnDisabled: { opacity: 0.6 },
-
-  skelGap: { marginTop: 6 },
+  // Skeleton twins of OrderRow
+  skelRow: { paddingHorizontal: layout.gutter, paddingVertical: 14, gap: 10, borderBottomWidth: 1, borderBottomColor: C.border },
+  skelTop: { flexDirection: "row", alignItems: "center", gap: 12 },
+  skelThumbs: { flexDirection: "row", alignItems: "center" },
+  skelThumbOverlap: { marginLeft: -8 },
+  skelMeta: { flex: 1, gap: 6 },
+  skelActions: { flexDirection: "row", gap: 8 },
 });

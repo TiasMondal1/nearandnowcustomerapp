@@ -1,78 +1,190 @@
+// codename: nova
+// Order confirmation — the ONE success moment (design/blinkit-parity §3.10 / BP-20 · speed #11 · motion M10).
+// SuccessHeader plays the single `success` feedback per order id for every payment mode; the add-more window charges
+// ONLY through its explicit "Pay ₹X to add N items" button (MAP C14 / §7.16 — the 30 s auto-run effect is gone);
+// suggestions come from the warm catalog cache (0 catalog requests); the countdown ticks inside AddMoreWindow alone.
+import { useRazorpay, type RazorpayErrorResponse, type RazorpaySuccessResponse } from "@codearcade/expo-razorpay";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import {
-    ActivityIndicator,
-    Animated,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
-} from "react-native";
+import { FlatList, InteractionManager, ScrollView, StyleSheet, Text, View, type ListRenderItemInfo } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRazorpay } from "@codearcade/expo-razorpay";
 
 import {
-    Card,
-    Divider,
-    IconButton,
-    PrimaryButton,
-    Screen,
-    Skeleton,
-    SkeletonCircle,
+  ADD_MORE_WINDOW_SECONDS,
+  AddMoreWindow,
+  remainingAddMoreSeconds,
+  UNVERIFIED_COPY,
+  type AddItemsPhase,
+} from "../../../components/confirmation/AddMoreWindow";
+import { SuccessHeader } from "../../../components/confirmation/SuccessHeader";
+import {
+  BottomDock,
+  Divider,
+  EmptyState,
+  IconButton,
+  PrimaryButton,
+  ProductCard,
+  Screen,
+  Skeleton,
+  SkeletonCircle,
+  SkeletonScreen,
+  notify,
+  useDockHeight,
 } from "../../../components/ui";
 import { C } from "../../../constants/colors";
-import { PLATFORM_FEE, HANDLING_FEE, DELIVERY_FEE_WAS } from "../../../constants/fees";
+import { fontFamily, iconSize, layout, radius, text } from "../../../constants/ui";
 import { useAuth } from "../../../context/AuthContext";
 import { useCart } from "../../../context/CartContext";
-import { useLocation } from "../../../context/LocationContext";
+import { useLocation, type ActiveLocation } from "../../../context/LocationContext";
+import { useForceSkeleton } from "../../../hooks/useSlowLoad";
+import { getDevFlag } from "../../../lib/devFlags";
+import { feedback } from "../../../lib/feedback";
+import { formatMoney } from "../../../lib/formatMoney";
 import { cdnImage } from "../../../lib/imageUrl";
-import { getOrderById, type Order } from "../../../lib/orderService";
+import { isInvoiceAvailable } from "../../../lib/invoiceEligibility";
 import { logError } from "../../../lib/logError";
 import { logSilentFailure } from "../../../lib/logSilentFailure";
-import { getAllProducts, type Product } from "../../../lib/productService";
 import { createAdditionPayment, verifyAdditionPayment } from "../../../lib/orderAdditionService";
-import { getNearbyProductFilter } from "../../../lib/storeService";
+import { getOrderById, peekOrder, type Order, type OrderItem } from "../../../lib/orderService";
+import { getMemoryHomeCache, getPopularProducts, type Product } from "../../../lib/productService";
 import { formatQuantityDisplay } from "../../../lib/quantityFormat";
-import { isInvoiceAvailable } from "../../../lib/invoiceEligibility";
+import { peekNearbyProductFilter } from "../../../lib/storeService";
 
-// Matches ADD_ITEMS_WINDOW_MS's 35s server-side backstop in
-// backend/src/controllers/orderAdditions.controller.ts (a few seconds'
-// grace beyond this client countdown, for request latency) — this is the
-// number the customer actually sees and the one that should feel authoritative.
-const ADD_MORE_WINDOW_SECONDS = 30;
+// ─── Constants ────────────────────────────────────────────────────────────────
 
-type AddItemsPhase = "idle" | "processing" | "done" | "failed";
+/** Quick-add rail length. */
+const RAIL_COUNT = 6;
+/** Item rows shown before "+N more items" (unchanged from the previous screen). */
+const SUMMARY_PREVIEW_ROWS = 5;
+/** One retry on a failed order fetch, after this pause (the first failure is usually the post-payment write racing the read). */
+const RETRY_DELAY_MS = 700;
+/** `apiFetch` maps a 404 to exactly this message (lib/apiClient.ts) — the only not-found signal it exposes. */
+const NOT_FOUND_MESSAGE = "Resource not found.";
+/** Shorter than apiFetch's 30 s default so a stalled gateway setup / verify fails fast while the window is open. */
+const CREATE_PAYMENT_TIMEOUT_MS = 15_000;
+const VERIFY_PAYMENT_TIMEOUT_MS = 20_000;
+/** After an unverified add-on charge: poll the order 3 × 2 s and promote to done when its items grew (W3 R2-01). */
+const UNVERIFIED_POLL_ATTEMPTS = 3;
+const UNVERIFIED_POLL_INTERVAL_MS = 2000;
+/** Forced-gateway dev seam: a short beat so the processing state is visible (mirrors usePaymentFlow's "preparing"). */
+const SIMULATED_GATEWAY_MS = 600;
+/** One toast id for the add-items flow so a retry nudges the existing toast instead of stacking. */
+const ADD_ITEMS_TOAST_ID = "add-items";
+/** Summary thumb: 40 px on screen → 80 px CDN hint. */
+const THUMB_SIZE = 40;
+const THUMB_CDN_WIDTH = 80;
+const SKELETON_ROWS = [0, 1, 2];
+
+type LoadState = "loading" | "ready" | "error" | "notFound" | "signedOut";
+
+type GatewayResult =
+  | { kind: "success"; razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string }
+  | { kind: "cancelled" }
+  | { kind: "failed"; description?: string };
+
+type SuggestionSet = { key: string; products: Product[] };
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** `getOrderById` with one retry; a 404 is final (the retry would only 404 again). */
+async function fetchOrderWithRetry(orderId: string): Promise<Order> {
+  try {
+    return await getOrderById(orderId);
+  } catch (err) {
+    if (err instanceof Error && err.message === NOT_FOUND_MESSAGE) throw err;
+    await sleep(RETRY_DELAY_MS);
+    return getOrderById(orderId);
+  }
+}
+
+/**
+ * Quick-add suggestions from memory only (speed #11 / MAP P9 — 0 catalog requests): the warm home catalog filtered
+ * by the cached nearby set for the delivery location, minus what is already in the order and anything out of stock;
+ * when no nearby set is in memory yet, the precomputed popular list. No location → nothing (MAP §2.11 #39: the
+ * platform-wide catalog never leaks past the 4 km radius; these items are addable to the order).
+ */
+function pickSuggestions(order: Order | null, location: ActiveLocation | null): Product[] {
+  if (!location) return [];
+  const inOrder = new Set<string>();
+  for (const item of order?.items ?? []) {
+    if (item.master_product_id) inOrder.add(item.master_product_id);
+    if (item.product_id) inOrder.add(item.product_id);
+  }
+  const eligible = (p: Product) => p.in_stock !== false && !inOrder.has(p.id);
+
+  const nearby = peekNearbyProductFilter(location.latitude, location.longitude);
+  if (nearby) {
+    const products = getMemoryHomeCache()?.products ?? [];
+    const available = products.filter((p) => nearby.productIds.has(p.id) && eligible(p));
+    // Fisher-Yates — `sort(() => Math.random() - 0.5)` is a classic
+    // biased-shuffle bug (comparator-based sorts don't guarantee a
+    // uniform random permutation from an inconsistent comparator).
+    const shuffled = [...available];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled.slice(0, RAIL_COUNT);
+  }
+  return getPopularProducts(RAIL_COUNT + inOrder.size).filter(eligible).slice(0, RAIL_COUNT);
+}
+
+// dismissTo pops to the live tabs route (the stack is already [(tabs), confirmation]) instead of mounting a second
+// tab navigator (W3 R6-04).
+function goHome(): void {
+  router.dismissTo("/(tabs)/home");
+}
+
+function goToOrders(): void {
+  router.replace("/orders");
+}
+
+/** "Go to cart" → checkout: checkout IS the cart (DECISIONS D5). */
+function goToCart(): void {
+  router.push("/support/checkout");
+}
+
+const railKeyExtractor = (p: Product) => p.id;
+const renderRailItem = ({ item }: ListRenderItemInfo<Product>) => (
+  <ProductCard variant="rail" stepperSize="xs" product={item} testID={`confirmation-rail-${item.id}`} />
+);
+const RailGap = () => <View style={styles.railGap} />;
+
+// ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function OrderConfirmationScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { userId, user, isLoading: authLoading } = useAuth();
-  const { items: cartItems, addItem, clearCart } = useCart();
-  const { location } = useLocation();
+  const { items: cartItems, subtotal: cartSubtotal, itemCount, clearCart } = useCart();
+  const { location, locationKey } = useLocation();
   const { openCheckout, closeCheckout, RazorpayUI } = useRazorpay();
-
-  const [order, setOrder] = useState<Order | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [retryTick, setRetryTick] = useState(0);
-  const [timeLeft, setTimeLeft] = useState(ADD_MORE_WINDOW_SECONDS);
-  const [timerExpired, setTimerExpired] = useState(false);
-  const [suggestedProducts, setSuggestedProducts] = useState<Product[]>([]);
-  const [loadingSuggestions, setLoadingSuggestions] = useState(true);
-  const [addItemsPhase, setAddItemsPhase] = useState<AddItemsPhase>("idle");
-  const [addItemsError, setAddItemsError] = useState<string | null>(null);
-  // Sync guard: the timerExpired effect can re-run (e.g. StrictMode double-
-  // invoke, or order/cartItems changing) — this ensures the addition flow
-  // only ever fires once per screen visit.
-  const addItemsStartedRef = useRef(false);
-
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-  const progressAnim = useRef(new Animated.Value(1)).current;
   const insets = useSafeAreaInsets();
+  const dockHeight = useDockHeight();
 
-  // Load order details
+  // Seed from the memory mirror (filled by createOrder / the orders list) so the celebration paints on frame one.
+  const [order, setOrder] = useState<Order | null>(() => (id ? (peekOrder(id) ?? null) : null));
+  const [loadState, setLoadState] = useState<LoadState>(() => (id && peekOrder(id) ? "ready" : "loading"));
+  const [retryTick, setRetryTick] = useState(0);
+
+  const [addPhase, setAddPhase] = useState<AddItemsPhase>("idle");
+  const [addError, setAddError] = useState<string | null>(null);
+  // Sync re-entrancy lock (state alone cannot stop a double tap — MAP §7.16).
+  const payBusyRef = useRef(false);
+
+  const placedAtMs = order ? Date.parse(order.created_at) : Number.NaN;
+  // null = not known yet (no order on screen); seeded for the first frame, settled in the effect below, closed by the
+  // window's own tick. Never computed during a re-render (MAP C46: no clock reads in render).
+  const [windowOpen, setWindowOpen] = useState<boolean | null>(() =>
+    Number.isFinite(placedAtMs) ? remainingAddMoreSeconds(placedAtMs) > 0 : null,
+  );
+
+  // ─── Load order (seed → fetch with one retry) ────────────────────────────
   useEffect(() => {
     // While auth is still hydrating, `userId` is transiently null — wait
     // for it rather than treating that the same as "genuinely logged out".
@@ -84,952 +196,500 @@ export default function OrderConfirmationScreen() {
     // screen stuck on the spinner forever in that case.
     if (!id) return;
     if (!userId) {
-      if (!authLoading) {
-        setLoading(false);
-        setLoadError("Please log in to view this order.");
-      }
+      if (!authLoading) setLoadState((s) => (s === "ready" ? s : "signedOut"));
       return;
     }
     let cancelled = false;
-    setLoading(true);
-    setLoadError(null);
+    // A seeded order stays on screen while the fresh copy loads (SWR); only a cold load shows the skeleton.
+    setLoadState((s) => (s === "ready" ? s : "loading"));
 
-    (async () => {
-      try {
-        const found = await getOrderById(id);
-        if (!cancelled) setOrder(found);
-      } catch (err) {
-        logError("Load order", err);
-        if (!cancelled) {
-          setLoadError(
-            err instanceof Error ? err.message : "Couldn't load your order details.",
-          );
+    const task = InteractionManager.runAfterInteractions(() => {
+      (async () => {
+        try {
+          const found = await fetchOrderWithRetry(id);
+          if (cancelled) return;
+          setOrder(found);
+          setLoadState("ready");
+        } catch (err) {
+          if (cancelled) return;
+          logError("Load order", err);
+          const notFound = err instanceof Error && err.message === NOT_FOUND_MESSAGE;
+          setLoadState((s) => (s === "ready" ? s : notFound ? "notFound" : "error"));
         }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
+      })();
+    });
 
     return () => {
       cancelled = true;
+      task.cancel();
     };
   }, [id, userId, authLoading, retryTick]);
 
-  // Load suggested products
+  // Settle the window state once the order (and so `placed_at`) is known; the seed above covers the warm path.
   useEffect(() => {
-    let cancelled = false;
+    if (!Number.isFinite(placedAtMs)) return;
+    setWindowOpen((open) => (open === null ? remainingAddMoreSeconds(placedAtMs) > 0 : open));
+  }, [placedAtMs]);
 
-    (async () => {
-      try {
-        // These suggestions are addable to the order, so they must be
-        // restricted the same way as every other product surface: only
-        // products from stores within 0-4 km of the customer's delivery
-        // location, not every active store platform-wide.
-        if (!location) {
-          if (!cancelled) setSuggestedProducts([]);
-          return;
-        }
-        const nearbyFilter = await getNearbyProductFilter(location.latitude, location.longitude);
-        const nearbyIds = nearbyFilter?.productIds ?? new Set<string>();
-        const products = await getAllProducts({ nearbyIds });
-        if (!cancelled) {
-          // Get random products not in the current order
-          const orderProductIds = new Set(order?.items?.map((i) => i.product_id) ?? []);
-          const available = products.filter((p) => !orderProductIds.has(p.id));
-          // Fisher-Yates — `sort(() => Math.random() - 0.5)` is a classic
-          // biased-shuffle bug (comparator-based sorts don't guarantee a
-          // uniform random permutation from an inconsistent comparator).
-          const shuffled = [...available];
-          for (let i = shuffled.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-          }
-          setSuggestedProducts(shuffled.slice(0, 6));
-        }
-      } catch (err) {
-        logSilentFailure("Load suggested products", err);
-      } finally {
-        if (!cancelled) setLoadingSuggestions(false);
-      }
-    })();
+  const handleWindowExpired = useCallback(() => setWindowOpen(false), []);
 
-    return () => {
-      cancelled = true;
+  // ─── Quick-add suggestions (memory only; keyed on order id + location key, not the order object) ──
+  const orderId = order?.id ?? null;
+  const suggestionKey = `${orderId ?? ""}|${locationKey ?? ""}`;
+  const [suggestions, setSuggestions] = useState<SuggestionSet>(() => ({
+    key: suggestionKey,
+    products: pickSuggestions(order, location),
+  }));
+  useEffect(() => {
+    setSuggestions((prev) => (prev.key === suggestionKey ? prev : { key: suggestionKey, products: pickSuggestions(order, location) }));
+  }, [suggestionKey, order, location]);
+
+  // ─── Add items: EXPLICIT button only (C14) ────────────────────────────────
+  const handlePayToAdd = useCallback(async () => {
+    if (!id || payBusyRef.current) return;
+    const items = cartItems;
+    if (items.length === 0) return;
+    payBusyRef.current = true;
+    setAddPhase("processing");
+    setAddError(null);
+
+    const finishSuccess = () => {
+      // Silent clear: the verified-payment `success` below is the one feedback for this gesture.
+      clearCart({ silent: true });
+      setAddPhase("done");
+      feedback.success();
+      notify({ id: ADD_ITEMS_TOAST_ID, tone: "success", title: "Items added to your order", message: "They'll arrive with this delivery" });
+      // Refresh the order so the summary below reflects the newly-added items.
+      getOrderById(id)
+        .then(setOrder)
+        .catch((err) => logSilentFailure("Refresh order after add-items", err));
     };
-  }, [order, location]);
 
-  // Re-anchor the countdown to the order's actual placed time once it loads,
-  // rather than trusting "time since this screen happened to mount". A pure
-  // mount-relative timer would show a fresh, misleading "30s left!" if this
-  // screen ever remounts long after the order was actually placed (app
-  // killed and reopened, a stale deep link, Fast Refresh in dev) — the
-  // backend's own window (ADD_ITEMS_WINDOW_MS in orderAdditions.controller.ts)
-  // is anchored to placed_at, so a customer could go through the trouble of
-  // adding items only to have the server reject them as late, with the
-  // screen never having shown anything was wrong.
-  useEffect(() => {
-    if (!order?.created_at) return;
-    const placedAtMs = new Date(order.created_at).getTime();
-    const elapsedSec = Math.floor((Date.now() - placedAtMs) / 1000);
-    const remaining = Math.max(0, ADD_MORE_WINDOW_SECONDS - elapsedSec);
-    setTimeLeft(remaining);
-    if (remaining <= 0) setTimerExpired(true);
-  }, [order?.created_at]);
-
-  // Countdown timer
-  useEffect(() => {
-    if (timerExpired) return;
-
-    const interval = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          clearInterval(interval);
-          setTimerExpired(true);
-          return 0;
-        }
-        return prev - 1;
+    // Cancelled or failed at the gateway — items stay in the ordinary cart, exactly
+    // as they would have before this feature existed. The order is untouched;
+    // the customer just didn't complete the add-on purchase.
+    const rejectGateway = (result: Exclude<GatewayResult, { kind: "success" }>) => {
+      setAddPhase("idle");
+      feedback.error();
+      notify({
+        id: ADD_ITEMS_TOAST_ID,
+        tone: "error",
+        title: result.kind === "cancelled" ? "Payment cancelled" : "Payment didn't go through",
+        message: result.kind === "failed" && result.description ? result.description : "Your items are still in the cart",
       });
-    }, 1000);
+    };
 
-    return () => clearInterval(interval);
-  }, [timerExpired]);
-
-  // When the window closes, whatever's in the cart was added during it (the
-  // checkout screen already clears the cart on successful placement, so
-  // there's nothing pre-existing to conflate it with) — merge those items
-  // into this same order via a separate Razorpay charge for just the delta.
-  useEffect(() => {
-    // Previously this only checked `id` (the route param), not whether the
-    // order-load effect above had actually settled — a slow order fetch
-    // still in flight when the 30s timer fired could let this proceed with
-    // no local order data loaded yet. Not exploitable (the backend
-    // independently re-validates ownership/timing regardless), but a real
-    // UX gap: waiting on `loading` here ties the two effects together so
-    // add-items can't start until the order fetch has settled one way or
-    // the other.
-    if (!timerExpired || addItemsStartedRef.current || loading) return;
-    if (cartItems.length === 0 || !id) return;
-    addItemsStartedRef.current = true;
-
-    (async () => {
-      setAddItemsPhase("processing");
-      setAddItemsError(null);
-      try {
-        const paymentOrder = await createAdditionPayment(
-          id,
-          cartItems.map((it) => ({ product_id: it.product_id, quantity: it.quantity }))
-        );
-
-        const gatewayResult = await new Promise<
-          | { kind: "success"; razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string }
-          | { kind: "cancelled" }
-          | { kind: "failed"; description?: string }
-        >((resolve) => {
-          openCheckout(
-            {
-              key: paymentOrder.key_id,
-              amount: paymentOrder.amount,
-              currency: paymentOrder.currency,
-              order_id: paymentOrder.razorpay_order_id,
-              name: "Near & Now",
-              description:
-                paymentOrder.razorpay_mode === "test"
-                  ? "Test payment (Razorpay sandbox)"
-                  : "Additional items for your order",
-              prefill: {
-                name: user?.name || "Customer",
-                email: user?.email || "",
-                contact: user?.phone || "",
-              },
-              theme: { color: C.primary },
-            },
-            {
-              onSuccess: (response: { razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string }) => {
-                resolve({
-                  kind: "success",
-                  razorpay_payment_id: response.razorpay_payment_id,
-                  razorpay_order_id: response.razorpay_order_id,
-                  razorpay_signature: response.razorpay_signature,
-                });
-              },
-              onFailure: (error: { description?: string }) => resolve({ kind: "failed", description: error?.description }),
-              onClose: () => resolve({ kind: "cancelled" }),
-            }
-          );
-        });
-        closeCheckout?.();
-
-        if (gatewayResult.kind !== "success") {
-          // Cancelled or failed — items stay in the ordinary cart, exactly
-          // as they would have before this feature existed. Not an error;
-          // the customer just didn't complete the add-on purchase.
-          setAddItemsPhase("idle");
+    try {
+      // ─── Dev seam: forced gateway result ───────────────────────────────
+      // Same enum semantics as usePaymentFlow (hooks/usePaymentFlow.ts): anything but 'off' short-circuits BEFORE
+      // /add-items/create-payment, so nothing reaches Razorpay or the backend and the order is untouched.
+      // 'paid' exercises the success path locally (the backend never saw the addition, so the refreshed summary will
+      // not list the items — expected, as on checkout); 'cancelled' / 'failed' take the real gateway-rejected path;
+      // 'unverified' takes the real verify-failed path.
+      const forced = getDevFlag("Dev_Payment_inhibit_GatewayResult");
+      if (forced !== "off") {
+        await sleep(SIMULATED_GATEWAY_MS);
+        if (forced === "paid") {
+          finishSuccess();
           return;
         }
-
-        await verifyAdditionPayment(id, {
-          request_id: paymentOrder.request_id,
-          razorpay_payment_id: gatewayResult.razorpay_payment_id,
-          razorpay_order_id: gatewayResult.razorpay_order_id,
-          razorpay_signature: gatewayResult.razorpay_signature,
-        });
-
-        clearCart();
-        setAddItemsPhase("done");
-        // Refresh the order so the summary below reflects the newly-added items.
-        if (id) {
-          getOrderById(id)
-            .then(setOrder)
-            .catch((err) => logSilentFailure("Refresh order after add-items", err));
+        if (forced === "unverified") {
+          throw new Error("We couldn't confirm the payment (simulated by the dev panel). Your items are still in the cart.");
         }
-      } catch (err: any) {
-        logError("Add items to order", err);
-        setAddItemsError(err?.message || "Couldn't add your items to this order. They're still in your cart.");
-        setAddItemsPhase("failed");
+        rejectGateway(forced === "cancelled" ? { kind: "cancelled" } : { kind: "failed", description: "Simulated by the dev panel" });
+        return;
       }
-    })();
-  }, [timerExpired, cartItems, id, userId, loading, openCheckout, closeCheckout, clearCart, user]);
 
-  // Progress bar animation
-  useEffect(() => {
-    Animated.timing(progressAnim, {
-      toValue: timeLeft / ADD_MORE_WINDOW_SECONDS,
-      duration: 1000,
-      useNativeDriver: false,
-    }).start();
-  }, [timeLeft]);
+      const paymentOrder = await createAdditionPayment(
+        id,
+        items.map((it) => ({ product_id: it.product_id, quantity: it.quantity })),
+        { timeoutMs: CREATE_PAYMENT_TIMEOUT_MS },
+      );
 
-  // Pulse animation for timer
-  useEffect(() => {
-    if (timerExpired) return;
-
-    const pulse = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, {
-          toValue: 1.05,
-          duration: 500,
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulseAnim, {
-          toValue: 1,
-          duration: 500,
-          useNativeDriver: true,
-        }),
-      ])
-    );
-    pulse.start();
-
-    return () => pulse.stop();
-  }, [timerExpired]);
-
-  const handleAddToCart = useCallback(
-    (product: Product) => {
-      addItem({
-        product_id: product.id,
-        name: product.name,
-        price: product.price,
-        image_url: product.image_url,
-        unit: product.unit,
-        isLoose: product.isLoose,
+      const gatewayResult = await new Promise<GatewayResult>((resolve) => {
+        openCheckout(
+          {
+            key: paymentOrder.key_id,
+            amount: paymentOrder.amount,
+            currency: paymentOrder.currency,
+            order_id: paymentOrder.razorpay_order_id,
+            name: "Near & Now",
+            description:
+              paymentOrder.razorpay_mode === "test"
+                ? "Test payment (Razorpay sandbox)"
+                : "Additional items for your order",
+            prefill: {
+              name: user?.name || "Customer",
+              email: user?.email || "",
+              contact: user?.phone || "",
+            },
+            theme: { color: C.primary },
+          },
+          {
+            onSuccess: (response: RazorpaySuccessResponse) =>
+              resolve({
+                kind: "success",
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_signature: response.razorpay_signature,
+              }),
+            onFailure: (error: RazorpayErrorResponse["error"]) => resolve({ kind: "failed", description: error?.description }),
+            onClose: () => resolve({ kind: "cancelled" }),
+          },
+        );
       });
-    },
-    [addItem]
-  );
+      closeCheckout?.();
 
-  const handleGoToCart = useCallback(() => {
-    router.push("/cart");
-  }, []);
+      if (gatewayResult.kind !== "success") {
+        rejectGateway(gatewayResult);
+        return;
+      }
+
+      // ─── Verify: its own try — the customer has been DEBITED by now ───────
+      // A verify failure (timeout, 5xx, network) after a gateway success is money-ambiguous: the webhook may still
+      // settle it. Never report it as "items still in your cart" with a live Pay button (W3 R2-01): the window goes
+      // to 'unverified' (no Pay button, debit/refund copy) and a short poll promotes it to 'done' if the order grew.
+      try {
+        await verifyAdditionPayment(
+          id,
+          {
+            request_id: paymentOrder.request_id,
+            razorpay_payment_id: gatewayResult.razorpay_payment_id,
+            razorpay_order_id: gatewayResult.razorpay_order_id,
+            razorpay_signature: gatewayResult.razorpay_signature,
+          },
+          { timeoutMs: VERIFY_PAYMENT_TIMEOUT_MS, userId },
+        );
+      } catch (err) {
+        logError("Verify add-items payment", err);
+        setAddError(UNVERIFIED_COPY);
+        setAddPhase("unverified");
+        feedback.error();
+        notify({ id: ADD_ITEMS_TOAST_ID, tone: "warning", title: "Payment received — confirming", message: "Don't pay again", duration: 6000 });
+        const before = order?.items?.length ?? 0;
+        for (let attempt = 0; attempt < UNVERIFIED_POLL_ATTEMPTS; attempt += 1) {
+          await sleep(UNVERIFIED_POLL_INTERVAL_MS);
+          try {
+            const fresh = await getOrderById(id);
+            if ((fresh.items?.length ?? 0) > before) {
+              setOrder(fresh);
+              finishSuccess();
+              return;
+            }
+          } catch (pollErr) {
+            logSilentFailure("Poll order after unverified add-items", pollErr);
+          }
+        }
+        return;
+      }
+      finishSuccess();
+    } catch (err) {
+      logError("Add items to order", err);
+      const message = err instanceof Error && err.message ? err.message : "Couldn't add your items to this order. They're still in your cart.";
+      setAddError(message);
+      setAddPhase("failed");
+      feedback.error();
+      notify({ id: ADD_ITEMS_TOAST_ID, tone: "error", title: "Couldn't add those items", message });
+    } finally {
+      payBusyRef.current = false;
+    }
+  }, [id, cartItems, clearCart, openCheckout, closeCheckout, user, userId, order?.items?.length]);
+
+  const handleRetry = useCallback(() => setRetryTick((n) => n + 1), []);
+
+  // Dev_Onyx_inhibit_SkeletonExit forces the skeleton like every other screen (W3 R3-08).
+  const showSkeleton = useForceSkeleton(!order && loadState === "loading");
 
   const handleTrackOrder = useCallback(() => {
-    router.replace(`/order/track/${id}` as any);
+    if (!id) return;
+    // replace (not push) so Back from tracking lands on Home, as goToOrderConfirmation() intends.
+    router.replace(`/order/track/${id}`);
   }, [id]);
 
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
-  };
+  const handleInvoice = useCallback(() => {
+    if (!id) return;
+    router.push(`/order/invoice/${id}`);
+  }, [id]);
 
-  const progressWidth = progressAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["0%", "100%"],
-  });
-
-  const timerColor = timeLeft <= 10 ? C.danger : timeLeft <= 20 ? C.warning : C.primary;
-
-  if (loading) {
-    return (
-      <Screen edges={["left", "right", "bottom"]}>
-        <View
-          style={[styles.successHeader, { paddingTop: 32 + insets.top }]}
-          accessible
-          accessibilityLabel="Loading order details"
-        >
-          <SkeletonCircle size={64} color={C.card} style={styles.successIconWrap} />
-          <Skeleton width={230} height={22} color={C.card} />
-          <Skeleton width={120} height={14} color={C.card} style={styles.skelGap8} />
-          <Skeleton width={260} height={12} color={C.card} style={styles.skelGap8} />
-        </View>
-
-        <Card style={styles.skeletonCard}>
-          <View style={styles.timerHeader}>
-            <SkeletonCircle size={24} />
-            <View style={styles.flex1}>
-              <Skeleton width="60%" height={14} />
-              <Skeleton width="85%" height={12} style={styles.skelGap6} />
+  // ─── Loading / error / not-found (no celebration until an order is on screen) ──
+  if (!order || showSkeleton) {
+    if (showSkeleton) {
+      return (
+        <Screen bg={C.card} edges={["left", "right"]} testID="confirmation-loading">
+          <SkeletonScreen label="Loading your order…" style={styles.flex1}>
+            <View style={[styles.skelBand, { paddingTop: insets.top + 24 }]}>
+              <SkeletonCircle size={96} color={C.card} />
+              <Skeleton width={200} height={24} radius={radius.md} color={C.card} style={styles.skelGap20} />
+              <Skeleton width={120} height={14} color={C.card} style={styles.skelGap8} />
             </View>
-          </View>
-          <View style={styles.timerDisplay}>
-            <Skeleton width={120} height={44} radius={10} />
-            <Skeleton width={72} height={12} style={styles.skelGap8} />
-          </View>
-          <Skeleton height={6} radius={3} />
-        </Card>
+            <View style={styles.skelRows}>
+              {SKELETON_ROWS.map((i) => (
+                <View key={i} style={styles.skelRow}>
+                  <Skeleton width={THUMB_SIZE} height={THUMB_SIZE} radius={radius.lg} />
+                  <View style={styles.flex1}>
+                    <Skeleton width="70%" height={14} />
+                    <Skeleton width="40%" height={12} style={styles.skelGap6} />
+                  </View>
+                  <Skeleton width={48} height={14} />
+                </View>
+              ))}
+            </View>
+          </SkeletonScreen>
+          <IconButton icon="close" bg="transparent" accessibilityLabel="Close" onPress={goHome} style={[styles.closeFloating, { top: insets.top + 8 }]} />
+        </Screen>
+      );
+    }
 
-        <Card style={styles.skeletonCard}>
-          <View style={styles.loadingRow}>
-            <ActivityIndicator size="small" color={C.primary} />
-            <Text style={styles.loadingText}>Loading order details...</Text>
-          </View>
-        </Card>
-      </Screen>
-    );
-  }
-
-  if (!order || loadError) {
     return (
-      <Screen>
-        <View style={styles.center}>
-          <MaterialCommunityIcons name="alert-circle-outline" size={48} color={C.textLight} />
-          <Text style={styles.loadingText}>
-            {loadError || "Couldn't load your order details."}
-          </Text>
-          <PrimaryButton
-            size="sm"
-            label="Try Again"
-            onPress={() => setRetryTick((n) => n + 1)}
-          />
-          <TouchableOpacity
-            onPress={() => router.replace("/orders")}
-            activeOpacity={0.7}
-            style={styles.retryLink}
-            hitSlop={{ top: 4, bottom: 4 }}
-            accessibilityRole="button"
-          >
-            <Text style={styles.retryLinkText}>Go to My Orders</Text>
-          </TouchableOpacity>
+      <Screen bg={C.card} edges={["left", "right"]} testID={`confirmation-${loadState}`}>
+        <View style={[styles.stateHeader, { paddingTop: insets.top + 8 }]}>
+          <IconButton icon="close" bg="transparent" accessibilityLabel="Close" onPress={goHome} />
         </View>
+        {loadState === "notFound" ? (
+          <EmptyState
+            fill
+            icon="package-variant-closed-remove"
+            title="Order not found"
+            text="This link doesn't match any of your orders"
+            action={{ label: "Go to Home", onPress: goHome }}
+          />
+        ) : loadState === "signedOut" ? (
+          <EmptyState
+            fill
+            iconWrap
+            icon="account-lock-outline"
+            title="Sign in to see this order"
+            text="Your order was placed — log in to view it"
+            action={{ label: "Go to Home", onPress: goHome }}
+          />
+        ) : (
+          <EmptyState
+            fill
+            iconWrap
+            icon="alert-circle-outline"
+            title="Couldn't load your order"
+            text="It was placed — check My orders"
+            action={{ label: "Retry", onPress: handleRetry }}
+          >
+            <PrimaryButton variant="ghost" size="sm" label="Go to orders" onPress={goToOrders} />
+          </EmptyState>
+        )}
       </Screen>
     );
   }
+
+  // ─── Ready ────────────────────────────────────────────────────────────────
+  const orderNumber = order.order_number || order.id.slice(0, 8).toUpperCase();
+  const isCod = String(order.payment_method || "").toLowerCase() === "cod";
+  const orderItems = order.items ?? [];
+  const previewItems = orderItems.slice(0, SUMMARY_PREVIEW_ROWS);
+  const moreCount = orderItems.length - previewItems.length;
+  const showWindow = windowOpen === true || (windowOpen === false && itemCount > 0);
+  const showRail = windowOpen === true && suggestions.products.length > 0;
+  const invoiceAvailable = isInvoiceAvailable(order);
 
   return (
-    <Screen edges={["left", "right", "bottom"]}>
+    <Screen bg={C.card} edges={["left", "right"]} testID="confirmation">
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={{ paddingBottom: dockHeight + layout.gutter }}
+        testID="confirmation-scroll"
       >
-        {/* Success Header — runs under the status bar; the top inset is paid here instead of by the SafeAreaView */}
-        <View style={[styles.successHeader, { paddingTop: 32 + insets.top }]}>
-          <View style={styles.successIconWrap}>
-            <MaterialCommunityIcons name="check-circle" size={64} color={C.success} />
-          </View>
-          <Text style={styles.successTitle}>Order Placed Successfully!</Text>
-          <Text style={styles.orderNumber}>
-            Order #{order?.order_number || id?.slice(0, 8).toUpperCase()}
-          </Text>
-          <Text style={styles.successSub}>
-            Your order has been received and is being processed.
-          </Text>
-        </View>
+        <SuccessHeader
+          key={order.id}
+          orderId={order.id}
+          orderNumber={orderNumber}
+          placedAtMs={placedAtMs}
+          onClose={goHome}
+          topInset={insets.top}
+          testID="confirmation-header"
+        />
 
-        {/* Add More Timer Card */}
-        {!timerExpired ? (
-          <Card borderColor={C.primary} style={styles.timerCard}>
-            <View style={styles.timerHeader}>
-              <MaterialCommunityIcons name="clock-fast" size={24} color={timerColor} />
-              <View style={styles.flex1}>
-                <Text style={styles.timerTitle}>Want to add more items?</Text>
-                <Text style={styles.timerSub}>
-                  Add items now and they&apos;ll be delivered with this order!
-                </Text>
-              </View>
-            </View>
+        {showWindow ? (
+          <AddMoreWindow
+            placedAtMs={placedAtMs}
+            windowSeconds={ADD_MORE_WINDOW_SECONDS}
+            itemCount={itemCount}
+            amount={cartSubtotal}
+            isCod={isCod}
+            phase={addPhase}
+            errorMessage={addError}
+            onPay={handlePayToAdd}
+            onKeepShopping={goHome}
+            onGoToCart={goToCart}
+            onExpired={handleWindowExpired}
+            testID="confirmation-add-more"
+          />
+        ) : null}
 
-            <Animated.View
-              style={[
-                styles.timerDisplay,
-                { transform: [{ scale: pulseAnim }] },
-              ]}
-            >
-              <Text style={[styles.timerText, { color: timerColor }]}>
-                {formatTime(timeLeft)}
-              </Text>
-              <Text style={styles.timerLabel}>remaining</Text>
-            </Animated.View>
-
-            <View style={styles.progressBarWrap}>
-              <Animated.View
-                style={[
-                  styles.progressBar,
-                  { width: progressWidth, backgroundColor: timerColor },
-                ]}
-              />
-            </View>
-
-            {cartItems.length > 0 && (
-              <PrimaryButton
-                size="sm"
-                icon="cart"
-                label={`Go to Cart (${cartItems.length} items)`}
-                onPress={handleGoToCart}
-                fullWidth
-                shadow
-                style={styles.goToCartBtn}
-                textStyle={styles.goToCartText}
-              />
-            )}
-          </Card>
-        ) : (
-          <Card bg={C.bgSoft} style={styles.timerExpiredCard}>
-            {addItemsPhase === "processing" ? (
-              <>
-                <ActivityIndicator size="small" color={C.primary} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.timerExpiredTitle}>Adding your items…</Text>
-                  <Text style={styles.timerExpiredSub}>
-                    Complete payment for the extra items to add them to this order.
-                  </Text>
-                </View>
-              </>
-            ) : addItemsPhase === "done" ? (
-              <>
-                <MaterialCommunityIcons name="check-circle" size={28} color={C.success} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.timerExpiredTitle}>Items added to your order!</Text>
-                  <Text style={styles.timerExpiredSub}>
-                    They&apos;ll arrive with this delivery — no separate trip needed.
-                  </Text>
-                </View>
-              </>
-            ) : addItemsPhase === "failed" ? (
-              <>
-                <MaterialCommunityIcons name="alert-circle" size={28} color={C.danger} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.timerExpiredTitle}>Couldn&apos;t add those items</Text>
-                  <Text style={styles.timerExpiredSub}>
-                    {addItemsError || "They're still in your cart — check out separately whenever you like."}
-                  </Text>
-                </View>
-              </>
-            ) : (
-              <>
-                <MaterialCommunityIcons name="clock-check" size={28} color={C.textSub} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.timerExpiredTitle}>Add-more window closed</Text>
-                  <Text style={styles.timerExpiredSub}>
-                    Your order is now being prepared for delivery.
-                  </Text>
-                </View>
-              </>
-            )}
-          </Card>
-        )}
-        {RazorpayUI}
-
-        {/* Suggested Products */}
-        {!timerExpired && (
-          <View style={styles.suggestionsSection}>
-            <Text style={styles.sectionTitle}>Quick Add</Text>
-            <Text style={styles.sectionSub}>
-              Popular items you might want to add
+        {showRail ? (
+          <View style={styles.railSection} testID="confirmation-rail">
+            <Text style={styles.sectionTitle} maxFontSizeMultiplier={1.3}>
+              Quick add
             </Text>
-
-            {loadingSuggestions ? (
-              <View style={styles.suggestionsGrid} accessible accessibilityLabel="Loading suggestions">
-                {[0, 1, 2].map((i) => (
-                  <Card key={i} style={styles.suggestionCard}>
-                    <Skeleton width={44} height={44} radius={10} />
-                    <View style={styles.suggestionInfo}>
-                      <Skeleton width="60%" height={14} />
-                      <Skeleton width="30%" height={12} style={styles.skelGap6} />
-                    </View>
-                    <Skeleton width={40} height={40} radius={12} />
-                  </Card>
-                ))}
-              </View>
-            ) : suggestedProducts.length === 0 ? (
-              <View style={styles.suggestionsEmpty}>
-                <MaterialCommunityIcons name="basket-outline" size={18} color={C.textLight} />
-                <Text style={styles.suggestionsEmptyText}>No suggestions right now</Text>
-              </View>
-            ) : (
-              <View style={styles.suggestionsGrid}>
-                {suggestedProducts.map((product) => (
-                  <Card key={product.id} style={styles.suggestionCard}>
-                    {product.image_url ? (
-                      <Image
-                        source={{ uri: cdnImage(product.image_url, 120) }}
-                        style={styles.suggestionThumb}
-                        contentFit="contain"
-                        transition={120}
-                        cachePolicy="memory-disk"
-                      />
-                    ) : (
-                      <View style={[styles.suggestionThumb, styles.suggestionThumbEmpty]}>
-                        <MaterialCommunityIcons name="image-off-outline" size={18} color={C.textLight} />
-                      </View>
-                    )}
-                    <View style={styles.suggestionInfo}>
-                      <Text style={styles.suggestionName} numberOfLines={2}>
-                        {product.name}
-                      </Text>
-                      <Text style={styles.suggestionPrice}>
-                        ₹{product.price}
-                        {product.unit && (
-                          <Text style={styles.suggestionUnit}> / {product.unit}</Text>
-                        )}
-                      </Text>
-                    </View>
-                    <IconButton
-                      icon="plus"
-                      size={40}
-                      iconSize={18}
-                      bg={C.primary}
-                      color={C.card}
-                      shadow="primarySm"
-                      accessibilityLabel={`Add ${product.name} to cart`}
-                      onPress={() => handleAddToCart(product)}
-                      style={styles.addBtn}
-                    />
-                  </Card>
-                ))}
-              </View>
-            )}
+            <Text style={styles.sectionSub} maxFontSizeMultiplier={1.3}>
+              Added items arrive with this order
+            </Text>
+            <FlatList
+              horizontal
+              data={suggestions.products}
+              keyExtractor={railKeyExtractor}
+              renderItem={renderRailItem}
+              ItemSeparatorComponent={RailGap}
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.railContent}
+              initialNumToRender={4}
+              maxToRenderPerBatch={4}
+              windowSize={3}
+              removeClippedSubviews
+            />
           </View>
-        )}
+        ) : null}
 
-        {/* Order Summary */}
-        <View style={styles.orderSummary}>
-          <Text style={styles.sectionTitle}>Order Summary</Text>
-
-          <Card style={styles.summaryCard}>
-            {order?.items?.slice(0, 5).map((item, idx) => (
-              <View
-                key={idx}
-                style={[
-                  styles.summaryItem,
-                  idx < Math.min(order.items!.length, 5) - 1 && styles.summaryItemBorder,
-                ]}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.summaryItemName} numberOfLines={2}>{item.name}</Text>
-                  <Text style={styles.summaryItemUnit}>
-                    ₹{item.price} × {formatQuantityDisplay(item.quantity)}
-                  </Text>
-                </View>
-                <Text style={styles.summaryItemTotal}>
-                  ₹{(item.price * item.quantity).toFixed(2)}
-                </Text>
-              </View>
-            ))}
-            {(order?.items?.length ?? 0) > 5 && (
-              <Text style={styles.moreItems}>
-                +{order!.items!.length - 5} more items
-              </Text>
-            )}
-
-            <Divider spacing={12} />
-
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Subtotal</Text>
-              <Text style={styles.summaryValue}>
-                ₹{(order?.subtotal ?? 0).toFixed(2)}
-              </Text>
-            </View>
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Platform Fee</Text>
-              <Text style={styles.summaryValue}>₹{PLATFORM_FEE.toFixed(2)}</Text>
-            </View>
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Handling Charges</Text>
-              <Text style={styles.summaryValue}>₹{HANDLING_FEE.toFixed(2)}</Text>
-            </View>
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Delivery Fee</Text>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                {(order?.delivery_fee ?? 0) === 0 && (
-                  <Text style={styles.summaryStrike}>₹{DELIVERY_FEE_WAS.toFixed(0)}</Text>
-                )}
-                <Text style={[styles.summaryValue, (order?.delivery_fee ?? 0) === 0 && styles.summaryValueFree]}>
-                  {(order?.delivery_fee ?? 0) === 0 ? "FREE" : `₹${(order?.delivery_fee ?? 0).toFixed(2)}`}
-                </Text>
-              </View>
-            </View>
-            {!!order?.discount_amount && (
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Coupon Discount</Text>
-                <Text style={styles.summaryValue}>-₹{order.discount_amount.toFixed(2)}</Text>
-              </View>
-            )}
-            {!!order?.tip_amount && (
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Delivery Partner Tip</Text>
-                <Text style={styles.summaryValue}>₹{order.tip_amount.toFixed(2)}</Text>
-              </View>
-            )}
-            <View style={[styles.summaryRow, styles.totalRow]}>
-              <Text style={styles.totalLabel}>Total</Text>
-              <Text style={styles.totalValue}>
-                ₹{(order?.order_total ?? 0).toFixed(2)}
-              </Text>
-            </View>
-          </Card>
-        </View>
-
-        {/* Action Buttons */}
-        <View style={styles.actionButtons}>
-          <PrimaryButton
-            size="sm"
-            icon="map-marker-path"
-            iconSize={20}
-            label="Track Order"
-            onPress={handleTrackOrder}
-            shadow
-            style={styles.actionButton}
-            textStyle={styles.actionButtonText}
-          />
-          {order && isInvoiceAvailable(order) && (
-          <PrimaryButton
-            size="sm"
-            variant="success"
-            icon="file-document-outline"
-            iconSize={20}
-            label="View Invoice"
-            onPress={() => router.push(`/order/invoice/${id}` as any)}
-            shadow
-            style={styles.actionButton}
-            textStyle={styles.actionButtonText}
-          />
-          )}
-        </View>
-
-        {/* Delivery Info */}
-        <View style={styles.deliveryInfo}>
-          <MaterialCommunityIcons
-            name="information-outline"
-            size={18}
-            color={C.textSub}
-            style={styles.deliveryInfoIcon}
-          />
-          <Text style={styles.deliveryInfoText}>
-            You&apos;ll receive a 4-digit PIN once your order is dispatched. Share this PIN
-            with the delivery partner to confirm delivery.
+        <View style={styles.summary} testID="confirmation-summary">
+          <Text style={styles.sectionTitle} maxFontSizeMultiplier={1.3}>
+            Order summary
           </Text>
+          <View style={styles.summaryRows}>
+            {previewItems.map((item, idx) => (
+              <SummaryRow key={`${item.product_id ?? item.master_product_id ?? item.name}-${idx}`} item={item} last={idx === previewItems.length - 1} />
+            ))}
+            {moreCount > 0 ? (
+              <Text style={styles.moreItems} maxFontSizeMultiplier={1.3}>
+                +{moreCount} more {moreCount === 1 ? "item" : "items"}
+              </Text>
+            ) : null}
+          </View>
+          <Divider spacing={12} />
+          <View style={styles.totalRow} accessible accessibilityLabel={`Total ${formatMoney(order.order_total)}`}>
+            <Text style={styles.totalLabel} maxFontSizeMultiplier={1.3}>
+              Total
+            </Text>
+            <Text style={styles.totalValue} maxFontSizeMultiplier={1.3}>
+              {formatMoney(order.order_total)}
+            </Text>
+          </View>
         </View>
       </ScrollView>
+
+      {RazorpayUI}
+
+      <BottomDock testID="confirmation-dock">
+        <PrimaryButton size="lg" label="Track order" onPress={handleTrackOrder} accessibilityLabel="Track order" testID="confirmation-track" />
+        <PrimaryButton
+          size="md"
+          variant="outline"
+          label="Continue shopping"
+          onPress={goHome}
+          accessibilityLabel="Continue shopping"
+          style={styles.dockGap}
+          testID="confirmation-continue"
+        />
+        {invoiceAvailable ? (
+          <PrimaryButton
+            size="sm"
+            variant="ghost"
+            label="View invoice"
+            onPress={handleInvoice}
+            accessibilityLabel="View invoice"
+            style={styles.dockGhost}
+            testID="confirmation-invoice"
+          />
+        ) : null}
+      </BottomDock>
     </Screen>
   );
 }
 
+// ─── Summary row ──────────────────────────────────────────────────────────────
+
+function SummaryRow({ item, last }: { item: OrderItem; last: boolean }) {
+  const uri = cdnImage(item.image, THUMB_CDN_WIDTH);
+  // Two-argument form kept on purpose (C51): order items carry no isLoose flag, so a fractional quantity is the signal.
+  const qty = formatQuantityDisplay(item.quantity);
+  const lineTotal = item.price * item.quantity;
+  return (
+    <View>
+      <View style={styles.summaryRow} accessible accessibilityLabel={`${item.name}, ${formatMoney(item.price)} times ${qty}, ${formatMoney(lineTotal)}`}>
+        <View style={styles.thumbWrap}>
+          {uri ? (
+            <Image source={{ uri }} style={styles.thumb} contentFit="contain" cachePolicy="memory-disk" transition={120} recyclingKey={item.master_product_id ?? item.product_id} accessibilityIgnoresInvertColors />
+          ) : (
+            <MaterialCommunityIcons name="image-off-outline" size={iconSize.md} color={C.textLight} />
+          )}
+        </View>
+        <View style={styles.summaryText}>
+          <Text style={styles.summaryName} numberOfLines={2} maxFontSizeMultiplier={1.3}>
+            {item.name}
+          </Text>
+          <Text style={styles.summaryQty} maxFontSizeMultiplier={1.3}>
+            {formatMoney(item.price)} × {qty}
+          </Text>
+        </View>
+        <Text style={styles.summaryTotal} maxFontSizeMultiplier={1.3}>
+          {formatMoney(lineTotal)}
+        </Text>
+      </View>
+      {last ? null : <Divider spacing={0} color={C.hairline} />}
+    </View>
+  );
+}
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
   flex1: { flex: 1 },
-  center: {
-    flex: 1,
+
+  // Skeleton (mirrors the band + 3 summary rows)
+  skelBand: {
     alignItems: "center",
-    justifyContent: "center",
-    gap: 12,
-    paddingHorizontal: 32,
+    backgroundColor: C.primaryXLight,
+    paddingHorizontal: 24,
+    paddingBottom: 28,
   },
-  loadingText: { fontFamily: "PlusJakartaSans_500Medium", color: C.textSub, fontSize: 14, textAlign: "center" },
-  loadingRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
-  retryLink: { paddingVertical: 10, paddingHorizontal: 16 },
-  retryLinkText: { color: C.primary, fontSize: 13, fontFamily: "PlusJakartaSans_600SemiBold" },
-  scrollContent: { paddingBottom: 40 },
-  skeletonCard: { marginHorizontal: 16, marginTop: 16, padding: 16 },
   skelGap6: { marginTop: 6 },
   skelGap8: { marginTop: 8 },
+  skelGap20: { marginTop: 20 },
+  skelRows: { paddingHorizontal: layout.gutter, paddingTop: 24, gap: 16 },
+  skelRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  closeFloating: { position: "absolute", right: 8 },
 
-  // Success Header
-  successHeader: {
-    alignItems: "center",
-    paddingVertical: 32,
-    paddingHorizontal: 24,
-    backgroundColor: C.successLight,
-  },
-  successIconWrap: {
-    marginBottom: 16,
-  },
-  successTitle: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: "#065f46",
-    fontSize: 22,
-    textAlign: "center",
-  },
-  orderNumber: { fontFamily: "PlusJakartaSans_700Bold",
-    color: "#065f46",
-    fontSize: 14,
-    marginTop: 8,
-    opacity: 0.8,
-  },
-  successSub: { fontFamily: "PlusJakartaSans_400Regular",
-    color: "#065f46",
-    fontSize: 14,
-    textAlign: "center",
-    marginTop: 8,
-    opacity: 0.75,
-    lineHeight: 20,
-  },
+  // Error / not-found header row
+  stateHeader: { flexDirection: "row", justifyContent: "flex-end", paddingHorizontal: 8 },
 
-  // Timer Card (Card primitive + C.primary 1px border for emphasis)
-  timerCard: {
-    margin: 16,
-    padding: 16,
-    shadowColor: C.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  timerHeader: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 12,
-  },
-  timerTitle: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: C.text,
-    fontSize: 16,
-  },
-  timerSub: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: C.textSub,
-    fontSize: 13,
-    marginTop: 4,
-    lineHeight: 18,
-  },
-  timerDisplay: {
-    alignItems: "center",
-    marginVertical: 20,
-  },
-  timerText: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    fontSize: 48,
-    fontVariant: ["tabular-nums"],
-  },
-  timerLabel: { fontFamily: "PlusJakartaSans_600SemiBold",
-    color: C.textSub,
-    fontSize: 13,
-    marginTop: 4,
-  },
-  progressBarWrap: {
-    height: 6,
+  // Sections
+  sectionTitle: { ...text.sectionTitle },
+  sectionSub: { ...text.rowSubtitle, marginTop: 2 },
+
+  // Quick-add rail
+  railSection: { paddingTop: 20 },
+  railContent: { paddingHorizontal: layout.gutter, paddingTop: 12, paddingBottom: 4 },
+  railGap: { width: layout.gridGap },
+
+  // Summary
+  summary: { paddingHorizontal: layout.gutter, paddingTop: 20 },
+  summaryRows: { marginTop: 4 },
+  summaryRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10 },
+  thumbWrap: {
+    width: THUMB_SIZE,
+    height: THUMB_SIZE,
+    borderRadius: radius.lg,
     backgroundColor: C.bgSoft,
-    borderRadius: 3,
-    overflow: "hidden",
-  },
-  progressBar: {
-    height: "100%",
-    borderRadius: 3,
-  },
-  goToCartBtn: {
-    paddingVertical: 14,
-    marginTop: 16,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-    elevation: 4,
-  },
-  goToCartText: { fontFamily: "PlusJakartaSans_800ExtraBold" },
-
-  // Timer Expired
-  timerExpiredCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    margin: 16,
-    padding: 16,
-  },
-  timerExpiredTitle: { fontFamily: "PlusJakartaSans_700Bold",
-    color: C.text,
-    fontSize: 14,
-  },
-  timerExpiredSub: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: C.textSub,
-    fontSize: 13,
-    marginTop: 2,
-  },
-
-  // Suggestions
-  suggestionsSection: {
-    paddingHorizontal: 16,
-    marginBottom: 8,
-  },
-  sectionTitle: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: C.text,
-    fontSize: 16,
-  },
-  sectionSub: { fontFamily: "PlusJakartaSans_500Medium",
-    color: C.textSub,
-    fontSize: 13,
-    marginTop: 4,
-  },
-  suggestionsGrid: {
-    marginTop: 12,
-    gap: 12,
-  },
-  suggestionCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  suggestionThumb: {
-    width: 44,
-    height: 44,
-    borderRadius: 10,
-    backgroundColor: C.bgSoft,
-  },
-  suggestionThumbEmpty: {
     alignItems: "center",
     justifyContent: "center",
+    overflow: "hidden",
   },
-  suggestionInfo: {
-    flex: 1,
-  },
-  suggestionName: { fontFamily: "PlusJakartaSans_700Bold",
-    color: C.text,
-    fontSize: 14,
-  },
-  suggestionPrice: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: C.primary,
-    fontSize: 14,
-    marginTop: 4,
-  },
-  suggestionUnit: { fontFamily: "PlusJakartaSans_600SemiBold",
-    color: C.textSub,
-    fontSize: 12,
-  },
-  addBtn: { shadowOpacity: 0.15 },
-  suggestionsEmpty: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginTop: 12,
-    padding: 14,
-    borderRadius: 14,
-    backgroundColor: C.bgSoft,
-  },
-  suggestionsEmptyText: { fontFamily: "PlusJakartaSans_600SemiBold",
-    color: C.textSub,
-    fontSize: 12,
-  },
+  thumb: { width: THUMB_SIZE, height: THUMB_SIZE },
+  summaryText: { flex: 1 },
+  summaryName: { ...text.bodyStrong },
+  summaryQty: { ...text.rowSubtitle, marginTop: 2 },
+  summaryTotal: { fontFamily: fontFamily.bold, fontSize: 14, color: C.text, flexShrink: 0 },
+  moreItems: { fontFamily: fontFamily.medium, fontSize: 12, color: C.textSub, paddingVertical: 8 },
+  totalRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  totalLabel: { ...text.h3 },
+  totalValue: { ...text.priceLg },
 
-  // Order Summary
-  orderSummary: {
-    paddingHorizontal: 16,
-    marginTop: 16,
-  },
-  summaryCard: {
-    padding: 16,
-    marginTop: 12,
-  },
-  summaryItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 10,
-  },
-  summaryItemBorder: {
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  summaryItemName: { fontFamily: "PlusJakartaSans_600SemiBold",
-    color: C.text,
-    fontSize: 14,
-  },
-  summaryItemUnit: { fontFamily: "PlusJakartaSans_700Bold",
-    color: C.textSub,
-    fontSize: 12,
-    marginTop: 2,
-  },
-  summaryItemTotal: { fontFamily: "PlusJakartaSans_700Bold",
-    color: C.text,
-    fontSize: 14,
-    marginLeft: 12,
-    flexShrink: 0,
-  },
-  moreItems: { fontFamily: "PlusJakartaSans_600SemiBold",
-    color: C.textSub,
-    fontSize: 12,
-    paddingVertical: 8,
-  },
-  summaryRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 8,
-  },
-  summaryLabel: { fontFamily: "PlusJakartaSans_600SemiBold",
-    color: C.textSub,
-    fontSize: 14,
-  },
-  summaryValue: { fontFamily: "PlusJakartaSans_600SemiBold",
-    color: C.text,
-    fontSize: 14,
-  },
-  summaryValueFree: { color: C.success },
-  summaryStrike: {
-    fontFamily: "PlusJakartaSans_600SemiBold",
-    color: C.textLight,
-    fontSize: 12,
-    textDecorationLine: "line-through",
-  },
-  totalRow: {
-    marginTop: 4,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: C.border,
-    marginBottom: 0,
-  },
-  totalLabel: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: C.text,
-    fontSize: 16,
-  },
-  totalValue: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: C.primary,
-    fontSize: 18,
-  },
-
-  // Action Buttons (overrides on PrimaryButton size="sm")
-  actionButtons: {
-    flexDirection: "row",
-    gap: 12,
-    paddingHorizontal: 16,
-    marginTop: 24,
-  },
-  actionButton: {
-    flex: 1,
-    paddingVertical: 16,
-    paddingHorizontal: 12,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  actionButtonText: { fontFamily: "PlusJakartaSans_800ExtraBold" },
-
-  // Delivery Info
-  deliveryInfo: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 12,
-    marginHorizontal: 16,
-    marginTop: 16,
-    padding: 16,
-    backgroundColor: C.infoLight,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#93c5fd",
-  },
-  deliveryInfoIcon: { marginTop: 1 },
-  deliveryInfoText: { fontFamily: "PlusJakartaSans_400Regular",
-    flex: 1,
-    color: "#1e40af",
-    fontSize: 13,
-    lineHeight: 19,
-  },
+  // Dock
+  dockGap: { marginTop: 10 },
+  dockGhost: { alignSelf: "center", marginTop: 4 },
 });

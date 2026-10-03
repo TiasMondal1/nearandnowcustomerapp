@@ -1,232 +1,215 @@
-import { router } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, FlatList, RefreshControl, StyleSheet, View } from "react-native";
+// Address book: flat AddressCard rows (swipe Edit / Delete, delete confirms), focus revalidate so an add/edit
+// shows up on return (U20), tap = set as the active location (never with (0,0) — C1), and an inset-aware dock
+// whose "Add address" goes to the centre-pin map with returnTo="/location" (no legacy /location/add pushes, U3).
+// (quartz, 2026-10-03)
+import { router, useFocusEffect } from "expo-router";
+import React, { useCallback, useRef, useState } from "react";
+import { Alert, FlatList, StyleSheet, View } from "react-native";
 
+import { AddressCard } from "../../components/location/AddressCard";
 import {
-  Card,
+  BottomDock,
   EmptyState,
-  IconButton,
   PrimaryButton,
   Screen,
   ScreenHeader,
   Skeleton,
+  SkeletonScreen,
   SkeletonText,
+  notify,
+  useDockHeight,
 } from "../../components/ui";
 import { C } from "../../constants/colors";
+import { layout } from "../../constants/ui";
 import { useAuth } from "../../context/AuthContext";
 import { useLocation } from "../../context/LocationContext";
-import { deleteAddress, getUserAddresses, type SavedAddress } from "../../lib/addressService";
+import { useRefetchOnReconnect } from "../../hooks/useRefetchOnReconnect";
+import { useForceSkeleton } from "../../hooks/useSlowLoad";
+import { deleteAddress, getUserAddresses, peekAddresses, type SavedAddress } from "../../lib/addressService";
+import { feedback } from "../../lib/feedback";
 import { logError } from "../../lib/logError";
-import AddressCard from "./AddressCard";
+import { QC_KEYS, useCachedValue } from "../../lib/queryCache";
 
-export default function LocationIndex() {
+// ─── Constants / helpers ──────────────────────────────────────────────────────
+
+const SKELETON_ROWS = [0, 1, 2] as const;
+
+type Coords = { latitude: number; longitude: number };
+
+function isValidCoords(lat: number, lng: number): boolean {
+  return Number.isFinite(lat) && Number.isFinite(lng) && !(lat === 0 && lng === 0);
+}
+
+function addressCoords(a: SavedAddress): Coords | null {
+  const lat = typeof a.latitude === "number" ? a.latitude : Number(a.latitude);
+  const lng = typeof a.longitude === "number" ? a.longitude : Number(a.longitude);
+  return isValidCoords(lat, lng) ? { latitude: lat, longitude: lng } : null;
+}
+
+const ADD_HREF = { pathname: "/location/select-map", params: { returnTo: "/location" } } as const;
+
+// ─── Screen ───────────────────────────────────────────────────────────────────
+
+export default function LocationIndex(): React.JSX.Element {
   const { userId } = useAuth();
+  const uid = userId ?? "";
   const { setLocation } = useLocation();
+  const dockHeight = useDockHeight();
 
-  const [locations, setLocations] = useState<SavedAddress[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  // Memory first (optimistic mutations repaint instantly), one fetch per focus, forced after the first.
+  const cachedList = useCachedValue<SavedAddress[]>(QC_KEYS.addresses(uid));
+  const [fetchedList, setFetchedList] = useState<SavedAddress[] | undefined>(() => peekAddresses(uid));
+  const addresses = cachedList ?? fetchedList;
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const loadSeqRef = useRef(0);
+  const focusedOnceRef = useRef(false);
 
-  const fetchLocations = useCallback(async () => {
-    try {
-      if (!userId) return;
-      const data = await getUserAddresses(userId);
-      setLocations(data);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to fetch addresses";
-      logError("Fetch locations", err);
-      Alert.alert("Saved addresses", message);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [userId]);
-
-  useEffect(() => {
-    fetchLocations();
-  }, [fetchLocations]);
-
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    fetchLocations();
-  }, [fetchLocations]);
-
-  const selectLocation = useCallback(
-    (loc: SavedAddress) => {
-      setLocation({
-        latitude: loc.latitude ?? 0,
-        longitude: loc.longitude ?? 0,
-        label: loc.label,
-        address: loc.address,
-        source: "saved",
-      });
-      // Prefer popping back to whatever screen opened this (home, checkout, etc.)
-      // so the app unwinds in one animation instead of tearing down the stack
-      // and rebuilding home from scratch.
-      if (router.canGoBack()) {
-        router.back();
-      } else {
-        router.replace("/(tabs)/home");
+  const revalidate = useCallback(
+    async (force: boolean) => {
+      if (!uid) return;
+      const seq = ++loadSeqRef.current;
+      try {
+        const list = await getUserAddresses(uid, { force });
+        if (seq !== loadSeqRef.current) return;
+        setFetchedList(list);
+        setLoadError(null);
+      } catch (err) {
+        if (seq !== loadSeqRef.current) return;
+        logError("Load addresses", err);
+        setLoadError(err instanceof Error ? err.message : "Couldn't load your addresses");
       }
     },
-    [setLocation],
+    [uid],
   );
 
-  const handleDelete = useCallback(
-    async (id: string) => {
-      Alert.alert(
-        "Delete address",
-        "Are you sure you want to remove this address?",
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Delete",
-            style: "destructive",
-            onPress: async () => {
-              try {
-                if (!userId) return;
-                await deleteAddress(id, userId);
-                fetchLocations();
-              } catch (err) {
-                const message = err instanceof Error ? err.message : "Failed to delete address";
-                Alert.alert("Saved addresses", message);
-              }
-            },
-          },
-        ],
-      );
-    },
-    [fetchLocations, userId],
+  useFocusEffect(
+    useCallback(() => {
+      const force = focusedOnceRef.current;
+      focusedOnceRef.current = true;
+      void revalidate(force);
+    }, [revalidate]),
+  );
+  useRefetchOnReconnect(() => {
+    void revalidate(true);
+  });
+
+  // ── Actions ──
+  const goAdd = () => router.push(ADD_HREF);
+
+  const handleSelect = (a: SavedAddress) => {
+    const coords = addressCoords(a);
+    if (!coords) {
+      feedback.error();
+      notify({
+        id: "location-invalid",
+        title: "This address has no map location",
+        message: "Edit it to pin the spot on the map",
+        tone: "warning",
+        action: { label: "Edit", onPress: () => router.push({ pathname: "/location/edit", params: { id: a.id } }) },
+      });
+      return;
+    }
+    setLocation({ ...coords, label: a.label, address: a.address, source: "saved" });
+    feedback.toggle(true);
+    notify({ id: "delivering-to", title: `Delivering to ${a.label}`, icon: "map-marker" });
+  };
+
+  const handleEdit = (a: SavedAddress) => router.push({ pathname: "/location/edit", params: { id: a.id } });
+
+  const performDelete = async (a: SavedAddress) => {
+    if (!uid) return;
+    try {
+      await deleteAddress(a.id, uid); // optimistic: the row is gone from memory before the request lands
+      feedback.heavy();
+      notify({ id: "address-deleted", title: "Address deleted" });
+    } catch (err) {
+      logError("Delete address", err);
+      feedback.error();
+      notify({ id: "address-delete-error", title: "Couldn't delete the address", message: err instanceof Error ? err.message : undefined, tone: "error" });
+    }
+  };
+
+  // Destructive → a confirmation stays a native Alert (PLAN §5: only confirmations keep Alert.alert).
+  const handleDelete = (a: SavedAddress) => {
+    Alert.alert("Delete address", `Remove "${a.label}" from your saved addresses?`, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete", style: "destructive", onPress: () => void performDelete(a) },
+    ]);
+  };
+
+  // ── Derived ──
+  const loading = useForceSkeleton(!!uid && addresses === undefined && !loadError);
+  const count = addresses ? addresses.length : 0;
+
+  const renderItem = ({ item, index }: { item: SavedAddress; index: number }) => (
+    <AddressCard
+      address={item}
+      onPress={() => handleSelect(item)}
+      onEdit={() => handleEdit(item)}
+      onDelete={() => handleDelete(item)}
+      divider={index < count - 1}
+      testID={`address-card-${item.id}`}
+    />
   );
 
-  const emptyComponent = useMemo(
-    () => (
-      <EmptyState
-        fill
-        icon="map-marker-plus-outline"
-        title="No addresses yet"
-        text="Add one to start ordering"
-        style={styles.emptyWrap}
-        titleStyle={styles.emptyTitle}
-        textStyle={styles.emptySub}
-      >
-        <PrimaryButton
-          label="Add Address"
-          fullWidth={false}
-          onPress={() => router.push("/location/add")}
-          style={styles.emptyBtn}
-        />
-      </EmptyState>
-    ),
-    [],
+  const listEmpty = loading ? (
+    <SkeletonScreen label="Loading addresses…">
+      {SKELETON_ROWS.map((i) => (
+        <View key={i} style={[styles.skeletonRow, i < SKELETON_ROWS.length - 1 && styles.skeletonDivider]}>
+          <Skeleton width={44} height={44} radius={12} />
+          <View style={styles.skeletonCol}>
+            <Skeleton width="40%" height={14} style={styles.skeletonTitle} />
+            <SkeletonText lines={2} lineHeight={12} gap={6} width="90%" lastLineWidth="60%" />
+          </View>
+        </View>
+      ))}
+    </SkeletonScreen>
+  ) : loadError && !addresses ? (
+    <EmptyState
+      fill
+      icon="cloud-off-outline"
+      title="Couldn't load addresses"
+      text={loadError}
+      action={{ label: "Retry", onPress: () => void revalidate(true) }}
+    />
+  ) : (
+    <EmptyState
+      fill
+      icon="map-marker-plus-outline"
+      title="No addresses yet"
+      text="Save an address to get your orders delivered faster"
+      action={{ label: "Add address", icon: "plus", onPress: goAdd }}
+    />
   );
 
   return (
-    <Screen>
-      <ScreenHeader
-        title="Delivery Addresses"
-        onBack={() => router.back()}
-        right={
-          <IconButton
-            icon="plus"
-            bg={C.primary}
-            color={C.card}
-            shadow="primarySm"
-            accessibilityLabel="Add new address"
-            onPress={() => router.push("/location/add")}
-          />
-        }
-      />
-
+    <Screen bg={C.card} edges={["top"]}>
+      <ScreenHeader size="lg" title="Addresses" backFallbackHref="/(tabs)/home" />
       <FlatList
-        data={locations}
-        keyExtractor={(i) => i.id}
-        contentContainerStyle={
-          !locations.length && !loading ? { flex: 1 } : styles.listContent
-        }
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={C.primary}
-            colors={[C.primary]}
-          />
-        }
+        data={addresses ?? []}
+        keyExtractor={(a) => a.id}
+        renderItem={renderItem}
+        ListEmptyComponent={listEmpty}
+        contentContainerStyle={[styles.listContent, { paddingBottom: dockHeight + 16 }]}
         showsVerticalScrollIndicator={false}
-        ListEmptyComponent={loading ? <SkeletonList /> : emptyComponent}
-        renderItem={({ item }) => (
-          <AddressCard
-            id={item.id}
-            label={item.label}
-            address={item.address}
-            onSelect={() => selectLocation(item)}
-            isDefault={item.is_default}
-            onEdit={() => router.push({ pathname: "/location/edit", params: { id: item.id } })}
-            onDelete={() => handleDelete(item.id)}
-          />
-        )}
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        windowSize={7}
       />
-
-      {!!locations.length && (
-        <PrimaryButton
-          size="lg"
-          icon="plus"
-          label="Add new address"
-          shadow
-          onPress={() => router.push("/location/add")}
-          style={styles.addBtn}
-        />
-      )}
+      <BottomDock>
+        <PrimaryButton size="lg" icon="plus" label="Add address" onPress={goAdd} />
+      </BottomDock>
     </Screen>
   );
 }
 
-/* ---------------- Skeleton ---------------- */
-
-function SkeletonCard() {
-  return (
-    <Card style={styles.skeletonCard}>
-      <View style={styles.skeletonRow}>
-        <Skeleton width={34} height={34} radius={10} />
-        <Skeleton width={80} height={12} />
-      </View>
-      <SkeletonText lines={2} lineHeight={11} lastLineWidth="70%" />
-    </Card>
-  );
-}
-
-function SkeletonList() {
-  return (
-    <>
-      {[1, 2, 3].map((i) => (
-        <SkeletonCard key={i} />
-      ))}
-    </>
-  );
-}
-
-/* ---------------- Styles ---------------- */
+// ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  listContent: { padding: 16, paddingBottom: 120 },
-
-  skeletonCard: { marginBottom: 10 },
-  skeletonRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 8,
-  },
-
-  emptyWrap: { paddingBottom: 80 },
-  emptyTitle: { fontFamily: "PlusJakartaSans_400Regular", fontSize: 18 },
-  emptySub: { fontFamily: "PlusJakartaSans_400Regular", fontSize: 15, lineHeight: 22, maxWidth: 260 },
-  emptyBtn: { marginTop: 6, paddingHorizontal: 32 },
-
-  addBtn: {
-    position: "absolute",
-    bottom: 28,
-    left: 16,
-    right: 16,
-  },
+  listContent: { flexGrow: 1, paddingBottom: layout.scrollBottomTab },
+  // AddressRow (ListRow lg) twin: ph16 pv16 gap14, 44 px glyph.
+  skeletonRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 16, gap: 14 },
+  skeletonDivider: { borderBottomWidth: 1, borderBottomColor: C.border },
+  skeletonCol: { flex: 1 },
+  skeletonTitle: { marginBottom: 8 },
 });

@@ -1,39 +1,98 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+// codename: lyra
+// Search — local-first results over the memory catalog on every keystroke, server results merged in after a 250 ms
+// debounce, recents + trending before typing, a category chip strip and a result count over the list
+// (design/blinkit-parity §3.5 / BP-07 · speed-and-ease #4, #16 · motion M12: the loading flag flips INSIDE the
+// debounced callback so no skeleton mounts per keystroke; previous results stay on screen until fresh ones land).
+// The nearby filter is the cached `getNearbyProductFilter` (one round trip per location across Home → category →
+// search); the screen-level cache that used to live here is gone.
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FlatList, Keyboard, ScrollView, StyleSheet, Text, View, type ListRenderItemInfo } from "react-native";
+
+import { SearchEmpty } from "../../components/search/SearchEmpty";
+import { SearchResultRow } from "../../components/search/SearchResultRow";
 import {
-    FlatList,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
-} from "react-native";
-import { Image } from "expo-image";
-
+  BackButton,
+  Chip,
+  EmptyState,
+  PrimaryButton,
+  Screen,
+  SearchBand,
+  SkeletonProductCard,
+  SkeletonScreen,
+  useCartBarFootprint,
+} from "../../components/ui";
 import { C } from "../../constants/colors";
-import { useCartItemMap, useCart } from "../../context/CartContext";
+import { fontFamily, layout } from "../../constants/ui";
 import { useLocation } from "../../context/LocationContext";
-import { cdnImage } from "../../lib/imageUrl";
+import { useIsOnline } from "../../hooks/useIsOnline";
+import { useForceSkeleton } from "../../hooks/useSlowLoad";
+import { useDevFlag } from "../../lib/devFlags";
+import { logError } from "../../lib/logError";
 import { searchProducts, type Product } from "../../lib/productService";
-import { getNearbyProductFilter } from "../../lib/storeService";
-import StarRating from "../../components/StarRating";
-import { BackButton, Badge, EmptyState, PrimaryButton, Screen, Skeleton } from "../../components/ui";
+import { addRecentSearch, clearRecentSearches, useRecentSearches } from "../../lib/recentSearches";
+import { mergeSearchResults, searchLocal } from "../../lib/searchLocal";
+import { getNearbyProductFilter, peekNearbyProductFilter } from "../../lib/storeService";
 
-// Placeholder rows shown while a search is in flight — same card shape as a result.
-const SKELETON_ROWS = [0, 1, 2, 3, 4, 5];
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+/** Server debounce (speed-and-ease #16: down from 350 ms — local results cover the gap). */
+const DEBOUNCE_MS = 250;
+const MIN_QUERY_LENGTH = 2;
+/** Skeleton rows shown only while the server is loading AND nothing is on screen yet. */
+const SKELETON_ROWS = [0, 1, 2, 3, 4, 5] as const;
+/** Shared empty filter for the no-location case (never mutated; identity-stable so effects don't loop). */
+const EMPTY_SET = new Set<string>();
+const EMPTY_PRODUCTS: Product[] = [];
+/** Chip key for the "All" category chip. */
+const ALL = "__all__";
+
+const keyExtractor = (item: Product) => item.id;
+
+type CategoryCount = { name: string; count: number };
+
+// ─── Pure helpers ─────────────────────────────────────────────────────────────
+
+/** Category → hit count over the current results, in first-seen order ("Dairy (12) · Snacks (4)"). */
+function countCategories(list: Product[]): CategoryCount[] {
+  const counts = new Map<string, number>();
+  for (const p of list) {
+    const name = p.category?.trim();
+    if (!name) continue;
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  return Array.from(counts, ([name, count]) => ({ name, count }));
+}
+
+// dismissTo pops to the live tabs route instead of stacking a second tab navigator (W3 R6-01).
+function browseCategories(): void {
+  router.dismissTo("/(tabs)/categories");
+}
+
+// ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function SearchScreen() {
-  const { location, isHydrated } = useLocation();
-  // Cache the nearby product filter so we don't re-call Supabase on every keystroke.
-  const nearbyIdsRef = useRef<Set<string> | undefined>(undefined);
-  const lastLocationKeyRef = useRef<string | null>(null);
-  // Bumped whenever nearbyIdsRef finishes loading (or is set synchronously for the
-  // no-location case) so the search effect below can re-run once the radius filter
-  // is actually ready, instead of reading `undefined` off the ref mid-fetch and
-  // searching the whole platform catalog. See bug_fixes doc, 2026-09-30.
-  const [nearbyVersion, setNearbyVersion] = useState(0);
+  const { location, isHydrated, locationKey } = useLocation();
+  const online = useIsOnline();
+  const cartBarFootprint = useCartBarFootprint();
+  const inhibitFeature = useDevFlag("Dev_Lyra_inhibit_Feature");
+  const inhibitRecents = useDevFlag("Dev_Lyra_inhibit_RecentSearches");
+  const inhibitLocal = useDevFlag("Dev_Lyra_inhibit_LocalResults");
+  const allowLocal = !inhibitFeature && !inhibitLocal;
+  const recents = useRecentSearches();
 
+  // Allow `/support/search?q=Amul+Milk` (used by the Order Again fallback card
+  // when the item is no longer in the live catalog).
+  const params = useLocalSearchParams<{ q?: string }>();
+  const initialQuery = typeof params.q === "string" ? params.q : "";
+  const [query, setQuery] = useState(initialQuery);
+  const trimmed = query.trim();
+  const hasQuery = trimmed.length >= MIN_QUERY_LENGTH;
+
+  // ── Nearby filter (cached per location key in lib/storeService) ──
+  // `undefined` = not ready yet; searching then would hand `undefined` to the services, which treat it as "no
+  // filter" and return the whole platform catalog past the delivery radius (MAP §7.11).
+  const [nearbyIds, setNearbyIds] = useState<Set<string> | undefined>(undefined);
   useEffect(() => {
     // LocationContext reads the saved location from AsyncStorage asynchronously on
     // app start; until that finishes, `location === null` doesn't yet mean "no
@@ -46,386 +105,329 @@ export default function SearchScreen() {
       // coordinates. Search against an empty set rather than falling back
       // to every active store's catalog platform-wide, which would defeat
       // the radius restriction. See bug_fixes doc, 2026-09-03.
-      nearbyIdsRef.current = new Set();
-      setNearbyVersion((v) => v + 1);
+      setNearbyIds(EMPTY_SET);
       return;
     }
-    const key = `${location.latitude.toFixed(3)},${location.longitude.toFixed(3)}`;
-    if (lastLocationKeyRef.current === key) return;
-    lastLocationKeyRef.current = key;
-    nearbyIdsRef.current = undefined;
-    getNearbyProductFilter(location.latitude, location.longitude)
+    let cancelled = false;
+    const { latitude, longitude } = location;
+    // Instant when the filter is already in memory for this key; otherwise "waiting" until it resolves.
+    setNearbyIds(peekNearbyProductFilter(latitude, longitude)?.productIds);
+    getNearbyProductFilter(latitude, longitude)
       .then((filter) => {
-        nearbyIdsRef.current = filter?.productIds;
-        setNearbyVersion((v) => v + 1);
+        if (!cancelled) setNearbyIds(filter?.productIds ?? EMPTY_SET);
       })
       .catch(() => {
-        // getNearbyActiveStores/getMasterProductIdsForStores already catch their own
-        // Supabase errors and resolve with safe fallbacks, so this should be
-        // unreachable in practice — but leaving nearbyIdsRef at `undefined` here would
-        // permanently stick the search effect below in its "waiting for the filter"
-        // bail-out, with no way to recover. Fail toward "no matches", not a frozen spinner.
-        nearbyIdsRef.current = new Set();
-        setNearbyVersion((v) => v + 1);
+        // Fail toward "no matches", never a frozen spinner and never the platform-wide catalog.
+        if (!cancelled) setNearbyIds(EMPTY_SET);
       });
-  }, [isHydrated, location?.latitude, location?.longitude]);
-  const { addItem, incrementQty } = useCart();
-  const cartItemsByProductId = useCartItemMap();
-  // Allow `/support/search?q=Amul+Milk` (used by the Order Again fallback card
-  // when the item is no longer in the live catalog).
-  const params = useLocalSearchParams<{ q?: string }>();
-  const initialQuery = typeof params.q === "string" ? params.q : "";
-  const [query, setQuery] = useState(initialQuery);
-  const [results, setResults] = useState<Product[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [searched, setSearched] = useState(false);
-  const [searchError, setSearchError] = useState(false);
+    return () => {
+      cancelled = true;
+    };
+  }, [isHydrated, location, locationKey]);
+
+  // ── Results ──
+  const [local, setLocal] = useState<Product[]>(EMPTY_PRODUCTS);
+  const [server, setServer] = useState<Product[]>(EMPTY_PRODUCTS);
+  /** The query `server` belongs to — results for an older query stay mounted (no teardown) but never claim to be fresh. */
+  const [serverFor, setServerFor] = useState<string | null>(null);
+  const [serverLoading, setServerLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
-  const inputRef = useRef<TextInput>(null);
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
 
   // Monotonically-increasing request id so a slow stale response can't overwrite
   // a fresher one. Critical when typing fast on a slow network.
   const requestIdRef = useRef(0);
 
   useEffect(() => {
-    const trimmed = query.trim();
-    if (trimmed.length < 2) {
-      setResults([]);
-      setSearched(false);
-      setLoading(false);
+    if (!hasQuery) {
+      setLocal(EMPTY_PRODUCTS);
+      setServer(EMPTY_PRODUCTS);
+      setServerFor(null);
+      setServerLoading(false);
+      setSearchError(null);
       // Bump request id so any in-flight slower response is discarded.
       requestIdRef.current += 1;
       return;
     }
 
-    // Show the loading state instantly even though the network call is debounced —
-    // this gives the user feedback that *something* is happening on the very first keystroke
-    // after the threshold.
-    setLoading(true);
-
     // The radius filter hasn't resolved yet (still waiting on location hydration or the
-    // nearby-stores fetch above) — searching now would read `nearbyIdsRef.current` as
-    // `undefined`, which searchProducts() treats as "no filter" and returns the whole
-    // platform catalog (bypassing the delivery radius). This can be true even while
-    // `location` itself is still `null` (not yet hydrated), so it doesn't gate on `location`.
-    // Bail out and let the `nearbyVersion` bump above re-run this effect once it's ready.
-    if (nearbyIdsRef.current === undefined) {
-      return;
-    }
+    // nearby-stores fetch above). Bail out and let the `nearbyIds` change re-run this effect.
+    if (nearbyIds === undefined) return;
+    const ids = nearbyIds;
+
+    // Local-first (speed-and-ease #16): instant, no network, respects the same nearbyIds semantics.
+    setLocal(allowLocal ? searchLocal(trimmed, ids) : EMPTY_PRODUCTS);
 
     const myId = ++requestIdRef.current;
-
     const timeout = setTimeout(async () => {
+      if (myId !== requestIdRef.current) return;
+      // Loading flips INSIDE the debounce (motion M12 / MAP P11): a keystroke never mounts a skeleton.
+      setServerLoading(true);
       try {
-        const data = await searchProducts(trimmed, { nearbyIds: nearbyIdsRef.current });
+        const data = await searchProducts(trimmed, { nearbyIds: ids });
         // Discard stale responses: another query has been typed since this one started.
         if (myId !== requestIdRef.current) return;
-        setResults(data);
-        setSearched(true);
-        setSearchError(false);
-      } catch {
-        // Previously indistinguishable from a genuine "no results" —
-        // searchProducts() already swallows its own errors and resolves []
-        // (see lib/productService.ts), so this catch only ever fires for
-        // something thrown before that, but keeping a real error state here
-        // means the render below doesn't have to guess.
+        setServer(data);
+        setServerFor(trimmed);
+        setSearchError(null);
+      } catch (err) {
         if (myId !== requestIdRef.current) return;
-        setResults([]);
-        setSearched(true);
-        setSearchError(true);
+        logError("Search products", err);
+        setServer(EMPTY_PRODUCTS);
+        setServerFor(trimmed);
+        setSearchError(err instanceof Error && err.message ? err.message : "Couldn't search");
       } finally {
-        if (myId === requestIdRef.current) setLoading(false);
+        if (myId === requestIdRef.current) setServerLoading(false);
       }
-    }, 350);
+    }, DEBOUNCE_MS);
 
     return () => clearTimeout(timeout);
-  }, [query, location, retryNonce, nearbyVersion]);
+  }, [hasQuery, trimmed, nearbyIds, allowLocal, retryNonce]);
 
-  const doSearch = () => {
-    // Keep onSubmitEditing wired to dismiss keyboard / no-op (debounced effect runs on its own).
-    inputRef.current?.blur();
-  };
+  // Query for the recents write inside the stable row handler (written in an effect, read in a handler — never in render).
+  const queryRef = useRef(trimmed);
+  useEffect(() => {
+    queryRef.current = trimmed;
+  }, [trimmed]);
 
-  const retrySearch = () => setRetryNonce((n) => n + 1);
+  // Fresh local results for the current query win; otherwise the last server list stays mounted while the next one
+  // loads (stale-while-revalidate — no flash, no skeleton teardown).
+  const serverIsFresh = serverFor === trimmed;
+  const merged = useMemo(() => {
+    if (serverIsFresh) return mergeSearchResults(local, server);
+    return local.length > 0 ? local : server;
+  }, [local, server, serverIsFresh]);
+
+  const categories = useMemo(() => (inhibitFeature ? [] : countCategories(merged)), [merged, inhibitFeature]);
+  // Derived, not reset in an effect: a chip for a category that left the results silently falls back to "All".
+  const effectiveCategory = activeCategory && categories.some((c) => c.name === activeCategory) ? activeCategory : null;
+  const visible = useMemo(
+    () => (effectiveCategory ? merged.filter((p) => p.category?.trim() === effectiveCategory) : merged),
+    [merged, effectiveCategory],
+  );
+
+  // Nothing on screen and no fresh server answer yet (filter resolving, debounce window, or in flight) → the six
+  // row twins. They mount only in that gap, never over existing results, so a keystroke never tears a list down.
+  const showSkeleton = useForceSkeleton(hasQuery && merged.length === 0 && (!serverIsFresh || serverLoading));
+  const searchedFresh = serverIsFresh && !serverLoading;
+  const showEmpty = hasQuery && merged.length === 0 && searchedFresh && !searchError;
+  const showError = hasQuery && merged.length === 0 && searchedFresh && !!searchError;
+
+  // ── Handlers ──
+  const handleChangeText = useCallback((t: string) => setQuery(t), []);
+  const handleClear = useCallback(() => setQuery(""), []);
+  const handleSubmit = useCallback((t: string) => {
+    const term = t.trim();
+    if (term.length >= MIN_QUERY_LENGTH) addRecentSearch(term);
+    Keyboard.dismiss();
+  }, []);
+  const handleSelectTerm = useCallback((term: string) => {
+    setQuery(term);
+    addRecentSearch(term);
+  }, []);
+  const handleClearRecents = useCallback(() => clearRecentSearches(), []);
+  const handleResultPress = useCallback((product: Product) => {
+    const term = queryRef.current;
+    if (term.length >= MIN_QUERY_LENGTH) addRecentSearch(term);
+    router.push(`/product/${product.id}`);
+  }, []);
+  const retry = useCallback(() => setRetryNonce((n) => n + 1), []);
+  const handleCategory = useCallback((name: string) => setActiveCategory(name === ALL ? null : name), []);
+
+  const renderItem = useCallback(
+    ({ item }: ListRenderItemInfo<Product>) => <SearchResultRow product={item} onPress={handleResultPress} />,
+    [handleResultPress],
+  );
+
+  const listContent = useMemo(() => ({ paddingBottom: layout.scrollBottom + cartBarFootprint }), [cartBarFootprint]);
+
+  // ── Caption under the header: offline, or the server failed while local results still show ──
+  const caption = !online
+    ? "Showing saved results"
+    : searchError && merged.length > 0
+      ? "Couldn't search online · showing saved results"
+      : null;
+  const captionRetry = online && !!searchError && merged.length > 0;
+
+  const countLabel = `${visible.length} ${visible.length === 1 ? "result" : "results"} for "${trimmed}"${effectiveCategory ? ` in ${effectiveCategory}` : ""}`;
 
   return (
     <Screen>
       <View style={styles.header}>
-        <BackButton onPress={() => router.back()} />
-
-        <View style={styles.inputWrap}>
-          <MaterialCommunityIcons name="magnify" size={18} color={C.textLight} />
-          <TextInput
-            ref={inputRef}
-            autoFocus
-            value={query}
-            onChangeText={setQuery}
-            placeholder="Search groceries, snacks, dairy…"
-            placeholderTextColor={C.textLight}
-            style={styles.input}
-            returnKeyType="search"
-            onSubmitEditing={doSearch}
-          />
-          {query.length > 0 && (
-            <TouchableOpacity
-              onPress={() => setQuery("")}
-              hitSlop={10}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel="Clear search"
-            >
-              <MaterialCommunityIcons name="close-circle" size={18} color={C.textLight} />
-            </TouchableOpacity>
-          )}
-        </View>
+        <BackButton fallbackHref="/(tabs)/home" />
+        <SearchBand
+          mode="input"
+          autoFocus
+          value={query}
+          onChangeText={handleChangeText}
+          onSubmit={handleSubmit}
+          onClear={handleClear}
+          loading={serverLoading}
+          style={styles.band}
+          testID="search-band"
+        />
       </View>
 
-      {loading ? (
-        <View style={styles.list}>
-          {SKELETON_ROWS.map((i) => (
-            <View key={i} style={styles.resultCard}>
-              <Skeleton width={64} height={64} radius={10} />
-              <View style={styles.info}>
-                <Skeleton width="80%" height={14} />
-                <Skeleton width="40%" height={12} style={styles.skeletonGap} />
-                <Skeleton width="30%" height={10} style={styles.skeletonGap} />
-              </View>
-              <Skeleton width={60} height={32} radius={10} />
-            </View>
-          ))}
+      {caption ? (
+        <View style={styles.captionRow} accessibilityLiveRegion="polite">
+          <Text style={styles.caption} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+            {caption}
+          </Text>
+          {captionRetry ? <PrimaryButton size="xs" variant="ghost" label="Retry" onPress={retry} /> : null}
         </View>
-      ) : !searched && query.length < 2 ? (
+      ) : null}
+
+      {!hasQuery ? (
+        inhibitFeature ? (
+          <EmptyState icon="magnify" iconSize={48} title="Search products" text="Type at least 2 characters to search" />
+        ) : (
+          <SearchEmpty
+            recents={recents}
+            showRecents={!inhibitRecents}
+            onSelect={handleSelectTerm}
+            onClearRecents={handleClearRecents}
+            bottomInset={cartBarFootprint}
+            testID="search-empty"
+          />
+        )
+      ) : showSkeleton ? (
+        <SkeletonScreen label="Searching…" style={styles.skeletonWrap}>
+          {SKELETON_ROWS.map((i) => (
+            <SkeletonProductCard key={i} variant="row" />
+          ))}
+        </SkeletonScreen>
+      ) : showError ? (
         <EmptyState
-          icon="magnify"
-          iconSize={48}
-          title="Search products"
-          text="Type at least 2 characters to search"
-        />
-      ) : searchError ? (
-        <EmptyState
+          fill
+          tone="error"
           icon="alert-circle-outline"
-          iconSize={48}
-          title="Couldn't load results"
-          text="Something went wrong — try again"
-          action={{ label: "Try again", onPress: retrySearch }}
+          title="Couldn't search"
+          text={searchError ?? undefined}
+          action={{ label: "Retry", onPress: retry }}
         />
-      ) : results.length === 0 ? (
+      ) : showEmpty ? (
         <EmptyState
-          icon="emoticon-sad-outline"
-          iconSize={48}
-          title={`No results for "${query}"`}
-          text="Try a different keyword or browse categories"
+          fill
+          icon="magnify"
+          title={`No results for "${trimmed}"`}
+          text="Try a different word or browse categories"
+          action={{ label: "Browse categories", onPress: browseCategories }}
         />
       ) : (
-        <FlatList
-          data={results}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.list}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
-          renderItem={({ item }) => {
-            const cartItem = cartItemsByProductId.get(item.id);
-            const hasDiscount = item.original_price != null && item.original_price > item.price;
-
-            return (
-              <TouchableOpacity
-                style={styles.resultCard}
-                onPress={() => router.push(`../product/${item.id}`)}
-                activeOpacity={0.85}
-              >
-                {item.image_url ? (
-                  <Image
-                    source={{ uri: cdnImage(item.image_url, 240) }}
-                    style={styles.image}
-                    contentFit="contain"
-                    cachePolicy="memory-disk"
-                    transition={120}
-                    priority="low"
-                  />
-                ) : (
-                  <View style={styles.imagePlaceholder}>
-                    <MaterialCommunityIcons name="image-off-outline" size={22} color={C.textLight} />
-                  </View>
-                )}
-
-                <View style={styles.info}>
-                  <Text style={styles.name} numberOfLines={2}>{item.name}</Text>
-                  <View style={styles.priceRow}>
-                    <Text style={styles.price}>₹{item.price}</Text>
-                    {hasDiscount && (
-                      <Text style={styles.originalPrice}>₹{item.original_price}</Text>
-                    )}
-                    <Text style={styles.unit} numberOfLines={1}>{item.unit}</Text>
-                  </View>
-
-                  <View style={styles.ratingWrap}>
-                    <StarRating
-                      rating={item.avgRating ?? 0}
-                      reviewCount={item.reviewCount}
-                      starSize={12}
-                    />
-                  </View>
-
-                  <Text style={styles.category} numberOfLines={1}>{item.category}</Text>
-                </View>
-
-                {!item.in_stock ? (
-                  <Badge
-                    label="Out of Stock"
-                    bordered
-                    borderColor={C.border}
-                    style={styles.soldOutTag}
-                    textStyle={styles.soldOutTagText}
-                  />
-                ) : cartItem ? (
-                  <View style={styles.qtyRow}>
-                    <TouchableOpacity
-                      style={styles.qtyBtnWrap}
-                      hitSlop={6}
-                      activeOpacity={0.7}
-                      accessibilityRole="button"
-                      accessibilityLabel="Decrease quantity"
-                      onPress={() => incrementQty(item.id, -1)}
-                    >
-                      <Text style={styles.qtyBtnText}>−</Text>
-                    </TouchableOpacity>
-                    <Text style={styles.qtyValue}>{cartItem.quantity}</Text>
-                    <TouchableOpacity
-                      style={styles.qtyBtnWrap}
-                      hitSlop={6}
-                      activeOpacity={0.7}
-                      accessibilityRole="button"
-                      accessibilityLabel="Increase quantity"
-                      onPress={() => incrementQty(item.id, 1)}
-                    >
-                      <Text style={styles.qtyBtnText}>+</Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : (
-                  <PrimaryButton
-                    size="xs"
-                    shadow={false}
-                    label="ADD"
-                    style={styles.addBtn}
-                    textStyle={styles.addText}
-                    onPress={() =>
-                      addItem({
-                        product_id: item.id,
-                        name: item.name,
-                        price: item.price,
-                        unit: item.unit,
-                        image_url: item.image_url,
-                        isLoose: item.isLoose,
-                      })
-                    }
-                  />
-                )}
-              </TouchableOpacity>
-            );
-          }}
-        />
+        <>
+          {!inhibitFeature && categories.length > 1 ? (
+            <CategoryChips categories={categories} active={effectiveCategory} onSelect={handleCategory} />
+          ) : null}
+          {!inhibitFeature ? (
+            <Text style={styles.count} accessibilityLiveRegion="polite" numberOfLines={1} maxFontSizeMultiplier={1.3}>
+              {countLabel}
+            </Text>
+          ) : null}
+          <FlatList
+            data={visible}
+            keyExtractor={keyExtractor}
+            renderItem={renderItem}
+            initialNumToRender={8}
+            windowSize={5}
+            removeClippedSubviews
+            contentContainerStyle={listContent}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            showsVerticalScrollIndicator={false}
+            accessibilityLabel="Search results"
+            testID="search-results"
+          />
+        </>
       )}
     </Screen>
   );
 }
 
+// ─── Category chips ───────────────────────────────────────────────────────────
+
+/**
+ * "All · Dairy (12) · Snacks (4)" — `Chip size="sm"` in a 44 px `tablist`, filtering the list client-side. A press
+ * changes the filter (state), so Chip's default `select` haptic is kept. Chip exposes no `accessibilityRole` prop,
+ * so chips announce `selected` with role "button" inside the tablist (see crossFileNotes).
+ */
+const CategoryChips = React.memo(function CategoryChips({
+  categories,
+  active,
+  onSelect,
+}: {
+  categories: CategoryCount[];
+  active: string | null;
+  onSelect: (name: string) => void;
+}) {
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+      style={styles.chipScroll}
+      contentContainerStyle={styles.chipRow}
+      accessibilityRole="tablist"
+      accessibilityLabel="Filter results by category"
+      testID="search-chips"
+    >
+      <CategoryChip name={ALL} label="All" selected={active === null} onSelect={onSelect} />
+      {categories.map((c) => (
+        <CategoryChip key={c.name} name={c.name} label={`${c.name} (${c.count})`} selected={active === c.name} onSelect={onSelect} />
+      ))}
+    </ScrollView>
+  );
+});
+
+/** One memoised chip; the per-name closure lives here so the strip hands every chip the same `onSelect`. */
+const CategoryChip = React.memo(function CategoryChip({
+  name,
+  label,
+  selected,
+  onSelect,
+}: {
+  name: string;
+  label: string;
+  selected: boolean;
+  onSelect: (name: string) => void;
+}) {
+  return (
+    <Chip label={label} size="sm" selected={selected} accessibilityRole="tab" onPress={() => onSelect(name)} testID={`search-chip-${name}`} />
+  );
+});
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: C.card,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
+    gap: 10,
+    paddingHorizontal: layout.gutterTight,
+    paddingVertical: 8,
   },
-  inputWrap: {
-    flex: 1,
+  band: { flex: 1 },
+  captionRow: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
     gap: 8,
-    backgroundColor: C.bgSoft,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderWidth: 1.5,
-    borderColor: C.border,
+    paddingHorizontal: layout.gutter,
+    paddingBottom: 4,
   },
-  input: { fontFamily: "PlusJakartaSans_500Medium",
-    flex: 1,
-    fontSize: 15,
-    color: C.text,
-    padding: 0,
-    includeFontPadding: false,
-    textAlignVertical: "center",
+  caption: { flex: 1, fontFamily: fontFamily.medium, fontSize: 11, lineHeight: 14, color: C.textSub },
+  // RN's horizontal ScrollView defaults to flexGrow 1; pinned to its content height so the list below keeps flex 1.
+  chipScroll: { flexGrow: 0, flexShrink: 0 },
+  // 8 above + 28 chip + 8 below = 44.
+  chipRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: layout.gutter, paddingVertical: 8 },
+  count: {
+    fontFamily: fontFamily.medium,
+    fontSize: 12,
+    lineHeight: 16,
+    color: C.textSub,
+    paddingHorizontal: layout.gutter,
+    paddingTop: 4,
+    paddingBottom: 6,
   },
-
-  // paddingBottom 40 so the last row clears the home indicator once the keyboard is down.
-  list: { padding: 16, paddingBottom: 40, gap: 12 },
-
-  resultCard: {
-    flexDirection: "row",
-    gap: 12,
-    backgroundColor: C.card,
-    padding: 12,
-    borderRadius: 14,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: C.border,
-    shadowColor: C.shadow,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 2,
-  },
-
-  image: { width: 64, height: 64, borderRadius: 10 },
-  imagePlaceholder: {
-    width: 64,
-    height: 64,
-    borderRadius: 10,
-    backgroundColor: C.bgSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  info: { flex: 1 },
-  skeletonGap: { marginTop: 8 },
-  name: { color: C.text, fontSize: 14, fontFamily: "PlusJakartaSans_600SemiBold", marginBottom: 4 },
-  priceRow: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" },
-  price: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.primary, fontSize: 15 },
-  originalPrice: { fontFamily: "PlusJakartaSans_500Medium", color: C.textLight, fontSize: 12, textDecorationLine: "line-through" },
-  unit: { fontFamily: "PlusJakartaSans_500Medium", color: C.textSub, fontSize: 12, flexShrink: 1 },
-  ratingWrap: { marginTop: 6 },
-  category: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.textLight, fontSize: 11, marginTop: 4 },
-
-  soldOutTag: { paddingVertical: 6, alignSelf: "center" },
-  soldOutTagText: { fontFamily: "PlusJakartaSans_600SemiBold", fontSize: 11 },
-
-  addBtn: { paddingVertical: 8, minHeight: 36 },
-  addText: { fontFamily: "PlusJakartaSans_800ExtraBold" },
-
-  qtyRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: C.primaryXLight,
-    borderRadius: 10,
-    paddingHorizontal: 6,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: C.primaryLight,
-  },
-  qtyBtnWrap: {
-    width: 30,
-    height: 30,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 8,
-    backgroundColor: C.primary,
-  },
-  qtyBtnText: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.card, fontSize: 16 },
-  qtyValue: { fontFamily: "PlusJakartaSans_700Bold", color: C.text, fontSize: 14, minWidth: 18, textAlign: "center" },
+  skeletonWrap: { flex: 1, overflow: "hidden" },
 });

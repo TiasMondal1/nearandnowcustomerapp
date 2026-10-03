@@ -1,195 +1,258 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import React, { useEffect, useState } from "react";
-import {
-    Alert,
-    FlatList,
-    RefreshControl,
-    StyleSheet,
-    Text,
-    View,
-} from "react-native";
+// Payments history: one row per order with the real method label (C22), status badge and amount. Reads the
+// memory mirror first (`getMemoryOrders()`), otherwise one `getUserOrders` call; pull-to-refresh forces the network.
+import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
+import { router } from "expo-router";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { RefreshControl, StyleSheet, Text, View } from "react-native";
 
-import { Badge, Card, IconWrap, Screen, ScreenHeader, Skeleton } from "../../components/ui";
+import { orderDateLabel } from "../../components/orders/OrderRow";
+import {
+  Badge,
+  EmptyState,
+  IconWrap,
+  ListRow,
+  PrimaryButton,
+  Screen,
+  ScreenHeader,
+  Skeleton,
+  SkeletonScreen,
+  type BadgeTone,
+  type IconName,
+} from "../../components/ui";
 import { C } from "../../constants/colors";
-import { text } from "../../constants/ui";
+import { paymentMethodLabel } from "../../constants/orderStatus";
+import { fontFamily, layout, radius, text } from "../../constants/ui";
 import { useAuth } from "../../context/AuthContext";
-import { getUserOrders } from "../../lib/orderService";
+import { useForceSkeleton, useSlowLoad } from "../../hooks/useSlowLoad";
+import { feedback } from "../../lib/feedback";
+import { formatMoney } from "../../lib/formatMoney";
+import { logError } from "../../lib/logError";
+import { getMemoryOrders, getUserOrders, type Order } from "../../lib/orderService";
 
 type Payment = {
   id: string;
-  order_code: string;
-  total_amount: number;
-  payment_method: string;
-  payment_status: string;
-  placed_at: string;
+  orderCode: string;
+  amount: string;
+  method: string;
+  icon: IconName;
+  dateLabel: string;
+  badge: { label: string; tone: BadgeTone };
 };
+
+const SKELETON_ROWS = [0, 1, 2, 3] as const;
+
+const METHOD_ICON: Record<string, IconName> = {
+  cod: "cash",
+  upi: "qrcode-scan",
+  card: "credit-card-outline",
+  netbanking: "bank-outline",
+  wallet: "wallet-outline",
+};
+
+/**
+ * COD orders stay `payment_status: pending` by design (lib/invoiceEligibility.ts), so the badge reads the order
+ * status for them; online methods read `payment_status`.
+ */
+function paymentBadge(order: Order): Payment["badge"] {
+  const method = (order.payment_method ?? "").toLowerCase();
+  const status = (order.payment_status ?? "").toLowerCase();
+  if (order.order_status === "order_cancelled") return { label: "Cancelled", tone: "neutral" };
+  if (method === "cod" || method === "cash_on_delivery") {
+    if (status === "paid" || order.order_status === "order_delivered") return { label: "Paid on delivery", tone: "success" };
+    return { label: "Due on delivery", tone: "neutral" };
+  }
+  if (status === "paid") return { label: "Paid", tone: "success" };
+  if (status === "refunded" || status === "partially_refunded") return { label: "Refunded", tone: "info" };
+  if (status === "failed") return { label: "Failed", tone: "danger" };
+  return { label: "Pending", tone: "warning" };
+}
+
+function toPayment(order: Order): Payment {
+  const method = (order.payment_method ?? "").toLowerCase();
+  return {
+    id: order.id,
+    orderCode: order.order_number || order.id.slice(0, 8).toUpperCase(),
+    amount: formatMoney(order.order_total),
+    method: paymentMethodLabel(order.payment_method),
+    icon: METHOD_ICON[method] ?? "credit-card-outline",
+    dateLabel: orderDateLabel(order),
+    badge: paymentBadge(order),
+  };
+}
+
+const keyExtractor = (item: Payment) => item.id;
+
+const PaymentRow = React.memo(function PaymentRow({ item, divider }: { item: Payment; divider: boolean }) {
+  return (
+    <ListRow
+      title={`#${item.orderCode}`}
+      subtitle={`${item.method} · ${item.dateLabel}`}
+      left={<IconWrap size={34} bg="transparent" icon={item.icon} iconSize={20} iconColor={C.textSub} />}
+      right={
+        <View style={styles.rowRight}>
+          <Text style={styles.amount} maxFontSizeMultiplier={1.3}>
+            {item.amount}
+          </Text>
+          <Badge label={item.badge.label} tone={item.badge.tone} size="sm" pill />
+        </View>
+      }
+      onPress={() => router.push(`/order/${item.id}`)}
+      divider={divider}
+      accessibilityLabel={`Order ${item.orderCode}, ${item.method}, ${item.dateLabel}, ${item.amount}, ${item.badge.label.toLowerCase()}`}
+    />
+  );
+});
+
+/** Four ListRow twins (glyph · two lines · amount + badge). */
+function PaymentsSkeleton() {
+  return (
+    <SkeletonScreen label="Loading payments">
+      {SKELETON_ROWS.map((i) => (
+        <View key={i} style={styles.skelRow}>
+          <Skeleton width={34} height={34} radius={radius.lg} />
+          <View style={styles.skelLines}>
+            <Skeleton width="40%" height={14} />
+            <Skeleton width="65%" height={12} />
+          </View>
+          <View style={styles.skelRight}>
+            <Skeleton width={56} height={16} />
+            <Skeleton width={48} height={18} radius={radius.pill} />
+          </View>
+        </View>
+      ))}
+    </SkeletonScreen>
+  );
+}
 
 export default function PaymentsScreen() {
   const { userId } = useAuth();
-  const [payments, setPayments] = useState<Payment[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [orders, setOrders] = useState<Order[] | null>(() => getMemoryOrders());
+  const [loading, setLoading] = useState(() => getMemoryOrders() === null);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const seqRef = useRef(0);
 
-  const fetchPayments = async () => {
-    try {
-      if (!userId) return;
-      const orders = await getUserOrders(userId);
-      const mapped = orders.map((o) => ({
-        id: o.id,
-        order_code: o.order_number ?? o.id,
-        total_amount: o.order_total,
-        payment_method: o.payment_method ?? "upi",
-        payment_status: o.payment_status ?? "paid",
-        placed_at: o.created_at,
-      }));
-      setPayments(mapped);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to load previous orders";
-      Alert.alert("Previous orders", message);
-      setPayments([]);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  };
+  const fetchPayments = useCallback(
+    async (force = false) => {
+      if (!userId) {
+        setOrders([]);
+        setLoading(false);
+        return;
+      }
+      const seq = ++seqRef.current;
+      try {
+        const data = await getUserOrders(userId, { force });
+        if (seq !== seqRef.current) return;
+        setOrders(data);
+        setError(null);
+      } catch (err) {
+        if (seq !== seqRef.current) return;
+        logError("Fetch payments", err);
+        setError(err instanceof Error ? err.message : "Couldn't load payments");
+      } finally {
+        if (seq === seqRef.current) setLoading(false);
+      }
+    },
+    [userId],
+  );
 
+  // Once: the memory mirror paints instantly when another screen already fetched; otherwise one list call.
   useEffect(() => {
-    fetchPayments();
-  }, [userId]);
+    if (getMemoryOrders() === null) fetchPayments();
+    else setLoading(false);
+  }, [fetchPayments]);
 
-  if (loading) {
+  const onRefresh = useCallback(async () => {
+    feedback.tapSound();
+    setRefreshing(true);
+    await fetchPayments(true);
+    setRefreshing(false);
+  }, [fetchPayments]);
+
+  const payments = useMemo(() => (orders ?? []).map(toPayment), [orders]);
+
+  const renderItem = useCallback(
+    ({ item, index }: ListRenderItemInfo<Payment>) => <PaymentRow item={item} divider={index < payments.length - 1} />,
+    [payments.length],
+  );
+
+  const showSkeleton = useForceSkeleton(loading && payments.length === 0);
+  const slow = useSlowLoad(showSkeleton);
+  const header = <ScreenHeader title="Payments" backFallbackHref="/(tabs)/home" />;
+
+  if (showSkeleton) {
     return (
-      <Screen>
-        <ScreenHeader title="Payments" />
+      <Screen bg={C.card}>
+        {header}
         <PaymentsSkeleton />
+        {slow ? (
+          <View style={styles.slowWrap}>
+            <Text style={styles.slowText}>Still loading… check your connection</Text>
+            <PrimaryButton size="xs" variant="ghost" label="Retry" onPress={() => fetchPayments(true)} />
+          </View>
+        ) : null}
+      </Screen>
+    );
+  }
+
+  if (error && payments.length === 0) {
+    return (
+      <Screen bg={C.card}>
+        {header}
+        <EmptyState
+          fill
+          tone="error"
+          icon="alert-circle-outline"
+          title="Couldn't load payments"
+          text={error}
+          action={{ label: "Retry", icon: "refresh", onPress: () => fetchPayments(true) }}
+        />
       </Screen>
     );
   }
 
   return (
-    <Screen>
-      <ScreenHeader title="Payments" />
-
-      <FlatList
+    <Screen bg={C.card}>
+      {header}
+      <FlashList
         data={payments}
-        keyExtractor={(item) => item.id}
+        keyExtractor={keyExtractor}
+        renderItem={renderItem}
         contentContainerStyle={styles.list}
+        showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => { setRefreshing(true); fetchPayments(); }}
-            tintColor={C.primary}
-            colors={[C.primary]}
-          />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} colors={[C.primary]} />
         }
         ListEmptyComponent={
-          <View style={styles.empty}>
-            <IconWrap
-              size={72}
-              circle
-              bg={C.bgSoft}
-              icon="credit-card-outline"
-              iconSize={36}
-              iconColor={C.textLight}
-            />
-            <Text style={styles.emptyTitle}>No payments yet</Text>
-            <Text style={styles.emptyText}>Your payment history will appear here</Text>
-          </View>
+          <EmptyState
+            iconWrap
+            icon="credit-card-outline"
+            title="No payments yet"
+            text="Your payment history will appear here"
+            action={{ label: "Start shopping", onPress: () => router.dismissTo("/(tabs)/home") }}
+          />
         }
-        renderItem={({ item }) => <PaymentCard payment={item} />}
       />
     </Screen>
   );
 }
 
-/** Four placeholder cards mirroring PaymentCard's geometry while the first fetch is in flight. */
-function PaymentsSkeleton() {
-  return (
-    <View style={styles.list}>
-      {[0, 1, 2, 3].map((i) => (
-        <Card key={i} shadow="card" style={styles.card}>
-          <View style={styles.cardTop}>
-            <View style={styles.skeletonLines}>
-              <Skeleton width="40%" height={15} />
-              <Skeleton width="55%" height={12} />
-            </View>
-            <Skeleton width={60} height={22} radius={999} />
-          </View>
-          <View style={styles.cardBottom}>
-            <Skeleton width="35%" height={13} />
-            <Skeleton width="20%" height={17} />
-          </View>
-        </Card>
-      ))}
-    </View>
-  );
-}
-
-function PaymentCard({ payment }: { payment: Payment }) {
-  const paid = payment.payment_status === "paid";
-  const d = new Date(payment.placed_at);
-  const dateStr = d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) +
-    " · " + d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
-
-  return (
-    <Card shadow="card" style={styles.card}>
-      <View style={styles.cardTop}>
-        <View style={styles.cardTopText}>
-          <Text style={styles.orderCode} numberOfLines={1} ellipsizeMode="middle">
-            #{payment.order_code}
-          </Text>
-          <Text style={styles.date} numberOfLines={1}>{dateStr}</Text>
-        </View>
-        <Badge
-          label={paid ? "PAID" : "PENDING"}
-          bg={paid ? C.successLight : C.warningLight}
-          color={paid ? C.success : C.warning}
-          pill
-          style={styles.badge}
-          textStyle={styles.badgeText}
-        />
-      </View>
-      <View style={styles.cardBottom}>
-        <View style={styles.methodPill}>
-          <MaterialCommunityIcons
-            name={payment.payment_method === "cod" ? "cash" : "qrcode-scan"}
-            size={14}
-            color={C.textSub}
-          />
-          <Text style={styles.method}>
-            {payment.payment_method === "cod" ? "Cash on Delivery" : "UPI"}
-          </Text>
-        </View>
-        <Text style={styles.amount}>₹{payment.total_amount.toFixed(2)}</Text>
-      </View>
-    </Card>
-  );
-}
-
 const styles = StyleSheet.create({
-  list: { padding: 16, paddingBottom: 40, flexGrow: 1 },
+  list: { paddingBottom: layout.scrollBottom },
+  rowRight: { alignItems: "flex-end", gap: 4 },
+  amount: { fontFamily: fontFamily.bold, fontSize: 14, color: C.text, fontVariant: ["tabular-nums"] },
 
-  card: { marginBottom: 12 },
-  cardTop: { flexDirection: "row", alignItems: "flex-start", gap: 12, marginBottom: 12 },
-  cardTopText: { flex: 1, flexShrink: 1 },
-  cardBottom: {
-    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
-    paddingTop: 12, borderTopWidth: 1, borderTopColor: C.border,
+  slowWrap: { alignItems: "center", gap: 6, paddingVertical: 12 },
+  slowText: { ...text.caption, textAlign: "center" },
+  skelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: layout.rowGap,
+    paddingHorizontal: layout.rowPaddingX,
+    paddingVertical: layout.rowPaddingY,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
   },
-
-  orderCode: { ...text.cardTitle },
-  date: { ...text.rowSubtitle, marginTop: 4 },
-
-  methodPill: { flexDirection: "row", alignItems: "center", gap: 6 },
-  method: { ...text.rowValue },
-  amount: { color: C.primary, fontSize: 16, fontFamily: "PlusJakartaSans_800ExtraBold" },
-
-  badge: { paddingVertical: 4, flexShrink: 0 },
-  badgeText: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 11, letterSpacing: 0.4 },
-
-  skeletonLines: { flex: 1, gap: 6 },
-
-  empty: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10, paddingBottom: 48 },
-  emptyTitle: { ...text.emptyTitle },
-  emptyText: { ...text.emptyText },
+  skelLines: { flex: 1, gap: 6 },
+  skelRight: { alignItems: "flex-end", gap: 6 },
 });

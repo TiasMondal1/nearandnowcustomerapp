@@ -1,705 +1,499 @@
+// Select delivery location — the sheet-styled modal (zephyr presentation) opened from Home and checkout:
+// Places search, "Use current location" (permission-primed), the saved addresses as radio rows with distance
+// from the active location (C25) and a "Default" badge (C26), and "Add new address" → the centre-pin map.
+// Picking anything sets the active location, plays `toggle(true)` + a toast and unwinds to `returnTo`
+// (only through `parseReturnTo`, never a raw param) or pops (quartz, 2026-10-03; MAP P20/U19/U35).
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import * as ExpoLocation from "expo-location";
-import { router, useFocusEffect } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    Share,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
-} from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { ActivityIndicator, FlatList, Keyboard, Linking, StyleSheet, Text, View } from "react-native";
 
+import { AddressRow } from "../components/location/AddressRow";
 import {
-  Badge,
   EmptyState,
-  IconWrap,
-  PrimaryButton,
+  IconButton,
+  Input,
+  ListRow,
   Screen,
-  ScreenHeader,
   SectionLabel,
   Skeleton,
+  SkeletonScreen,
   SkeletonText,
+  notify,
 } from "../components/ui";
+import { C } from "../constants/colors";
+import { layout, text } from "../constants/ui";
 import { useAuth } from "../context/AuthContext";
-import { useLocation } from "../context/LocationContext";
-import {
-    getUserAddresses,
-    readAddressesCache,
-    type SavedAddress,
-} from "../lib/addressService";
+import { useLocation, type ActiveLocation } from "../context/LocationContext";
+import { useDeviceAddress } from "../hooks/useDeviceAddress";
+import { useRefetchOnReconnect } from "../hooks/useRefetchOnReconnect";
+import { useForceSkeleton } from "../hooks/useSlowLoad";
+import { getUserAddresses, parseReturnTo, peekAddresses, type SavedAddress } from "../lib/addressService";
+import { calculateDistance } from "../lib/distanceUtils";
+import { feedback } from "../lib/feedback";
 import { logError } from "../lib/logError";
+import { logSilentFailure } from "../lib/logSilentFailure";
+import { autocomplete, newPlacesSessionToken, placeDetails, type AutocompletePrediction } from "../lib/placesService";
+import { QC_KEYS, useCachedValue } from "../lib/queryCache";
 
-const T = {
-  green: "#2D7A4F",
-  greenXLight: "#EAF6EE",
-  cream: "#FAFAF7",
-  sand: "#F3F1EB",
-  bark: "#3C2F1E",
-  barkMid: "#6B5744",
-  barkLight: "#A89282",
-  white: "#FFFFFF",
-  pink: "#E91E63",
-  cardBorder: "rgba(60,47,30,0.08)",
-};
+// ─── Constants ────────────────────────────────────────────────────────────────
 
-// WhatsApp brand green — only for the WhatsApp glyph on the request row.
-const WHATSAPP_GREEN = "#25D366";
+/** Places Autocomplete debounce: one request per pause in typing, not per keystroke. */
+const SEARCH_DEBOUNCE_MS = 300;
+/** Three ListRow-lg twins while the first list loads. */
+const SKELETON_ROWS = [0, 1, 2] as const;
+/** Two saved addresses within ~1 m are the same place (coordinates round-trip through the API as floats). */
+const SAME_PLACE_DEG = 1e-5;
+const SEARCH_ICON = 20;
+const CLEAR_BUTTON = 32;
+const CLEAR_ICON = 18;
 
-// Placeholder cards shown while the first address list loads.
-const SKELETON_ROWS = [0, 1, 2];
+type Coords = { latitude: number; longitude: number };
 
-type AddressWithDistance = SavedAddress & {
-  distance?: number;
-};
+// ─── Pure helpers ─────────────────────────────────────────────────────────────
 
-function calculateDistance(
-  lat1: number,
-  lon1: number,
-  lat2: number,
-  lon2: number,
-): number {
-  const R = 6371;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLon = ((lon2 - lon1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
+/** (0,0) and non-finite coordinates are never a customer address (MAP §2.11 #39). */
+function isValidCoords(lat: number, lng: number): boolean {
+  return Number.isFinite(lat) && Number.isFinite(lng) && !(lat === 0 && lng === 0);
 }
 
-const getAddressIcon = (
-  label: string,
-): keyof typeof MaterialCommunityIcons.glyphMap => {
-  const lower = label.toLowerCase();
-  if (lower.includes("home")) return "home";
-  if (lower.includes("work") || lower.includes("office")) return "office-building";
-  if (lower.includes("hotel")) return "bed";
-  if (lower.includes("other")) return "map-marker";
-  return "map-marker";
-};
+function addressCoords(a: SavedAddress): Coords | null {
+  const lat = typeof a.latitude === "number" ? a.latitude : Number(a.latitude);
+  const lng = typeof a.longitude === "number" ? a.longitude : Number(a.longitude);
+  return isValidCoords(lat, lng) ? { latitude: lat, longitude: lng } : null;
+}
 
-export default function SelectLocationScreen() {
+/** The row is "selected" when it IS the active location: same spot, or the same label + address line. */
+function isActiveAddress(active: ActiveLocation | null, a: SavedAddress, coords: Coords | null): boolean {
+  if (!active) return false;
+  if (
+    coords &&
+    Math.abs(coords.latitude - active.latitude) < SAME_PLACE_DEG &&
+    Math.abs(coords.longitude - active.longitude) < SAME_PLACE_DEG
+  ) {
+    return true;
+  }
+  return active.label === a.label && !!active.address && active.address === a.address;
+}
+
+function predictionTitle(p: AutocompletePrediction): string {
+  return p.structured_formatting?.main_text || p.description;
+}
+
+// ─── Screen ───────────────────────────────────────────────────────────────────
+
+export default function SelectLocationScreen(): React.JSX.Element {
+  const params = useLocalSearchParams<{ returnTo?: string }>();
+  const returnTo = parseReturnTo(params.returnTo);
+  // The add flow (map → details → save) unwinds with dismissTo: to the caller's returnTo, or to Home when the
+  // sheet was opened without one (Home's own address pill) — never back onto the map.
+  const addReturnTo = returnTo ?? "/(tabs)/home";
+
   const { userId } = useAuth();
+  const uid = userId ?? "";
   const { location: activeLocation, setLocation } = useLocation();
-  const insets = useSafeAreaInsets();
+  const { request: requestDeviceAddress, busy: gpsBusy, denied: gpsDenied } = useDeviceAddress();
 
-  const [addresses, setAddresses] = useState<SavedAddress[]>([]);
-  // `loading` means "we haven't rendered anything yet" — once the cache paints
-  // we flip this off immediately so the UI is never blank.
-  const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [currentLocation, setCurrentLocation] = useState<{
-    latitude: number;
-    longitude: number;
-  } | null>(null);
-  const [fetchingCurrentLocation, setFetchingCurrentLocation] = useState(false);
+  // ── Saved addresses: memory first (optimistic mutations + background refetches repaint), one fetch per focus ──
+  const cachedList = useCachedValue<SavedAddress[]>(QC_KEYS.addresses(uid));
+  // Fallback for a bypassed query cache (Dev_Kepler_inhibit_QueryCache): the resolved list still paints.
+  const [fetchedList, setFetchedList] = useState<SavedAddress[] | undefined>(() => peekAddresses(uid));
+  const addresses = cachedList ?? fetchedList;
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const loadSeqRef = useRef(0);
+  const focusedOnceRef = useRef(false);
 
-  // Used to avoid setState after unmount when the background fetch resolves
-  // after the user has navigated away.
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  // ─── SWR: paint from cache → revalidate in background ─────────────────────
-  const revalidate = useCallback(async () => {
-    if (!userId) return;
-    try {
-      const fresh = await getUserAddresses(userId);
-      if (mountedRef.current) setAddresses(fresh);
-    } catch (error) {
-      // Only surface a toast if the user has no cached list to fall back to;
-      // otherwise we silently retry on the next focus.
-      logError("Revalidate addresses", error);
-      if (mountedRef.current && addresses.length === 0) {
-        Alert.alert("Error", "Failed to load saved addresses");
+  const revalidate = useCallback(
+    async (force: boolean) => {
+      if (!uid) return;
+      const seq = ++loadSeqRef.current;
+      try {
+        const list = await getUserAddresses(uid, { force });
+        if (seq !== loadSeqRef.current) return;
+        setFetchedList(list);
+        setLoadError(null);
+      } catch (err) {
+        if (seq !== loadSeqRef.current) return;
+        logError("Load addresses", err);
+        setLoadError(err instanceof Error ? err.message : "Couldn't load your addresses");
       }
-    } finally {
-      if (mountedRef.current) setLoading(false);
-    }
-  }, [userId, addresses.length]);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (!userId) {
-        setLoading(false);
-        return;
-      }
-      const cached = await readAddressesCache(userId);
-      if (cancelled) return;
-      if (cached && cached.length > 0) {
-        setAddresses(cached);
-        setLoading(false);
-      }
-      revalidate();
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [userId, revalidate]);
-
-  // Re-sync whenever the user navigates back to this screen (e.g. after adding
-  // a new address). The cache is invalidated on every mutation, so this pulls
-  // the latest list without showing a spinner.
-  useFocusEffect(
-    useCallback(() => {
-      if (userId) revalidate();
-    }, [userId, revalidate]),
+    },
+    [uid],
   );
 
-  // Attach distance info lazily (only when the user has granted GPS access).
-  const addressesWithDistance = useMemo<AddressWithDistance[]>(() => {
-    if (!currentLocation) return addresses;
-    return addresses.map((addr) => {
-      if (addr.latitude == null || addr.longitude == null) return addr;
-      return {
-        ...addr,
-        distance: calculateDistance(
-          currentLocation.latitude,
-          currentLocation.longitude,
-          addr.latitude,
-          addr.longitude,
-        ),
-      };
-    });
-  }, [addresses, currentLocation]);
+  // One revalidate per focus (P20: the old mount + focus pair fetched twice). The first focus takes the
+  // disk-seeded path; every later focus forces the network so an add/edit elsewhere shows up.
+  useFocusEffect(
+    useCallback(() => {
+      const force = focusedOnceRef.current;
+      focusedOnceRef.current = true;
+      void revalidate(force);
+    }, [revalidate]),
+  );
+  useRefetchOnReconnect(() => {
+    void revalidate(true);
+  });
 
-  const requestingLocationRef = useRef(false);
+  // ── Leaving ──
+  const leavingRef = useRef(false);
 
-  const handleUseCurrentLocation = async () => {
-    // Use-current-location now shares the same map-confirm + search flow as
-    // "Add new address": we just ensure permission is granted, then hand off
-    // to the map screen which auto-centers on the user's GPS fix on mount.
-    // The `disabled={fetchingCurrentLocation}` guard on the button below is
-    // state-based (not synchronous), so a fast double-tap before the first
-    // render commits could still fire this twice concurrently — this ref
-    // closes that narrow window. Already try/catch'd, so this was never a
-    // crash risk, just a wasted duplicate permission request.
-    if (requestingLocationRef.current) return;
-    requestingLocationRef.current = true;
-    try {
-      setFetchingCurrentLocation(true);
-      const { status } = await ExpoLocation.requestForegroundPermissionsAsync();
+  const finishWith = useCallback(
+    (label: string) => {
+      if (leavingRef.current) return;
+      leavingRef.current = true;
+      feedback.toggle(true);
+      notify({ id: "delivering-to", title: `Delivering to ${label}`, icon: "map-marker" });
+      if (returnTo) router.dismissTo(returnTo);
+      else if (router.canGoBack()) router.back();
+      else router.replace("/(tabs)/home");
+    },
+    [returnTo],
+  );
 
-      if (status !== "granted") {
-        Alert.alert(
-          "Permission Required",
-          "Please enable location permissions to use this feature",
-        );
+  const applyLocation = useCallback(
+    (loc: ActiveLocation) => {
+      if (!isValidCoords(loc.latitude, loc.longitude)) {
+        feedback.error();
+        notify({ id: "location-invalid", title: "That place has no map location", tone: "warning" });
         return;
       }
+      setLocation(loc);
+      finishWith(loc.label);
+    },
+    [setLocation, finishWith],
+  );
 
-      router.push("/location/select-map");
-    } catch (error) {
-      logError("Get current location", error);
-      Alert.alert("Error", "Failed to get your current location");
-    } finally {
-      setFetchingCurrentLocation(false);
-      requestingLocationRef.current = false;
-    }
+  const close = () => {
+    if (router.canGoBack()) router.back();
+    else router.replace("/(tabs)/home");
   };
 
-  const handleSelectAddress = (address: SavedAddress) => {
-    if (address.latitude != null && address.longitude != null) {
-      setLocation({
-        latitude: address.latitude,
-        longitude: address.longitude,
-        label: address.label,
-        address: address.address,
-        source: "saved",
+  // ── Saved address pick ──
+  const handlePickAddress = (a: SavedAddress) => {
+    const coords = addressCoords(a);
+    if (!coords) {
+      feedback.error();
+      notify({
+        id: "location-invalid",
+        title: "This address has no map location",
+        message: "Edit it to pin the spot on the map",
+        tone: "warning",
+        action: { label: "Edit", onPress: () => router.push({ pathname: "/location/edit", params: { id: a.id } }) },
       });
-      if (router.canGoBack()) {
-        router.back();
-      } else {
-        router.replace("/(tabs)/home");
+      return;
+    }
+    applyLocation({ ...coords, label: a.label, address: a.address, source: "saved" });
+  };
+
+  // ── GPS row (the subtitle primes the OS prompt; the hook owns beginNativePrompt and never navigates) ──
+  const [gpsAttempt, setGpsAttempt] = useState(0);
+  const gpsHandledRef = useRef(0);
+
+  const handleUseCurrentLocation = async () => {
+    if (gpsBusy) return;
+    // Always re-ask: a permission granted in Settings since the last denial resolves without a dialog; a
+    // second denial in a row (the OS shows no dialog once denied) is the cue to open Settings.
+    const wasDenied = gpsDenied;
+    const result = await requestDeviceAddress();
+    if (result) {
+      applyLocation({ latitude: result.lat, longitude: result.lng, label: "Current location", address: result.address, source: "manual" });
+      return;
+    }
+    if (wasDenied) {
+      Linking.openSettings().catch((err) => logSilentFailure("Open settings", err));
+      return;
+    }
+    setGpsAttempt((n) => n + 1);
+  };
+
+  // A null GPS result is either "denied" (inline row state, no toast) or a failed fix (one error + toast).
+  // `denied` lands in the same commit as the attempt bump, so the effect reads the settled value.
+  useEffect(() => {
+    if (gpsAttempt === 0 || gpsHandledRef.current === gpsAttempt) return;
+    gpsHandledRef.current = gpsAttempt;
+    if (gpsDenied) return;
+    feedback.error();
+    notify({ id: "gps-error", title: "Couldn't get your location", message: "Try again or pick a saved address", tone: "error" });
+  }, [gpsAttempt, gpsDenied]);
+
+  // ── Places search (session token shared by the predictions and the details call that ends them) ──
+  const [query, setQuery] = useState("");
+  const [predictions, setPredictions] = useState<AutocompletePrediction[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const tokenRef = useRef(newPlacesSessionToken());
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchSeqRef = useRef(0);
+  const pickingRef = useRef(false);
+
+  useEffect(
+    () => () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      searchSeqRef.current += 1;
+    },
+    [],
+  );
+
+  const runSearch = async (q: string) => {
+    const seq = ++searchSeqRef.current;
+    setSearching(true);
+    const results = await autocomplete(q, tokenRef.current); // never throws ([] on ZERO_RESULTS / failure)
+    if (seq !== searchSeqRef.current) return;
+    setPredictions(results);
+    setSearching(false);
+  };
+
+  const handleQueryChange = (t: string) => {
+    setQuery(t);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const q = t.trim();
+    if (!q) {
+      searchSeqRef.current += 1;
+      setPredictions(null);
+      setSearching(false);
+      return;
+    }
+    debounceRef.current = setTimeout(() => {
+      void runSearch(q);
+    }, SEARCH_DEBOUNCE_MS);
+  };
+
+  const clearSearch = () => handleQueryChange("");
+
+  const handlePickPrediction = async (p: AutocompletePrediction) => {
+    if (pickingRef.current) return;
+    pickingRef.current = true;
+    Keyboard.dismiss();
+    setPicking(true);
+    const label = predictionTitle(p);
+    try {
+      const details = await placeDetails(p.place_id, tokenRef.current);
+      // Per Google's guidance the session ends with a Details call: rotate the token for the next search.
+      tokenRef.current = newPlacesSessionToken();
+      if (!details) {
+        feedback.error();
+        notify({ id: "place-error", title: "Couldn't load that place", message: "Pick another result", tone: "error" });
+        return;
       }
-    } else {
-      Alert.alert("Error", "This address doesn't have location coordinates");
+      applyLocation({
+        latitude: details.geometry.location.lat,
+        longitude: details.geometry.location.lng,
+        label,
+        address: details.formatted_address || p.description,
+        source: "manual",
+      });
+    } catch (err) {
+      logError("Place details", err);
+      feedback.error();
+      notify({
+        id: "place-error",
+        title: "Couldn't load that place",
+        message: err instanceof Error ? err.message : undefined,
+        tone: "error",
+      });
+    } finally {
+      pickingRef.current = false;
+      setPicking(false);
     }
   };
 
-  const handleShareAddress = (address: SavedAddress) => {
-    const lines = [address.label, address.address, address.landmark]
-      .filter(Boolean)
-      .join("\n");
-    Share.share({ message: lines }).catch(() => {});
-  };
+  // ── Derived ──
+  const loading = useForceSkeleton(!!uid && addresses === undefined && !loadError);
+  const addressCount = addresses ? addresses.length : 0;
+  const predictionCount = predictions ? predictions.length : 0;
+  const searchMode = query.trim().length > 0;
+  const gpsSubtitle = gpsDenied ? "Location permission needed · Open settings" : "Using GPS";
 
-  const handleAddNewAddress = () => {
-    router.push("/location/select-map");
-  };
+  // ─── Renderers ──────────────────────────────────────────────────────────────
 
-  const handleRequestFromFriend = () => {
-    Alert.alert(
-      "Request Address",
-      "This feature allows you to request location from a friend via WhatsApp",
-      [{ text: "OK" }],
-    );
-  };
-
-  const filteredAddresses = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return addressesWithDistance;
-    return addressesWithDistance.filter((addr) => {
-      return (
-        addr.label.toLowerCase().includes(q) ||
-        addr.address.toLowerCase().includes(q) ||
-        addr.city?.toLowerCase().includes(q) ||
-        addr.landmark?.toLowerCase().includes(q)
-      );
-    });
-  }, [addressesWithDistance, searchQuery]);
-
-  const activeLabel = activeLocation?.label;
-  const activeAddress = activeLocation?.address;
-
-  const renderAddressItem = useCallback(({
-    item,
-  }: {
-    item: AddressWithDistance;
-  }) => {
-    const isSelected =
-      activeLabel === item.label && activeAddress === item.address;
-
+  const renderAddress = ({ item, index }: { item: SavedAddress; index: number }) => {
+    const coords = addressCoords(item);
+    const selected = isActiveAddress(activeLocation, item, coords);
+    const distanceKm =
+      !selected && coords && activeLocation
+        ? calculateDistance(activeLocation.latitude, activeLocation.longitude, coords.latitude, coords.longitude)
+        : null;
     return (
-      <TouchableOpacity
-        style={[styles.addressCard, isSelected && styles.addressCardSelected]}
-        onPress={() => handleSelectAddress(item)}
-        activeOpacity={0.85}
-        accessibilityRole="button"
-        accessibilityState={{ selected: isSelected }}
-      >
-        <IconWrap size={40} bg={T.sand} style={styles.addressIconWrap}>
-          <MaterialCommunityIcons
-            name={getAddressIcon(item.label)}
-            size={20}
-            color={isSelected ? T.green : T.barkMid}
-          />
-        </IconWrap>
-
-        <View style={styles.addressContent}>
-          <View style={styles.addressHeader}>
-            <Text style={styles.addressLabel} numberOfLines={1}>
-              {item.label}
-            </Text>
-            {item.distance != null && (
-              <Text style={styles.distanceText}>
-                • {item.distance < 1
-                  ? `${Math.round(item.distance * 1000)} m`
-                  : `${item.distance.toFixed(1)} km`}
-              </Text>
-            )}
-            {item.is_default && (
-              <Badge
-                size="sm"
-                pill
-                bg={T.green}
-                color={T.white}
-                label="Selected"
-                style={styles.defaultBadge}
-                textStyle={styles.defaultBadgeText}
-              />
-            )}
-          </View>
-
-          <Text style={styles.addressText} numberOfLines={2}>
-            {item.address}
-          </Text>
-
-          {item.landmark && (
-            <View style={styles.landmarkRow}>
-              <MaterialCommunityIcons name="map-marker-outline" size={12} color={T.barkLight} />
-              <Text style={styles.landmarkText} numberOfLines={1}>
-                {item.landmark}
-              </Text>
-            </View>
-          )}
-        </View>
-
-        <View style={styles.addressActions}>
-          <TouchableOpacity
-            style={styles.cardActionBtn}
-            onPress={() => handleShareAddress(item)}
-            hitSlop={6}
-            activeOpacity={0.7}
-            accessibilityRole="button"
-            accessibilityLabel="Share address"
-          >
-            <MaterialCommunityIcons name="share-variant" size={18} color={T.barkLight} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.cardActionBtn}
-            onPress={() => router.push(`/location/edit?id=${item.id}`)}
-            hitSlop={6}
-            activeOpacity={0.7}
-            accessibilityRole="button"
-            accessibilityLabel="Edit address"
-          >
-            <MaterialCommunityIcons name="dots-vertical" size={18} color={T.barkLight} />
-          </TouchableOpacity>
-        </View>
-      </TouchableOpacity>
+      <AddressRow
+        address={item}
+        selectable
+        selected={selected}
+        distanceKm={distanceKm}
+        onPress={() => handlePickAddress(item)}
+        divider={index < addressCount - 1}
+        testID={`address-row-${item.id}`}
+      />
     );
-  }, [activeLabel, activeAddress]);
+  };
 
-  // `extraData` tells FlatList to re-render rows when the selection changes
-  // even though the underlying `data` array reference stays the same.
-  const listExtraData = useMemo(
-    () => ({ activeLabel, activeAddress }),
-    [activeLabel, activeAddress],
+  const renderPrediction = ({ item, index }: { item: AutocompletePrediction; index: number }) => (
+    <ListRow
+      size="lg"
+      icon="map-marker-outline"
+      iconColor={C.textSub}
+      iconBg="transparent"
+      title={predictionTitle(item)}
+      subtitle={item.structured_formatting?.secondary_text || undefined}
+      titleLines={1}
+      onPress={() => void handlePickPrediction(item)}
+      divider={index < predictionCount - 1}
+      disabled={picking}
+    />
+  );
+
+  const listHeader = (
+    <View>
+      <View accessibilityLiveRegion="polite">
+        <ListRow
+          size="lg"
+          icon="crosshairs-gps"
+          iconColor={C.primary}
+          iconBg="transparent"
+          title="Use current location"
+          subtitle={gpsSubtitle}
+          onPress={() => void handleUseCurrentLocation()}
+          right={gpsBusy ? <ActivityIndicator size="small" color={C.primary} /> : undefined}
+          accessibilityLabel={`Use current location, ${gpsSubtitle}`}
+          divider
+        />
+      </View>
+      <ListRow
+        size="lg"
+        icon="plus"
+        iconColor={C.primary}
+        iconBg="transparent"
+        title="Add new address"
+        onPress={() => router.push({ pathname: "/location/select-map", params: { returnTo: addReturnTo } })}
+        divider
+      />
+      <View style={styles.sectionLabelWrap}>
+        <SectionLabel>Saved addresses</SectionLabel>
+      </View>
+    </View>
+  );
+
+  const listEmpty = loading ? (
+    <SkeletonScreen label="Loading addresses…">
+      {SKELETON_ROWS.map((i) => (
+        <View key={i} style={[styles.skeletonRow, i < SKELETON_ROWS.length - 1 && styles.skeletonDivider]}>
+          <Skeleton width={44} height={44} radius={12} />
+          <View style={styles.skeletonCol}>
+            <Skeleton width="40%" height={14} style={styles.skeletonTitle} />
+            <SkeletonText lines={2} lineHeight={12} gap={6} width="90%" lastLineWidth="60%" />
+          </View>
+        </View>
+      ))}
+    </SkeletonScreen>
+  ) : loadError && !addresses ? (
+    <EmptyState
+      icon="cloud-off-outline"
+      title="Couldn't load addresses"
+      text={loadError}
+      action={{ label: "Retry", onPress: () => void revalidate(true) }}
+    />
+  ) : (
+    <EmptyState
+      icon="map-marker-plus-outline"
+      title="No saved addresses"
+      text="Save an address to get your orders delivered faster"
+      action={{
+        label: "Add address",
+        icon: "plus",
+        onPress: () => router.push({ pathname: "/location/select-map", params: { returnTo: addReturnTo } }),
+      }}
+    />
+  );
+
+  const searchEmpty = searching ? null : (
+    <EmptyState icon="map-search-outline" title="No matching places" text="Try the area, street or a landmark name" />
   );
 
   return (
-    <Screen bg={T.cream} edges={["top"]}>
-      <ScreenHeader
-        title="Select Location"
-        onBack={() => {
-          if (router.canGoBack()) {
-            router.back();
-          } else {
-            router.replace("/(tabs)/home");
-          }
-        }}
-        backProps={{ bg: T.sand, color: T.bark }}
-        titleStyle={styles.headerTitle}
-        style={styles.header}
-      />
-
-      <View style={styles.searchContainer}>
-        <View style={styles.searchBar}>
-          <MaterialCommunityIcons name="magnify" size={20} color={T.barkLight} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search Address"
-            placeholderTextColor={T.barkLight}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            returnKeyType="search"
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity
-              onPress={() => setSearchQuery("")}
-              hitSlop={12}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel="Clear search"
-            >
-              <MaterialCommunityIcons name="close-circle" size={18} color={T.barkLight} />
-            </TouchableOpacity>
-          )}
-        </View>
+    <Screen bg={C.card} edges={["top"]}>
+      <View style={styles.header}>
+        <Text style={styles.title} numberOfLines={1} accessibilityRole="header">
+          Select delivery location
+        </Text>
+        <IconButton icon="close" accessibilityLabel="Close" onPress={close} />
       </View>
 
-      <View style={styles.quickActions}>
-        <TouchableOpacity
-          style={styles.quickActionBtn}
-          onPress={handleUseCurrentLocation}
-          activeOpacity={0.7}
-          disabled={fetchingCurrentLocation}
-          accessibilityRole="button"
-        >
-          <MaterialCommunityIcons name="crosshairs-gps" size={20} color={T.pink} />
-          <Text style={[styles.quickActionText, styles.quickActionTextAccent]}>
-            Use my Current Location
-          </Text>
-          <View style={styles.quickActionTrailing}>
-            {fetchingCurrentLocation && (
-              <ActivityIndicator size="small" color={T.pink} />
-            )}
-          </View>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.quickActionBtn}
-          onPress={handleAddNewAddress}
-          activeOpacity={0.7}
-          accessibilityRole="button"
-        >
-          <MaterialCommunityIcons name="plus" size={20} color={T.pink} />
-          <Text style={[styles.quickActionText, styles.quickActionTextAccent]}>
-            Add New Address
-          </Text>
-          <View style={styles.quickActionTrailing}>
-            <MaterialCommunityIcons name="chevron-right" size={20} color={T.barkLight} />
-          </View>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.quickActionBtn, styles.quickActionBtnLast]}
-          onPress={handleRequestFromFriend}
-          activeOpacity={0.7}
-          accessibilityRole="button"
-        >
-          <MaterialCommunityIcons name="whatsapp" size={20} color={WHATSAPP_GREEN} />
-          <Text style={styles.quickActionText}>
-            Request address from friend
-          </Text>
-          <View style={styles.quickActionTrailing}>
-            <MaterialCommunityIcons name="chevron-right" size={20} color={T.barkLight} />
-          </View>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.sectionHeader}>
-        <SectionLabel style={styles.sectionTitle}>Saved Addresses</SectionLabel>
-      </View>
-
-      {loading ? (
-        <View
-          style={styles.skeletonList}
-          accessible
-          accessibilityLabel="Loading addresses..."
-        >
-          {SKELETON_ROWS.map((i) => (
-            <View key={i} style={styles.addressCard}>
-              <Skeleton
-                width={40}
-                height={40}
-                radius={12}
-                color={T.sand}
-                style={styles.addressIconWrap}
+      <View style={styles.searchWrap}>
+        <Input
+          variant="outlined"
+          placeholder="Search for area, street…"
+          value={query}
+          onChangeText={handleQueryChange}
+          returnKeyType="search"
+          autoCorrect={false}
+          accessibilityLabel="Search for an area or street"
+          left={<MaterialCommunityIcons name="magnify" size={SEARCH_ICON} color={C.textSub} style={styles.searchIcon} />}
+          right={
+            searching || picking ? (
+              <ActivityIndicator size="small" color={C.primary} />
+            ) : query.length > 0 ? (
+              <IconButton
+                icon="close-circle"
+                size={CLEAR_BUTTON}
+                iconSize={CLEAR_ICON}
+                bg="transparent"
+                color={C.textLight}
+                accessibilityLabel="Clear search"
+                onPress={clearSearch}
               />
-              <View style={styles.addressContent}>
-                <Skeleton
-                  width="40%"
-                  height={16}
-                  color={T.sand}
-                  style={styles.skeletonLabel}
-                />
-                <SkeletonText
-                  lines={2}
-                  lineHeight={12}
-                  gap={6}
-                  width="85%"
-                  lastLineWidth="60%"
-                  color={T.sand}
-                />
-              </View>
-            </View>
-          ))}
-        </View>
-      ) : filteredAddresses.length === 0 ? (
-        <EmptyState
-          fill
-          icon="map-marker-off"
-          iconSize={48}
-          iconColor={T.barkLight}
-          title={searchQuery ? "No addresses found" : "No saved addresses"}
-          text={
-            searchQuery
-              ? "Try a different search term"
-              : "Add your first address to get started"
+            ) : null
           }
-          titleStyle={styles.emptyTitle}
-          textStyle={styles.emptyText}
-        >
-          {!searchQuery && (
-            <PrimaryButton
-              size="sm"
-              icon="plus"
-              label="Add Address"
-              onPress={handleAddNewAddress}
-              style={styles.emptyBtn}
-              textStyle={styles.emptyBtnText}
-            />
-          )}
-        </EmptyState>
+        />
+      </View>
+
+      {searchMode ? (
+        <FlatList
+          data={predictions ?? []}
+          keyExtractor={(p) => p.place_id}
+          renderItem={renderPrediction}
+          ListEmptyComponent={predictions ? searchEmpty : null}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+        />
       ) : (
         <FlatList
-          data={filteredAddresses}
-          renderItem={renderAddressItem}
-          keyExtractor={(item) => item.id}
-          extraData={listExtraData}
-          contentContainerStyle={[
-            styles.listContent,
-            { paddingBottom: 20 + insets.bottom },
-          ]}
-          showsVerticalScrollIndicator={false}
+          data={addresses ?? []}
+          keyExtractor={(a) => a.id}
+          renderItem={renderAddress}
+          extraData={activeLocation}
+          ListHeaderComponent={listHeader}
+          ListEmptyComponent={listEmpty}
           keyboardShouldPersistTaps="handled"
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
           initialNumToRender={8}
           maxToRenderPerBatch={8}
           windowSize={7}
-          removeClippedSubviews
         />
       )}
     </Screen>
   );
 }
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
   header: {
-    borderBottomColor: T.cardBorder,
-  },
-  headerTitle: {
-    color: T.bark,
-  },
-  searchContainer: {
-    paddingHorizontal: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingLeft: layout.gutter,
+    paddingRight: 12,
     paddingVertical: 12,
-    backgroundColor: T.white,
-    borderBottomWidth: 1,
-    borderBottomColor: T.cardBorder,
-  },
-  searchBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    // Fixed height: identical bar on iOS/Android (matches select-map).
-    height: 44,
-    backgroundColor: T.sand,
-    borderRadius: 12,
-    paddingHorizontal: 16,
     gap: 12,
   },
-  searchInput: {
-    flex: 1,
-    height: "100%",
-    paddingVertical: 0,
-    fontSize: 15,
-    color: T.bark,
-    fontFamily: "PlusJakartaSans_500Medium",
-  },
-  quickActions: {
-    backgroundColor: T.white,
-    paddingVertical: 8,
-    marginBottom: 8,
-  },
-  quickActionBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    gap: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: T.cardBorder,
-  },
-  quickActionBtnLast: {
-    borderBottomWidth: 0,
-  },
-  quickActionText: { fontFamily: "PlusJakartaSans_600SemiBold",
-    flex: 1,
-    fontSize: 15,
-    color: T.bark,
-  },
-  quickActionTextAccent: {
-    color: T.pink,
-  },
-  // Fixed trailing slot so the chevrons / spinner share one right edge.
-  quickActionTrailing: {
-    width: 20,
-    alignItems: "flex-end",
-  },
-  sectionHeader: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-  },
-  sectionTitle: {
-    color: T.barkMid,
-    paddingHorizontal: 0,
-  },
-  listContent: {
-    paddingHorizontal: 16,
-    paddingBottom: 20,
-  },
-  skeletonList: {
-    paddingHorizontal: 16,
-  },
-  skeletonLabel: {
-    marginBottom: 8,
-  },
-  addressCard: {
-    flexDirection: "row",
-    backgroundColor: T.white,
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 12,
-    // 2px so the selected state (T.green) reads clearly; the hairline tint
-    // gives unselected cards an edge on both platforms without a shadow.
-    borderWidth: 2,
-    borderColor: T.cardBorder,
-  },
-  addressCardSelected: {
-    borderColor: T.green,
-    backgroundColor: T.greenXLight,
-  },
-  addressIconWrap: {
-    marginRight: 12,
-  },
-  addressContent: {
-    flex: 1,
-  },
-  addressHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 4,
-    gap: 6,
-  },
-  addressLabel: { fontFamily: "PlusJakartaSans_700Bold",
-    flexShrink: 1,
-    fontSize: 16,
-    color: T.bark,
-  },
-  distanceText: { fontFamily: "PlusJakartaSans_600SemiBold",
-    fontSize: 12,
-    color: T.barkLight,
-  },
-  defaultBadge: {
-    alignSelf: "center",
-  },
-  defaultBadgeText: {
-    textTransform: "uppercase",
-  },
-  addressText: { fontFamily: "PlusJakartaSans_500Medium",
-    fontSize: 14,
-    color: T.barkMid,
-    lineHeight: 20,
-    marginBottom: 4,
-  },
-  landmarkRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-  landmarkText: { fontFamily: "PlusJakartaSans_500Medium",
-    flex: 1,
-    fontSize: 12,
-    color: T.barkLight,
-  },
-  addressActions: {
-    flexDirection: "column",
-    gap: 4,
-    marginLeft: 8,
-  },
-  cardActionBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  emptyTitle: {
-    color: T.bark,
-  },
-  emptyText: {
-    color: T.barkLight,
-  },
-  emptyBtn: {
-    backgroundColor: T.green,
-    marginTop: 10,
-  },
-  emptyBtnText: { fontFamily: "PlusJakartaSans_700Bold",
-    fontSize: 15,
-  },
+  title: { ...text.screenTitle, flex: 1 },
+  searchWrap: { paddingHorizontal: layout.gutter, paddingBottom: 8 },
+  searchIcon: { marginRight: 8 },
+  sectionLabelWrap: { paddingHorizontal: layout.gutter, paddingTop: 20, paddingBottom: 4 },
+  listContent: { paddingBottom: layout.scrollBottom },
+  // ListRow-lg twin: ph16 pv16 gap14, 44 px glyph.
+  skeletonRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 16, gap: 14 },
+  skeletonDivider: { borderBottomWidth: 1, borderBottomColor: C.border },
+  skeletonCol: { flex: 1 },
+  skeletonTitle: { marginBottom: 8 },
 });

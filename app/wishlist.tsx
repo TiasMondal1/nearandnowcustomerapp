@@ -1,264 +1,195 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Image } from "expo-image";
+// codename: halley
+// Wishlist — `useWishlist()` over the halley store, rows on `ProductCard variant="row"` with the heart as the remove
+// control and the Stepper md as the add control (isLoose flows through the Stepper), skeleton twins, EmptyState for
+// empty / error / guest, and the one wishlist toast: "Removed from wishlist" with Undo (design/blinkit-parity §3.17 /
+// BP-36 · motion M17 · MAP U28). The store owns the API — no apiFetch here. The guest gate stays (S3 excluded) but
+// lives on EmptyState; it renders BEFORE the hook mounts so a signed-out visit never fires GET /api/wishlist.
+import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
 import { router } from "expo-router";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { RefreshControl, StyleSheet } from "react-native";
+
 import {
-    ActivityIndicator,
-    FlatList,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-
+  dismissToast,
+  EmptyState,
+  notify,
+  ProductCard,
+  Screen,
+  ScreenHeader,
+  SkeletonProductCard,
+  SkeletonScreen,
+  useCartBarFootprint,
+} from "../components/ui";
 import { C } from "../constants/colors";
+import { layout } from "../constants/ui";
 import { useAuth } from "../context/AuthContext";
-import { useCart } from "../context/CartContext";
-import { apiFetch } from "../lib/apiClient";
-import { cdnImage } from "../lib/imageUrl";
-import { logSilentFailure } from "../lib/logSilentFailure";
+import { useForceSkeleton } from "../hooks/useSlowLoad";
+import { useWishlist } from "../hooks/useWishlist";
+import { feedback } from "../lib/feedback";
+import type { Product } from "../lib/productService";
+import { wishlistItemToProduct, type WishlistItem } from "../lib/wishlistStore";
 
-interface WishlistItem {
-  wishlistItemId: string;
-  productId: string;
-  name: string;
-  imageUrl: string | null;
-  basePrice: number;
-  discountedPrice: number;
-  unit: string;
-  isLoose: boolean;
-  gstRate: number | null;
-  isActive: boolean;
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const SKELETON_ROWS = [0, 1, 2, 3] as const;
+/** One toast id: a second quick removal replaces the first toast (and its Undo) instead of stacking. */
+const REMOVED_TOAST_ID = "wishlist-removed";
+
+const keyExtractor = (item: Product) => item.id;
+const getItemType = () => "row";
+/** Rows: the heart (`showWishlist`) removes; the Stepper adds — both inside ProductCard (CONTRACTS §4.9). */
+const renderItem = ({ item }: ListRenderItemInfo<Product>) => (
+  <ProductCard variant="row" product={item} showWishlist recycled />
+);
+
+// dismissTo pops to the live tabs route instead of stacking a second tab navigator (W3 R6-01).
+function browseProducts(): void {
+  router.dismissTo("/(tabs)/home");
 }
 
-// Same GST-inclusive pricing formula as productService.ts's
-// masterRowToProduct — the wishlist API returns pre-tax base/discounted
-// prices (like every other master_products read), so GST is applied here
-// too rather than baking a client-specific tax calc into the shared response.
-function priceWithGst(item: WishlistItem) {
-  const gstRate = item.isLoose ? 0 : Number(item.gstRate) || 0;
-  const price = item.discountedPrice + (item.discountedPrice * gstRate) / 100;
-  const originalPrice = item.basePrice > 0 ? item.basePrice + (item.basePrice * gstRate) / 100 : undefined;
-  return { price, originalPrice };
+function logIn(): void {
+  router.push("/phone");
 }
+
+// ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function WishlistScreen() {
   const { isAuthenticated } = useAuth();
-  const { addItem } = useCart();
-  const [items, setItems] = useState<WishlistItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState(false);
-  const [removingId, setRemovingId] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  // Guest gate kept as today (S3 excluded), on EmptyState; the body (and its data hook) mounts only when signed in.
+  if (!isAuthenticated) {
+    return (
+      <Screen bg={C.card}>
+        <ScreenHeader size="lg" title="Wishlist" backFallbackHref="/(tabs)/home" />
+        <EmptyState
+          fill
+          iconWrap
+          icon="heart-outline"
+          title="Sign in required"
+          text="Log in to view and save items to your wishlist"
+          action={{ label: "Log in", onPress: logIn }}
+        />
+      </Screen>
+    );
+  }
+
+  return <WishlistBody />;
+}
+
+function WishlistBody() {
+  const { items, loading, error, refresh, toggle } = useWishlist();
+  const cartBarFootprint = useCartBarFootprint();
+
+  const products = useMemo(() => items.map(wishlistItemToProduct), [items]);
+  const showSkeleton = useForceSkeleton(loading && items.length === 0);
+  const [refreshing, setRefreshing] = useState(false);
+  // Written in the refresh handler, read in the removal effect: a server reconcile during pull-to-refresh is not a
+  // user removal and must not toast.
+  const refreshingRef = useRef(false);
+
+  const onRefresh = useCallback(async () => {
+    feedback.tapSound();
+    refreshingRef.current = true;
+    setRefreshing(true);
     try {
-      setLoading(true);
-      const data = await apiFetch<{ success: boolean; items: WishlistItem[] }>("/api/wishlist");
-      setItems(data.items ?? []);
-      setLoadError(false);
-    } catch (err) {
-      logSilentFailure("Load wishlist", err);
-      setLoadError(true);
+      await refresh();
     } finally {
-      setLoading(false);
+      refreshingRef.current = false;
+      setRefreshing(false);
     }
-  }, []);
+  }, [refresh]);
 
+  // ── "Removed from wishlist" + Undo ──
+  // The heart lives inside ProductCard (it toggles the store directly), so the screen learns about a removal from
+  // the list itself: one item that was here and is gone on the next commit, outside a refresh, was removed by the
+  // user (a logout unmounts this body before the list empties). Undo = `toggle` the same product back. If the
+  // store rolls the removal back (request failed), the item reappears and the toast is dismissed.
+  const previousRef = useRef<Map<string, WishlistItem> | null>(null);
   useEffect(() => {
-    if (!isAuthenticated) {
-      setLoading(false);
-      return;
-    }
-    load();
-  }, [isAuthenticated, load]);
+    const previous = previousRef.current;
+    const current = new Map(items.map((it) => [it.productId, it]));
+    previousRef.current = current;
+    if (previous === null || loading || refreshingRef.current) return;
 
-  const remove = useCallback(async (productId: string) => {
-    setRemovingId(productId);
-    const previous = items;
-    setItems((prev) => prev.filter((it) => it.productId !== productId));
-    try {
-      await apiFetch(`/api/wishlist/${productId}`, { method: "DELETE" });
-    } catch (err) {
-      logSilentFailure("Remove from wishlist", err);
-      setItems(previous);
-    } finally {
-      setRemovingId(null);
+    const removed: WishlistItem[] = [];
+    for (const [id, it] of previous) if (!current.has(id)) removed.push(it);
+    const restored = Array.from(current.keys()).some((id) => !previous.has(id));
+
+    if (removed.length === 1) {
+      const product = wishlistItemToProduct(removed[0]);
+      notify({
+        id: REMOVED_TOAST_ID,
+        title: "Removed from wishlist",
+        message: product.name,
+        action: {
+          label: "Undo",
+          onPress: () => {
+            void toggle({
+              id: product.id,
+              name: product.name,
+              image_url: product.image_url,
+              price: product.price,
+              unit: product.unit,
+              isLoose: product.isLoose,
+            });
+          },
+        },
+      });
+    } else if (restored && removed.length === 0) {
+      dismissToast(REMOVED_TOAST_ID);
     }
-  }, [items]);
+  }, [items, loading, toggle]);
+
+  const listContent = useMemo(() => ({ paddingBottom: layout.scrollBottom + cartBarFootprint }), [cartBarFootprint]);
+  const subtitle = `${items.length} ${items.length === 1 ? "item" : "items"}`;
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)/home"))}
-          activeOpacity={0.7}
-        >
-          <MaterialCommunityIcons name="arrow-left" size={22} color={C.text} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>My Wishlist</Text>
-        <View style={{ width: 38 }} />
-      </View>
+    <Screen bg={C.card}>
+      <ScreenHeader size="lg" title="Wishlist" subtitle={subtitle} backFallbackHref="/(tabs)/home" testID="wishlist-header" />
 
-      {!isAuthenticated ? (
-        <View style={styles.center}>
-          <MaterialCommunityIcons name="heart-outline" size={48} color={C.textLight} />
-          <Text style={styles.emptyTitle}>Sign in required</Text>
-          <Text style={styles.emptyText}>Log in to view and save items to your wishlist.</Text>
-          <TouchableOpacity style={styles.retryBtn} onPress={() => router.push("/phone")}>
-            <Text style={styles.retryBtnText}>Log In</Text>
-          </TouchableOpacity>
-        </View>
-      ) : loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={C.primary} />
-        </View>
-      ) : loadError ? (
-        <View style={styles.center}>
-          <MaterialCommunityIcons name="wifi-off" size={48} color={C.warning} />
-          <Text style={styles.emptyTitle}>Couldn&apos;t load your wishlist</Text>
-          <TouchableOpacity style={styles.retryBtn} onPress={load}>
-            <Text style={styles.retryBtnText}>Try again</Text>
-          </TouchableOpacity>
-        </View>
+      {showSkeleton ? (
+        <SkeletonScreen label="Loading wishlist…" style={styles.skeletonWrap}>
+          {SKELETON_ROWS.map((i) => (
+            <SkeletonProductCard key={i} variant="row" />
+          ))}
+        </SkeletonScreen>
+      ) : error && items.length === 0 ? (
+        <EmptyState
+          fill
+          tone="error"
+          icon="alert-circle-outline"
+          title="Couldn't load your wishlist"
+          text={error}
+          action={{ label: "Retry", onPress: () => void refresh() }}
+        />
       ) : items.length === 0 ? (
-        <View style={styles.center}>
-          <MaterialCommunityIcons name="heart-outline" size={48} color={C.textLight} />
-          <Text style={styles.emptyTitle}>Your wishlist is empty</Text>
-          <Text style={styles.emptyText}>Tap the heart on any product to save it here.</Text>
-        </View>
+        <EmptyState
+          fill
+          iconWrap
+          icon="heart-outline"
+          title="Your wishlist is empty"
+          text="Tap the heart on any product to save it here"
+          action={{ label: "Browse products", onPress: browseProducts }}
+        />
       ) : (
-        <FlatList
-          data={items}
-          keyExtractor={(it) => it.wishlistItemId}
-          contentContainerStyle={styles.list}
+        <FlashList
+          data={products}
+          keyExtractor={keyExtractor}
+          getItemType={getItemType}
+          renderItem={renderItem}
+          contentContainerStyle={listContent}
           showsVerticalScrollIndicator={false}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={styles.card}
-              activeOpacity={0.8}
-              onPress={() => router.push(`/product/${item.productId}` as any)}
-            >
-              {item.imageUrl ? (
-                <Image source={{ uri: cdnImage(item.imageUrl, 160) }} style={styles.image} contentFit="cover" />
-              ) : (
-                <View style={[styles.image, styles.imageFallback]}>
-                  <MaterialCommunityIcons name="image-off-outline" size={20} color={C.textLight} />
-                </View>
-              )}
-              <View style={{ flex: 1 }}>
-                <Text style={styles.name} numberOfLines={2}>{item.name}</Text>
-                {!item.isActive ? (
-                  <Text style={styles.unavailable}>No longer available</Text>
-                ) : (
-                  (() => {
-                    const { price, originalPrice } = priceWithGst(item);
-                    return (
-                      <View style={styles.priceRow}>
-                        <Text style={styles.price}>₹{price.toFixed(2)}</Text>
-                        {originalPrice !== undefined && originalPrice > price && (
-                          <Text style={styles.originalPrice}>₹{originalPrice.toFixed(2)}</Text>
-                        )}
-                        <Text style={styles.unit}>/ {item.unit}</Text>
-                      </View>
-                    );
-                  })()
-                )}
-              </View>
-              <View style={styles.actions}>
-                <TouchableOpacity
-                  onPress={() => remove(item.productId)}
-                  disabled={removingId === item.productId}
-                  style={styles.iconBtn}
-                >
-                  <MaterialCommunityIcons name="heart" size={20} color={C.danger} />
-                </TouchableOpacity>
-                {item.isActive && (
-                  <TouchableOpacity
-                    onPress={() =>
-                      addItem({
-                        product_id: item.productId,
-                        name: item.name,
-                        price: priceWithGst(item).price,
-                        unit: item.unit,
-                        image_url: item.imageUrl ?? undefined,
-                        isLoose: item.isLoose,
-                      })
-                    }
-                    style={[styles.iconBtn, styles.cartBtn]}
-                  >
-                    <MaterialCommunityIcons name="cart-plus" size={18} color="#fff" />
-                  </TouchableOpacity>
-                )}
-              </View>
-            </TouchableOpacity>
-          )}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} colors={[C.primary]} />}
+          accessibilityLabel="Wishlist items"
+          testID="wishlist-list"
         />
       )}
-    </SafeAreaView>
+    </Screen>
   );
 }
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingTop: 16,
-    paddingBottom: 14,
-    backgroundColor: C.card,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  backBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: C.bgSoft,
-  },
-  headerTitle: { flex: 1, color: C.text, fontSize: 18, fontWeight: "900" },
-
-  center: { flex: 1, justifyContent: "center", alignItems: "center", padding: 32, gap: 10 },
-  emptyTitle: { color: C.text, fontSize: 16, fontWeight: "800" },
-  emptyText: { color: C.textSub, fontSize: 13, textAlign: "center" },
-  retryBtn: { marginTop: 6, backgroundColor: C.primary, borderRadius: 10, paddingHorizontal: 18, paddingVertical: 10 },
-  retryBtnText: { color: "#fff", fontWeight: "700" },
-
-  list: { padding: 16, gap: 12 },
-
-  card: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    backgroundColor: C.card,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: C.border,
-    padding: 12,
-    marginBottom: 12,
-  },
-  image: { width: 56, height: 56, borderRadius: 10, backgroundColor: C.bgSoft },
-  imageFallback: { alignItems: "center", justifyContent: "center" },
-  name: { color: C.text, fontSize: 14, fontWeight: "700" },
-  unavailable: { color: C.textLight, fontSize: 12, marginTop: 4, fontStyle: "italic" },
-  priceRow: { flexDirection: "row", alignItems: "baseline", gap: 6, marginTop: 4 },
-  price: { color: C.primary, fontSize: 15, fontWeight: "800" },
-  originalPrice: { color: C.textLight, fontSize: 12, textDecorationLine: "line-through" },
-  unit: { color: C.textSub, fontSize: 11 },
-
-  actions: { gap: 8 },
-  iconBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    backgroundColor: C.bgSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  cartBtn: { backgroundColor: C.primary },
+  skeletonWrap: { flex: 1, overflow: "hidden" },
 });

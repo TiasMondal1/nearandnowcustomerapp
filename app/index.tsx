@@ -1,97 +1,50 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import * as ExpoLocation from "expo-location";
+// Boot redirect: the first route. Decides Home vs phone login once auth is known and signals the boot gate
+// (lib/bootGate) so AppShell can drop the native splash the moment navigation has committed — the user never
+// sees this frame on a normal cold start. Location prompting is Home's job (S4): no GPS work here.
 import { router } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Image, StyleSheet, Text, View } from "react-native";
+import React, { useEffect } from "react";
+import { Image, StyleSheet, View } from "react-native";
 
-import { IconWrap, Screen } from "../components/ui";
+import { Screen } from "../components/ui";
 import { C } from "../constants/colors";
 import { useAuth } from "../context/AuthContext";
-import { useLocation } from "../context/LocationContext";
-import { beginNativePrompt, isNativePromptPending } from "../lib/pendingNativePrompts";
+import { isFontsReady, markNavReady } from "../lib/bootGate";
+import { isNativePromptPending } from "../lib/pendingNativePrompts";
 
-const T = {
-  green: "#2D7A4F",
-  greenXLight: "#EAF6EE",
-  bark: "#3C2F1E",
-  barkLight: "#A89282",
-  cardBorder: "rgba(60,47,30,0.08)",
-};
+/** How often to re-check for a pending native dialog before navigating (ms). */
+const PROMPT_POLL_MS = 250;
+/** A stuck / never-released prompt flag must not strand the splash forever (ms). */
+const PROMPT_HARD_CAP_MS = 8000;
 
-function getLocationIcon(label: string | null): keyof typeof MaterialCommunityIcons.glyphMap {
-  if (!label) return "map-marker-outline";
-  const l = label.toLowerCase();
-  if (l.includes("home")) return "home-outline";
-  if (l.includes("work") || l.includes("office")) return "office-building-outline";
-  if (l.includes("hotel")) return "bed-outline";
-  return "map-marker-outline";
-}
-
-export default function SplashScreen() {
+export default function BootRedirectScreen() {
   const { isLoading, isAuthenticated } = useAuth();
-  const { location, isHydrated } = useLocation();
-  const [gpsAddress, setGpsAddress] = useState<string | null>(null);
-  const gpsAttempted = useRef(false);
 
-  // For new users with no saved location, try to get GPS address
-  useEffect(() => {
-    if (!isHydrated || location || gpsAttempted.current) return;
-    gpsAttempted.current = true;
-    (async () => {
-      try {
-        // Same class of bug as welcome.tsx's post-login race (found + fixed
-        // 2026-09-09, see bug_fixes_2026-07-23.md): this effect and the
-        // auth-redirect effect below both run independently off `isLoading`/
-        // `isAuthenticated`/`isHydrated` resolving in whatever order they
-        // happen to — on a clean install (permission still undetermined) a
-        // real native dialog here could still be up when the redirect effect
-        // fires its own blind router.replace(). Tracked so that effect can
-        // wait it out instead of navigating mid-dialog.
-        const releasePrompt = beginNativePrompt();
-        let status: string;
-        try {
-          status = (await ExpoLocation.requestForegroundPermissionsAsync()).status;
-        } finally {
-          releasePrompt();
-        }
-        if (status !== "granted") return;
-        const pos = await ExpoLocation.getCurrentPositionAsync({
-          accuracy: ExpoLocation.Accuracy.Balanced,
-        });
-        const [result] = await ExpoLocation.reverseGeocodeAsync({
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-        });
-        if (result) {
-          const parts = [result.name, result.street, result.district, result.city].filter(Boolean);
-          setGpsAddress(parts.slice(0, 3).join(", ") || result.city || "Your location");
-        }
-      } catch {
-        // silently ignore
-      }
-    })();
-  }, [isHydrated, location]);
-
-  // Waits out a pending native permission dialog (the GPS effect above)
-  // before navigating — a real dialog only appears here on a clean install
-  // (permission still undetermined; already decided on every later app
-  // open, so this is a no-op the overwhelmingly common case). Navigating
-  // blind into it is the same hard-crash class fixed in welcome.tsx
-  // 2026-09-09 — see lib/pendingNativePrompts.ts and bug_fixes_2026-07-23.md.
-  // Capped so a stuck/never-released flag can't strand the splash screen forever.
+  // Waits out a pending native permission dialog before navigating — with the GPS effect gone this resolves
+  // immediately in practice, but the push-registration prompt (hooks/usePushNotifications.dev.ts) can still be
+  // up on a clean install. Navigating blind into a native dialog is the hard-crash class fixed in welcome.tsx
+  // 2026-09-09 — see lib/pendingNativePrompts.ts and bug_fixes_2026-07-23.md. It also waits for the Jakarta
+  // faces (lib/bootGate `isFontsReady`, same hard cap) so Home's first frame never renders an unregistered
+  // family under the held splash (W3 R6-17).
   useEffect(() => {
     if (isLoading) return;
     let cancelled = false;
     let pollTimer: ReturnType<typeof setTimeout> | null = null;
-    const hardDeadline = Date.now() + 8000;
+    const hardDeadline = Date.now() + PROMPT_HARD_CAP_MS;
 
     const tryAdvance = () => {
       if (cancelled) return;
-      if (isNativePromptPending() && Date.now() < hardDeadline) {
-        pollTimer = setTimeout(tryAdvance, 250);
+      if ((isNativePromptPending() || !isFontsReady()) && Date.now() < hardDeadline) {
+        pollTimer = setTimeout(tryAdvance, PROMPT_POLL_MS);
         return;
       }
       router.replace(isAuthenticated ? "/(tabs)/home" : "/phone");
+      // Boot gate (speed-and-ease #6): flip nav-ready on the frame after the replace is issued. Deliberately
+      // NOT cancelled in cleanup — this screen unmounts as a result of that very navigation, and the call is
+      // idempotent (it stamps the `nav-ready` mark itself), so letting the frame run is what keeps the splash
+      // from waiting out the 2 s cap.
+      requestAnimationFrame(() => {
+        markNavReady();
+      });
     };
 
     tryAdvance();
@@ -101,56 +54,17 @@ export default function SplashScreen() {
     };
   }, [isLoading, isAuthenticated]);
 
-  const displayLabel = location?.label ?? null;
-  const displayAddress = location?.address ?? gpsAddress;
-  const isNewUser = isHydrated && !location;
-
   return (
     <Screen bg={C.card}>
       <View style={styles.container}>
-        {/* ── Logo — sized to land where the native splash (imageWidth 240) drew it ─── */}
-        <View style={styles.logoSection}>
-          <Image
-            source={require("../assets/near_now_image.png")}
-            style={styles.logoImage}
-            resizeMode="contain"
-          />
-        </View>
-
-        {/* ── Location card ─── */}
-        <View style={styles.locationCard}>
-          <IconWrap
-            size={56}
-            circle
-            bg={T.greenXLight}
-            icon={getLocationIcon(displayLabel)}
-            iconSize={26}
-            iconColor={T.green}
-            style={styles.locationIconCircle}
-          />
-
-          {displayLabel ? (
-            <Text style={styles.locationLabel} numberOfLines={1}>{displayLabel}</Text>
-          ) : isNewUser && !gpsAddress ? (
-            <Text style={styles.locationLabel} numberOfLines={1}>Detecting location…</Text>
-          ) : (
-            <Text style={styles.locationLabel} numberOfLines={1}>Your location</Text>
-          )}
-
-          {displayAddress ? (
-            <Text style={styles.locationAddress} numberOfLines={3}>
-              {displayAddress}
-            </Text>
-          ) : isNewUser && !gpsAddress ? (
-            <ActivityIndicator size="small" color={T.green} style={styles.cardSpinner} accessibilityLabel="Loading" />
-          ) : null}
-
-          {!isHydrated && (
-            <ActivityIndicator size="small" color={T.green} style={styles.cardSpinner} accessibilityLabel="Loading" />
-          )}
-        </View>
-
-        <ActivityIndicator size="small" color={T.green} style={styles.spinner} accessibilityLabel="Loading" />
+        {/* Same mark as the native splash so the hand-off is invisible if this frame is ever seen. */}
+        <Image
+          source={require("../assets/near_now_image.png")}
+          style={styles.logo}
+          resizeMode="contain"
+          accessibilityIgnoresInvertColors
+          accessible={false}
+        />
       </View>
     </Screen>
   );
@@ -162,46 +76,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 32,
-    gap: 32,
   },
-  logoSection: {
-    alignItems: "center",
-  },
-  logoImage: {
-    width: 240,
-    height: 218,
-  },
-  locationCard: {
-    width: "100%",
-    backgroundColor: C.card,
-    borderRadius: 16,
-    paddingVertical: 24,
-    paddingHorizontal: 24,
-    alignItems: "center",
-    gap: 8,
-    borderWidth: 1.5,
-    borderColor: T.cardBorder,
-    shadowColor: C.shadow,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    elevation: 4,
-  },
-  locationIconCircle: { marginBottom: 8 },
-  locationLabel: {
-    fontSize: 18,
-    fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: T.bark,
-    letterSpacing: -0.3,
-    textAlign: "center",
-  },
-  locationAddress: { fontFamily: "PlusJakartaSans_500Medium",
-    fontSize: 13,
-    color: T.barkLight,
-    textAlign: "center",
-    lineHeight: 19,
-    marginTop: 4,
-  },
-  cardSpinner: { marginTop: 4 },
-  spinner: { marginTop: 12 },
+  logo: { width: 160, height: 145 },
 });

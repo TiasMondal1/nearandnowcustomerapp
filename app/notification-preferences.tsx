@@ -1,138 +1,214 @@
+import { router } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
+import { StyleSheet, Text, View } from "react-native";
+
 import {
-    Alert,
-    Platform,
-    StyleSheet,
-    Switch,
-    Text,
-    View,
-} from "react-native";
-
-import { Card, IconWrap, Screen, ScreenHeader, Skeleton } from "../components/ui";
+  IconButton,
+  ListRow,
+  notify,
+  Screen,
+  SectionLabel,
+  Skeleton,
+  SkeletonScreen,
+  Toggle,
+} from "../components/ui";
 import { C } from "../constants/colors";
+import { layout, text } from "../constants/ui";
 import { useAuth } from "../context/AuthContext";
-import { apiFetch } from "../lib/apiClient";
+import { useForceSkeleton } from "../hooks/useSlowLoad";
+import { useFeedbackPrefs } from "../lib/feedback";
 import { logSilentFailure } from "../lib/logSilentFailure";
+import { getNotificationPreferences, setNotificationPreferences } from "../lib/notificationService";
 
-// Only "orderUpdates" is actually gated server-side today (see
-// notification.service.ts's isCustomerNotificationEnabled) — missing/unset
-// defaults to enabled, so a fresh customer sees this "on" out of the box.
-const DEFAULT_PREFERENCES = { orderUpdates: true };
+// Notifications & sounds (tango owns the screen, sirius owns the two feedback rows — design/delight §2.7,
+// blinkit-parity §3.18). Presented as a modal route (containedModal on iOS, app/_layout.tsx) and styled as a
+// sheet: title + close, two eyebrow groups separated by an 8 px band, flat `ListRow size="lg"` rows with a
+// `Toggle` on the right. No Card, no hand-styled Switch, no Alert.
+//
+// Exactly ONE server toggle. Only `orderUpdates` is gated server-side (notification.service.ts's
+// isCustomerNotificationEnabled; missing/unset = enabled) and `setNotificationPreferences` PUTs exactly
+// that key. Marketing / wallet-credit toggles are deliberately NOT added: the backend ignores any other key,
+// so such a switch would revert or silently do nothing — a fake control (BRIEF ask 9, DECISIONS D6).
+// Do not re-add them without a backend change.
+
+// ─── Copy ─────────────────────────────────────────────────────────────────────
+
+const SOUNDS_SUBTITLE =
+  "Short clicks for cart, success and errors. Muted by your phone's silent switch on iPhone; follows media volume on Android.";
+const HAPTICS_SUBTITLE = "Gentle vibration on taps and confirmations.";
+
+// ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function NotificationPreferencesScreen() {
   const { userId } = useAuth();
-  const [orderUpdates, setOrderUpdates] = useState(true);
-  const [loading, setLoading] = useState(true);
+  // Device-scoped prefs (nn:prefs:sounds / nn:prefs:haptics): instant, no network, survive logout.
+  // This screen never calls a user-scoped clear.
+  const [prefs, setFeedbackPref] = useFeedbackPrefs();
+
+  // null = loading (Skeleton twin); the server's own default is `true`.
+  const [orderUpdates, setOrderUpdates] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const load = useCallback(async () => {
+  useEffect(() => {
+    let cancelled = false;
     if (!userId) {
-      setLoading(false);
+      setOrderUpdates(true);
       return;
     }
-    try {
-      const data = await apiFetch<Record<string, unknown>>(
-        `/api/notifications/users/${userId}/preferences`,
-      );
-      const value = data?.orderUpdates;
-      setOrderUpdates(typeof value === "boolean" ? value : DEFAULT_PREFERENCES.orderUpdates);
-    } catch (err) {
-      logSilentFailure("Fetch notification preferences", err);
-      // keep the default — matches the backend's own opt-out-by-default gate
-    } finally {
-      setLoading(false);
-    }
+    (async () => {
+      try {
+        // Resolves the default (and logs) on failure — the row stays enabled with the default (CONTRACTS §2.23 rev).
+        const result = await getNotificationPreferences(userId);
+        if (!cancelled) setOrderUpdates(result.orderUpdates);
+      } catch (err) {
+        logSilentFailure("Fetch notification preferences", err);
+        if (!cancelled) {
+          setOrderUpdates(true);
+          notify({ title: "Couldn't load your preferences", message: "Showing the default for now", tone: "error" });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [userId]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  const handleOrderUpdates = useCallback(
+    async (next: boolean) => {
+      if (!userId || saving) return;
+      const previous = orderUpdates ?? true;
+      // Optimistic: the Toggle plays its own `toggle` feedback after this applies; a failure rolls back + toasts.
+      setOrderUpdates(next);
+      setSaving(true);
+      try {
+        await setNotificationPreferences(userId, { orderUpdates: next });
+      } catch (err) {
+        logSilentFailure("Update notification preferences", err);
+        setOrderUpdates(previous);
+        notify({ title: "Couldn't save preference", message: "Check your connection and try again.", tone: "error" });
+      } finally {
+        setSaving(false);
+      }
+    },
+    [userId, saving, orderUpdates],
+  );
 
-  const toggle = useCallback(async () => {
-    if (!userId || saving) return;
-    const previous = orderUpdates;
-    const next = !previous;
-    setOrderUpdates(next);
-    setSaving(true);
-    try {
-      await apiFetch(`/api/notifications/users/${userId}/preferences`, {
-        method: "PUT",
-        body: JSON.stringify({ orderUpdates: next }),
-      });
-    } catch (err) {
-      logSilentFailure("Update notification preferences", err);
-      setOrderUpdates(previous);
-      Alert.alert("Couldn't save preference", "Please check your connection and try again.");
-    } finally {
-      setSaving(false);
-    }
-  }, [userId, orderUpdates, saving]);
+  const handleSounds = useCallback(
+    (next: boolean) => {
+      void setFeedbackPref("sounds", next);
+    },
+    [setFeedbackPref],
+  );
+  const handleHaptics = useCallback(
+    (next: boolean) => {
+      void setFeedbackPref("haptics", next);
+    },
+    [setFeedbackPref],
+  );
 
+  const close = useCallback(() => {
+    if (router.canGoBack()) router.back();
+    else router.replace("/notifications");
+  }, []);
+
+  // Dev_Onyx_inhibit_SkeletonExit forces the skeleton like every other screen (W3 R3-08).
+  const showSkeleton = useForceSkeleton(orderUpdates === null);
   return (
-    <Screen>
-      <ScreenHeader
-        size="lg"
-        title="Notification Preferences"
-        titleStyle={styles.headerTitle}
-        backFallbackHref="/notifications"
-      />
+    <Screen bg={C.card}>
+      {/* Sheet title row — the modal supplies the only top inset; nothing is padded twice. */}
+      <View style={styles.titleRow}>
+        <Text style={styles.title} accessibilityRole="header" numberOfLines={1}>
+          Notifications & sounds
+        </Text>
+        <IconButton icon="close" bg="transparent" accessibilityLabel="Close" onPress={close} />
+      </View>
 
-      {loading ? (
-        <View style={styles.body}>
-          <Card padded={false}>
-            <View style={styles.prefRow}>
-              <Skeleton width={34} height={34} radius={10} />
+      <SectionLabel style={styles.groupLabel}>Push notifications</SectionLabel>
+      <View style={styles.group}>
+        {showSkeleton ? (
+          <SkeletonScreen label="Loading notification preferences…">
+            <View style={styles.skeletonRow}>
+              <View style={styles.skeletonGlyphSlot}>
+                <Skeleton width={22} height={22} radius={6} />
+              </View>
               <View style={styles.skeletonText}>
-                <Skeleton width="45%" height={12} />
-                <Skeleton width="85%" height={10} />
+                <Skeleton width="40%" height={14} />
+                <Skeleton width="72%" height={12} />
               </View>
               <Skeleton width={51} height={31} radius={16} />
             </View>
-          </Card>
-        </View>
-      ) : (
-        <View style={styles.body}>
-          <Card padded={false}>
-            <View style={styles.prefRow}>
-              <IconWrap size={34} icon="truck-fast-outline" />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.prefTitle}>Order updates</Text>
-                <Text style={styles.prefSubtitle}>
-                  Get notified as your order is placed, confirmed, out for delivery, and delivered.
-                </Text>
-              </View>
-              <Switch
-                value={orderUpdates}
-                onValueChange={toggle}
-                disabled={saving}
+          </SkeletonScreen>
+        ) : (
+          <ListRow
+            size="lg"
+            iconBg="transparent"
+            iconColor={C.text}
+            icon="package-variant"
+            title="Order updates"
+            subtitle="Status changes for your orders"
+            right={
+              <Toggle
+                value={orderUpdates ?? true}
+                onValueChange={(next) => void handleOrderUpdates(next)}
+                disabled={saving || !userId}
                 accessibilityLabel="Order updates"
-                ios_backgroundColor={C.border}
-                trackColor={{ false: C.border, true: C.primaryLight }}
-                thumbColor={orderUpdates ? C.primary : Platform.OS === "android" ? C.card : undefined}
-                style={saving ? styles.switchSaving : undefined}
               />
-            </View>
-          </Card>
-        </View>
-      )}
+            }
+          />
+        )}
+      </View>
+
+      <View style={styles.band} />
+
+      <SectionLabel style={styles.groupLabel}>In-app feedback</SectionLabel>
+      <View style={styles.group}>
+        {/* Toggle fires feedback.toggle(next) AFTER the pref applies, so turning Sounds on previews the click. */}
+        <ListRow
+          size="lg"
+          iconBg="transparent"
+          iconColor={C.text}
+          icon="volume-high"
+          title="Sounds"
+          subtitle={SOUNDS_SUBTITLE}
+          divider
+          right={<Toggle value={prefs.sounds} onValueChange={handleSounds} accessibilityLabel="Sounds" />}
+        />
+        <ListRow
+          size="lg"
+          iconBg="transparent"
+          iconColor={C.text}
+          icon="vibrate"
+          title="Haptics"
+          subtitle={HAPTICS_SUBTITLE}
+          right={<Toggle value={prefs.haptics} onValueChange={handleHaptics} accessibilityLabel="Haptics" />}
+        />
+      </View>
     </Screen>
   );
 }
 
+// ─── Styles ──────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  headerTitle: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 18 },
-
-  body: { padding: 16 },
-
-  prefRow: {
+  titleRow: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
     gap: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
+    paddingLeft: layout.gutter + 4,
+    paddingRight: layout.gutter - 4,
+    paddingTop: 8,
+    paddingBottom: 12,
   },
+  title: { ...text.screenTitle, flex: 1 },
+
+  // Label at 20 + 2 (SectionLabel ph2) … rows at group ph4 + ListRow lg ph16 = 20, the ProfileMenu alignment.
+  groupLabel: { paddingHorizontal: layout.gutter + 4, paddingTop: 12, marginBottom: 2 },
+  group: { paddingHorizontal: 4, paddingBottom: 8 },
+  band: { height: 8, backgroundColor: C.surfaceBand },
+
+  // Twin of ListRow lg (ph16 pv16 gap14) with a 22 px glyph slot, two lines and a Switch-sized block.
+  skeletonRow: { flexDirection: "row", alignItems: "center", gap: 14, paddingHorizontal: 16, paddingVertical: 16 },
+  skeletonGlyphSlot: { width: 44, alignItems: "center" },
   skeletonText: { flex: 1, gap: 8 },
-  switchSaving: { opacity: 0.6 },
-  prefTitle: { color: C.text, fontSize: 14, fontFamily: "PlusJakartaSans_700Bold" },
-  prefSubtitle: { fontFamily: "PlusJakartaSans_700Bold", color: C.textSub, fontSize: 12, marginTop: 4, lineHeight: 18 },
 });

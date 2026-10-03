@@ -1,650 +1,285 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+// Add address details: the shared AddressForm over the spot pinned on select-map. Save is optimistic
+// (createAddress → setDefaultAddress when toggled → setLocation) and unwinds to `returnTo` (checkout / Home /
+// the address book) or pops — never `replace("/(tabs)/home")` while a returnTo exists (U2; quartz, 2026-10-03).
+// Validation and save failures stay inline (errors map + shake + one error haptic + toast), no Alert.
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useEffect, useMemo, useState } from "react";
-import {
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from "react-native";
-import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import React, { useRef, useState } from "react";
+import { Keyboard, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
 
-import { PrimaryButton, Screen, ScreenHeader } from "../../components/ui";
+import {
+  AddressForm,
+  EMPTY_ADDRESS_FORM,
+  addressFormLabel,
+  addressFormPhone,
+  validateAddressForm,
+  type AddressFormErrors,
+  type AddressFormValue,
+} from "../../components/location/AddressForm";
+import {
+  BottomDock,
+  EmptyState,
+  IconWrap,
+  PrimaryButton,
+  Screen,
+  ScreenHeader,
+  notify,
+  useDockHeight,
+} from "../../components/ui";
+import { C } from "../../constants/colors";
+import { fontFamily, layout, radius } from "../../constants/ui";
 import { useAuth } from "../../context/AuthContext";
 import { useLocation } from "../../context/LocationContext";
-import { createAddress } from "../../lib/addressService";
+import { createAddress, parseReturnTo, setDefaultAddress } from "../../lib/addressService";
+import { feedback } from "../../lib/feedback";
+import { logError } from "../../lib/logError";
+import { logSilentFailure } from "../../lib/logSilentFailure";
 
-const T = {
-  green: "#2D7A4F",
-  greenLight: "#3DA668",
-  greenXLight: "#EAF6EE",
-  cream: "#FAFAF7",
-  sand: "#F3F1EB",
-  bark: "#3C2F1E",
-  barkMid: "#6B5744",
-  barkLight: "#A89282",
-  white: "#FFFFFF",
-  pink: "#E91E63",
-  cardBorder: "rgba(60,47,30,0.08)",
-  shadow: "rgba(45,122,79,0.12)",
+// ─── Params / helpers ─────────────────────────────────────────────────────────
+
+type AddDetailsParams = {
+  latitude?: string;
+  longitude?: string;
+  address?: string;
+  placeName?: string;
+  google_place_id?: string;
+  google_formatted_address?: string;
+  google_place_data?: string;
+  city?: string;
+  state?: string;
+  pincode?: string;
+  country?: string;
+  returnTo?: string;
 };
 
-const LABELS = ["Home", "Work", "Other"] as const;
+const PLACE_ICON = 44;
+const PLACE_GLYPH = 22;
 
-function normalizeIndianPhone(input: string): string | null {
-  const digits = input.replace(/\D/g, "");
-  if (digits.length === 12 && digits.startsWith("91")) return `+${digits}`;
-  if (digits.length === 10) return `+91${digits}`;
-  return null;
+function isValidCoords(lat: number, lng: number): boolean {
+  return Number.isFinite(lat) && Number.isFinite(lng) && !(lat === 0 && lng === 0);
 }
 
-export default function AddAddressDetailsScreen() {
-  const params = useLocalSearchParams<{
-    latitude?: string;
-    longitude?: string;
-    address?: string;
-    placeName?: string;
-    google_place_id?: string;
-    google_formatted_address?: string;
-    google_place_data?: string;
-    city?: string;
-    state?: string;
-    pincode?: string;
-    country?: string;
-  }>();
+/** The account phone as the 10 local digits the form shows ("+91 98765 43210" → "9876543210"). */
+function localPhoneDigits(raw: string | null | undefined): string {
+  let digits = (raw ?? "").replace(/\D/g, "");
+  if (digits.length === 12 && digits.startsWith("91")) digits = digits.slice(2);
+  else if (digits.length === 11 && digits.startsWith("0")) digits = digits.slice(1);
+  return digits.slice(0, 10);
+}
+
+function parsePlaceData(raw: string | undefined): Record<string, unknown> | null {
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+// ─── Screen ───────────────────────────────────────────────────────────────────
+
+export default function AddAddressDetailsScreen(): React.JSX.Element {
+  const params = useLocalSearchParams<AddDetailsParams>();
+  const returnTo = parseReturnTo(params.returnTo);
+  const lat = Number(params.latitude);
+  const lng = Number(params.longitude);
+  const coordsValid = isValidCoords(lat, lng);
+  const formatted = (params.google_formatted_address || params.address || "").trim();
+  const placeName = (params.placeName || "").trim();
 
   const { userId, user } = useAuth();
   const { setLocation } = useLocation();
-  const insets = useSafeAreaInsets();
+  const dockHeight = useDockHeight();
 
-  // Address label — maps to customer_saved_addresses.label (Home/Work/Other).
-  const [label, setLabel] = useState<(typeof LABELS)[number]>("Home");
-
-  // One consolidated address line replaces the old "House No." + "Building"
-  // split. Whatever the user types here is concatenated with the formatted
-  // address from Google for the final `address` column value.
-  const [addressLine, setAddressLine] = useState("");
-  const [landmark, setLandmark] = useState("");
-
-  // Administrative fields — prefilled from Google place details when available.
-  const [city, setCity] = useState(params.city || "");
-  const [stateRegion, setStateRegion] = useState(params.state || "");
-  const [pincode, setPincode] = useState(params.pincode || "");
-
-  const [deliveryInstructions, setDeliveryInstructions] = useState("");
-
-  // Default contact on this saved address (can be edited per-order at checkout).
-  const [contactName, setContactName] = useState(user?.name || "");
-  const [contactPhone, setContactPhone] = useState(
-    (user?.phone || "").replace("+91", ""),
-  );
-
-  const [isDefault, setIsDefault] = useState(false);
-
-  const [placeName, setPlaceName] = useState(params.placeName || "");
-  const [formattedAddress, setFormattedAddress] = useState(params.address || "");
-  const [coords, setCoords] = useState({
-    latitude: params.latitude ? parseFloat(params.latitude) : 22.5726,
-    longitude: params.longitude ? parseFloat(params.longitude) : 88.3639,
-  });
-
-  const [region, setRegion] = useState<Region>({
-    latitude: params.latitude ? parseFloat(params.latitude) : 22.5726,
-    longitude: params.longitude ? parseFloat(params.longitude) : 88.3639,
-    latitudeDelta: 0.005,
-    longitudeDelta: 0.005,
-  });
-
+  const [form, setForm] = useState<AddressFormValue>(() => ({
+    ...EMPTY_ADDRESS_FORM,
+    receiverName: user?.name ?? "",
+    receiverPhone: localPhoneDigits(user?.phone),
+  }));
+  const [errors, setErrors] = useState<AddressFormErrors>({});
+  const [shake, setShake] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const savingRef = useRef(false);
 
-  // Briefly keep the pin "live" so Android re-snapshots it after the view has
-  // fully painted. Using plain Views for the pin makes this mostly a belt-
-  // and-braces for edge cases where the preview map finishes loading late.
-  const [tracksChanges, setTracksChanges] = useState(true);
-  useEffect(() => {
-    setTracksChanges(true);
-    const t = setTimeout(() => setTracksChanges(false), 700);
-    return () => clearTimeout(t);
-  }, [coords.latitude, coords.longitude]);
+  const leave = () => {
+    if (returnTo) router.dismissTo(returnTo);
+    else if (router.canGoBack()) router.back();
+    else router.replace("/(tabs)/home");
+  };
 
-  const googlePlaceData = useMemo(() => {
-    if (!params.google_place_data) return null;
-    try {
-      return JSON.parse(params.google_place_data);
-    } catch {
-      return null;
-    }
-  }, [params.google_place_data]);
+  const openMap = () => {
+    if (router.canGoBack()) router.back();
+    else router.replace(returnTo ? { pathname: "/location/select-map", params: { returnTo } } : "/location/select-map");
+  };
 
-  // `useLocalSearchParams()` returns a brand-new object every render, so we
-  // deliberately depend on individual primitive fields to avoid an infinite
-  // setState loop.
-  const pLat = params.latitude;
-  const pLng = params.longitude;
-  const pAddress = params.address;
-  const pPlaceName = params.placeName;
-  const pCity = params.city;
-  const pState = params.state;
-  const pPincode = params.pincode;
-
-  useEffect(() => {
-    if (pLat && pLng) {
-      const lat = parseFloat(pLat);
-      const lng = parseFloat(pLng);
-      setCoords({ latitude: lat, longitude: lng });
-      setRegion({
-        latitude: lat,
-        longitude: lng,
-        latitudeDelta: 0.005,
-        longitudeDelta: 0.005,
-      });
-    }
-  }, [pLat, pLng]);
-
-  useEffect(() => {
-    if (pAddress) setFormattedAddress(pAddress);
-  }, [pAddress]);
-
-  useEffect(() => {
-    if (pPlaceName) setPlaceName(pPlaceName);
-  }, [pPlaceName]);
-
-  useEffect(() => {
-    if (pCity) setCity(pCity);
-  }, [pCity]);
-
-  useEffect(() => {
-    if (pState) setStateRegion(pState);
-  }, [pState]);
-
-  useEffect(() => {
-    if (pPincode) setPincode(pPincode);
-  }, [pPincode]);
-
-  const handleChangeLocation = () => {
-    router.back();
+  const failInline = (message: string, nextErrors: AddressFormErrors = {}) => {
+    setErrors(nextErrors);
+    setSaveError(Object.keys(nextErrors).length ? null : message);
+    setShake((n) => n + 1);
+    // One error haptic for the whole submit; the toast sees it in its 300 ms window and stays silent.
+    feedback.error();
+    notify({ id: "address-save", title: message, tone: "error" });
   };
 
   const handleSave = async () => {
-    if (!formattedAddress || saving) return;
+    if (savingRef.current) return;
+    Keyboard.dismiss();
 
+    const nextErrors = validateAddressForm(form);
+    if (Object.keys(nextErrors).length > 0) {
+      failInline("Check the highlighted fields", nextErrors);
+      return;
+    }
     if (!userId) {
-      Alert.alert("Error", "Session expired. Please login again.");
+      failInline("Please log in again to save an address");
+      return;
+    }
+    if (!coordsValid) {
+      failInline("Pick the spot on the map first");
       return;
     }
 
-    if (!addressLine.trim()) {
-      Alert.alert(
-        "Missing details",
-        "Please enter your house/flat and building details.",
-      );
-      return;
-    }
-
+    savingRef.current = true;
+    setSaving(true);
+    setSaveError(null);
+    setErrors({});
     try {
-      setSaving(true);
+      // "<house line>, <formatted>" — addressFormFromSaved recovers the house line by stripping the formatted suffix.
+      const houseLine = [form.houseNo.trim(), form.floor.trim()].filter(Boolean).join(", ");
+      const fullAddress = [houseLine, formatted].filter(Boolean).join(", ");
 
-      const fullAddress = [addressLine.trim(), formattedAddress]
-        .filter(Boolean)
-        .join(", ");
-
-      const normalizedContactPhone = contactPhone.trim()
-        ? normalizeIndianPhone(contactPhone) ?? undefined
-        : undefined;
-
-      await createAddress(userId, {
-        label,
+      const saved = await createAddress(userId, {
+        label: addressFormLabel(form),
         address: fullAddress,
-        city: city.trim() || undefined,
-        state: stateRegion.trim() || undefined,
-        pincode: pincode.trim() || undefined,
-        country: params.country || "India",
-        latitude: coords.latitude,
-        longitude: coords.longitude,
+        city: params.city?.trim() || undefined,
+        state: params.state?.trim() || undefined,
+        pincode: params.pincode?.trim() || undefined,
+        country: params.country?.trim() || "India",
+        latitude: lat,
+        longitude: lng,
         google_place_id: params.google_place_id || undefined,
-        google_formatted_address:
-          params.google_formatted_address || formattedAddress || undefined,
-        google_place_data: googlePlaceData ?? undefined,
-        contact_name: contactName.trim() || user?.name || undefined,
-        contact_phone: normalizedContactPhone,
-        landmark: landmark.trim() || undefined,
-        delivery_instructions: deliveryInstructions.trim() || undefined,
-        // Receiver/delivery_for details are captured at checkout time now,
-        // not on the address itself. Every saved address defaults to "self".
+        google_formatted_address: formatted || undefined,
+        google_place_data: parsePlaceData(params.google_place_data) ?? undefined,
+        // Default contact on this saved address (editable per order at checkout).
+        contact_name: form.receiverName.trim() || user?.name || undefined,
+        contact_phone: addressFormPhone(form),
+        landmark: form.landmark.trim() || undefined,
+        delivery_instructions: form.instructions.trim() || undefined,
+        // Receiver / delivery_for details are captured at checkout time, not on the address itself.
         delivery_for: "self",
-        is_default: isDefault,
+        is_default: form.isDefault,
       });
 
-      setLocation({
-        latitude: coords.latitude,
-        longitude: coords.longitude,
-        label,
-        address: fullAddress,
-        source: "saved",
-      });
+      // The POST carries is_default; the explicit PATCH guarantees the other addresses are cleared server-side.
+      if (form.isDefault && saved.id && !saved.id.startsWith("optimistic:")) {
+        try {
+          await setDefaultAddress(saved.id, userId);
+        } catch (err) {
+          logSilentFailure("Set default address", err);
+          notify({ id: "address-default", title: "Saved, but couldn't set it as default", tone: "warning" });
+        }
+      }
 
-      // A single `replace` avoids the "GO_BACK not handled" crash that we saw
-      // when popping the stack twice on a shallow navigator.
-      router.replace("/(tabs)/home");
+      setLocation({ latitude: lat, longitude: lng, label: saved.label, address: saved.address, source: "saved" });
+      feedback.tap(); // quiet confirm (W3 F7 / R2-24): light haptic + toast only — `success` is reserved for order placement
+      notify({ id: "address-saved", title: "Address saved", tone: "success" });
+      leave();
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to save address";
-      Alert.alert("Error", message);
+      logError("Save address", err);
+      failInline(err instanceof Error ? err.message : "Couldn't save the address");
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
 
+  if (!coordsValid) {
+    return (
+      <Screen bg={C.card} edges={["top"]}>
+        <ScreenHeader title="Add address" backFallbackHref={returnTo ?? "/(tabs)/home"} />
+        <EmptyState
+          fill
+          iconWrap
+          icon="map-marker-off-outline"
+          title="Pick a location first"
+          text="Choose the delivery spot on the map before adding the details"
+          action={{ label: "Open map", onPress: openMap }}
+        />
+      </Screen>
+    );
+  }
+
   return (
-    <Screen bg={T.white} edges={["top"]}>
-      <ScreenHeader
-        title="Add Address Details"
-        onBack={() => {
-          if (router.canGoBack()) router.back();
-          else router.replace("/(tabs)/home");
-        }}
-        backProps={{
-          size: 40,
-          bg: "transparent",
-          icon: "chevron-left",
-          iconSize: 28,
-          color: T.bark,
-        }}
-        right={<View style={styles.headerSpacer} />}
-        style={styles.header}
-        titleStyle={styles.headerTitle}
-      />
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={{ flex: 1 }}
-      >
+    <Screen bg={C.card} edges={["top"]}>
+      <ScreenHeader title="Add address" backFallbackHref={returnTo ?? "/(tabs)/home"} />
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.flex}>
         <ScrollView
-          contentContainerStyle={{ paddingBottom: 24 + insets.bottom }}
+          contentContainerStyle={[styles.scroll, { paddingBottom: dockHeight + 16 }]}
+          keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.mapPreview}>
-            <MapView
-              provider={PROVIDER_GOOGLE}
-              style={styles.map}
-              region={region}
-              scrollEnabled={false}
-              zoomEnabled={false}
-              pitchEnabled={false}
-              rotateEnabled={false}
-              loadingEnabled
-              loadingIndicatorColor={T.green}
-              loadingBackgroundColor={T.sand}
-            >
-              <Marker
-                coordinate={coords}
-                anchor={{ x: 0.5, y: 1 }}
-                tracksViewChanges={tracksChanges}
-              >
-                <View style={styles.pinWrap}>
-                  <View style={styles.pinHead}>
-                    <View style={styles.pinDot} />
-                  </View>
-                  <View style={styles.pinTail} />
-                </View>
-              </Marker>
-            </MapView>
-          </View>
-
-          <View style={styles.locationCard}>
-            <View style={styles.locationHeader}>
-              <View style={styles.locationTextContainer}>
-                <Text style={styles.locationName} numberOfLines={1}>
-                  {placeName || "Selected Location"}
+          <View style={styles.placeRow} accessible accessibilityLabel={`Delivering to ${placeName ? `${placeName}, ` : ""}${formatted || "pinned location"}`}>
+            <IconWrap size={PLACE_ICON} bg="transparent" icon="map-marker" iconSize={PLACE_GLYPH} iconColor={C.primary} />
+            <View style={styles.placeCol}>
+              <Text style={styles.placeName} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+                {placeName || "Pinned location"}
+              </Text>
+              {formatted ? (
+                <Text style={styles.placeAddress} numberOfLines={2} maxFontSizeMultiplier={1.3}>
+                  {formatted}
                 </Text>
-                <Text style={styles.locationAddress} numberOfLines={2}>
-                  {formattedAddress}
-                </Text>
-              </View>
-              <TouchableOpacity
-                style={styles.changeBtn}
-                onPress={handleChangeLocation}
-                activeOpacity={0.8}
-                accessibilityRole="button"
-                hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
-              >
-                <Text style={styles.changeBtnText}>Change</Text>
-              </TouchableOpacity>
+              ) : null}
             </View>
+            <PrimaryButton size="xs" variant="ghost" label="Change" onPress={openMap} accessibilityLabel="Change location on the map" />
           </View>
 
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Address</Text>
+          <AddressForm value={form} onChange={setForm} errors={errors} shakeTrigger={shake} style={styles.form} testID="add-address-form" />
 
-            <TextInput
-              style={[styles.input, { minHeight: 72, textAlignVertical: "top" }]}
-              placeholder="House / flat no., building name, floor…"
-              placeholderTextColor={T.barkLight}
-              value={addressLine}
-              onChangeText={setAddressLine}
-              multiline
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Landmark (Optional)"
-              placeholderTextColor={T.barkLight}
-              value={landmark}
-              onChangeText={setLandmark}
-            />
-
-            <View style={styles.row2}>
-              <TextInput
-                style={[styles.input, styles.flex1]}
-                placeholder="City"
-                placeholderTextColor={T.barkLight}
-                value={city}
-                onChangeText={setCity}
-              />
-              <TextInput
-                style={[styles.input, styles.flex1]}
-                placeholder="State"
-                placeholderTextColor={T.barkLight}
-                value={stateRegion}
-                onChangeText={setStateRegion}
-              />
-            </View>
-
-            <TextInput
-              style={styles.input}
-              placeholder="Pincode"
-              placeholderTextColor={T.barkLight}
-              keyboardType="number-pad"
-              maxLength={6}
-              value={pincode}
-              onChangeText={(t) => setPincode(t.replace(/\D/g, ""))}
-            />
-          </View>
-
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Save as</Text>
-            <View style={styles.labelRow}>
-              {LABELS.map((l) => (
-                <TouchableOpacity
-                  key={l}
-                  onPress={() => setLabel(l)}
-                  style={[styles.labelChip, label === l && styles.labelActive]}
-                  activeOpacity={0.8}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: label === l }}
-                >
-                  <Text
-                    style={[
-                      styles.labelText,
-                      label === l && styles.labelTextActive,
-                    ]}
-                  >
-                    {l}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Delivery Instructions</Text>
-            <TextInput
-              style={[styles.input, { minHeight: 72, textAlignVertical: "top" }]}
-              placeholder="e.g. Don't ring bell, call on arrival, gate code…"
-              placeholderTextColor={T.barkLight}
-              value={deliveryInstructions}
-              onChangeText={setDeliveryInstructions}
-              multiline
-            />
-          </View>
-
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Your Contact</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Your name"
-              placeholderTextColor={T.barkLight}
-              value={contactName}
-              onChangeText={setContactName}
-            />
-            <View style={styles.phoneInputContainer}>
-              <Text style={styles.phonePrefix}>+91</Text>
-              <TextInput
-                style={styles.phoneInput}
-                placeholder="Your phone number"
-                placeholderTextColor={T.barkLight}
-                keyboardType="number-pad"
-                maxLength={10}
-                value={contactPhone}
-                onChangeText={(t) => setContactPhone(t.replace(/\D/g, ""))}
-              />
-            </View>
-          </View>
-
-          <View style={styles.section}>
-            <TouchableOpacity
-              onPress={() => setIsDefault((v) => !v)}
-              style={styles.defaultRow}
-              activeOpacity={0.7}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: isDefault }}
-              hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
-            >
-              <MaterialCommunityIcons
-                name={isDefault ? "checkbox-marked" : "checkbox-blank-outline"}
-                size={22}
-                color={isDefault ? T.green : T.barkMid}
-              />
-              <Text style={styles.defaultText}>Set as default address</Text>
-            </TouchableOpacity>
-          </View>
-
-          <PrimaryButton
-            size="lg"
-            shadow
-            label={saving ? "Saving…" : "SAVE ADDRESS"}
-            onPress={handleSave}
-            disabled={saving}
-            style={styles.saveBtn}
-          />
+          {saveError ? (
+            <Text style={styles.saveError} accessibilityLiveRegion="polite" maxFontSizeMultiplier={1.3}>
+              {saveError}
+            </Text>
+          ) : null}
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <BottomDock>
+        <PrimaryButton size="lg" label="Save address" onPress={() => void handleSave()} loading={saving} />
+      </BottomDock>
     </Screen>
   );
 }
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  header: {
-    paddingVertical: 12,
-    borderBottomColor: T.cardBorder,
-  },
-  headerSpacer: { width: 40 },
-  headerTitle: {
-    fontFamily: "PlusJakartaSans_700Bold",
-    color: T.bark,
-  },
-
-  mapPreview: {
-    height: 200,
-    backgroundColor: T.sand,
-    borderBottomWidth: 1,
-    borderBottomColor: T.cardBorder,
-  },
-  map: {
-    flex: 1,
-  },
-
-  pinWrap: {
-    width: 32,
-    height: 42,
-    alignItems: "center",
-    justifyContent: "flex-start",
-    backgroundColor: "transparent",
-  },
-  pinHead: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: T.pink,
-    borderWidth: 3,
-    borderColor: T.white,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3,
-    elevation: 4,
-  },
-  pinDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
-    backgroundColor: T.white,
-  },
-  pinTail: {
-    width: 0,
-    height: 0,
-    borderLeftWidth: 5,
-    borderRightWidth: 5,
-    borderTopWidth: 10,
-    borderLeftColor: "transparent",
-    borderRightColor: "transparent",
-    borderTopColor: T.pink,
-    marginTop: -2,
-  },
-
-  locationCard: {
-    backgroundColor: T.white,
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: T.cardBorder,
-  },
-  locationHeader: {
+  flex: { flex: 1 },
+  scroll: { paddingBottom: layout.scrollBottomTab },
+  placeRow: {
     flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+    paddingLeft: layout.gutter,
+    paddingRight: 8,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
   },
-  locationTextContainer: {
-    flex: 1,
-    marginRight: 12,
-  },
-  locationName: { fontFamily: "PlusJakartaSans_700Bold",
-    fontSize: 16,
-    color: T.bark,
-    marginBottom: 4,
-  },
-  locationAddress: { fontFamily: "PlusJakartaSans_500Medium",
+  placeCol: { flex: 1 },
+  placeName: { fontFamily: fontFamily.bold, fontSize: 15, color: C.text },
+  placeAddress: { fontFamily: fontFamily.regular, fontSize: 13, lineHeight: 18, color: C.textSub, marginTop: 2 },
+  form: { paddingHorizontal: layout.gutter, paddingTop: 16 },
+  saveError: {
+    marginHorizontal: layout.gutter,
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: radius.lg,
+    backgroundColor: C.dangerLight,
+    color: C.danger,
+    fontFamily: fontFamily.medium,
     fontSize: 13,
-    color: T.barkMid,
     lineHeight: 18,
-  },
-  changeBtn: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    borderColor: T.green,
-  },
-  changeBtnText: { fontFamily: "PlusJakartaSans_700Bold",
-    fontSize: 14,
-    color: T.green,
-  },
-
-  section: {
-    paddingHorizontal: 20,
-    paddingTop: 24,
-  },
-  sectionTitle: { fontFamily: "PlusJakartaSans_700Bold",
-    fontSize: 15,
-    color: T.bark,
-    marginBottom: 12,
-  },
-
-  input: { fontFamily: "PlusJakartaSans_500Medium",
-    backgroundColor: T.sand,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 15,
-    color: T.bark,
-    marginBottom: 12,
-  },
-  row2: {
-    flexDirection: "row",
-    gap: 12,
-  },
-  flex1: { flex: 1 },
-
-  labelRow: {
-    flexDirection: "row",
-    gap: 12,
-  },
-  labelChip: {
-    flex: 1,
-    minHeight: 44,
-    paddingVertical: 12,
-    borderRadius: 12,
-    backgroundColor: T.sand,
-    borderWidth: 1.5,
-    borderColor: T.sand,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  labelActive: {
-    backgroundColor: T.white,
-    borderColor: T.bark,
-  },
-  labelText: { fontFamily: "PlusJakartaSans_600SemiBold",
-    fontSize: 14,
-    color: T.barkMid,
-  },
-  labelTextActive: {
-    color: T.bark,
-  },
-
-  phoneInputContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: T.sand,
-    borderRadius: 12,
-    paddingLeft: 16,
-    paddingRight: 16,
-    marginBottom: 12,
-  },
-  phonePrefix: { fontFamily: "PlusJakartaSans_600SemiBold",
-    fontSize: 15,
-    color: T.bark,
-    marginRight: 8,
-  },
-  phoneInput: { fontFamily: "PlusJakartaSans_500Medium",
-    flex: 1,
-    paddingVertical: 14,
-    fontSize: 15,
-    color: T.bark,
-  },
-
-  defaultRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingVertical: 10,
-  },
-  defaultText: { fontFamily: "PlusJakartaSans_600SemiBold",
-    fontSize: 14,
-    color: T.bark,
-  },
-
-  saveBtn: {
-    marginHorizontal: 20,
-    marginTop: 32,
-    backgroundColor: T.pink,
-    shadowColor: T.pink,
   },
 });

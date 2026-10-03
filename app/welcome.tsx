@@ -1,26 +1,27 @@
+// codename: zephyr
+// Post-login interstitial (M34): one fade, tappable to skip, auto-advances after 1.2 s. The whole screen is the
+// skip target; nothing here plays feedback (OTP already played `success`).
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import React, { useEffect, useState } from "react";
-import {
-    Animated,
-    Image,
-    StyleSheet,
-    Text,
-    View,
-} from "react-native";
+import React, { useEffect, useRef, useState } from "react";
+import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import Animated from "react-native-reanimated";
 
-import { IconWrap, Screen } from "../components/ui";
+import { enter, IconWrap, Screen } from "../components/ui";
 import { C } from "../constants/colors";
 import { useAuth } from "../context/AuthContext";
 import { useLocation } from "../context/LocationContext";
+import { useDevFlag } from "../lib/devFlags";
 import { isNativePromptPending } from "../lib/pendingNativePrompts";
 
-const T = {
-  green: "#2D7A4F",
-  greenXLight: "#EAF6EE",
-  bark: "#3C2F1E",
-  barkLight: "#A89282",
-};
+/** Auto-advance delay (DECISIONS D11 Q7 — 1.2 s). */
+const AUTO_ADVANCE_MS = 1200;
+/** Legacy delay under Dev_Zephyr_inhibit_Feature (the pre-zephyr 2 s, not tappable). */
+const LEGACY_ADVANCE_MS = 2000;
+/** How often to re-check for a pending native dialog before navigating (ms). */
+const PROMPT_POLL_MS = 250;
+/** A stuck / never-released prompt flag must not strand the user here forever (ms). */
+const PROMPT_HARD_CAP_MS = 8000;
 
 function getLocationIcon(label: string | null): keyof typeof MaterialCommunityIcons.glyphMap {
   if (!label) return "map-marker-outline";
@@ -31,112 +32,114 @@ function getLocationIcon(label: string | null): keyof typeof MaterialCommunityIc
   return "map-marker-outline";
 }
 
-/** Fade in + 12px rise, driven by a 0→1 Animated.Value. */
-const rise = (v: Animated.Value) => ({
-  opacity: v,
-  transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }],
-});
-
 export default function WelcomeScreen() {
   const { user } = useAuth();
   const { location } = useLocation();
+  const legacy = useDevFlag("Dev_Zephyr_inhibit_Feature");
+  const skipInterstitial = useDevFlag("Dev_Zephyr_inhibit_WelcomeInterstitial");
+  const [skipRequested, setSkipRequested] = useState(false);
+  const advancedRef = useRef(false);
 
   const firstName = user?.name?.split(" ")[0] ?? "there";
   const displayLabel = location?.label ?? null;
   const displayAddress = location?.address ?? null;
 
-  // Navigate to home after 2s — unless a native permission dialog (push
-  // notifications or location, both fired the instant login succeeded — see
-  // usePushNotifications.dev.ts and (tabs)/home.tsx's GPS effect) may still
-  // be up. That's only possible on a clean install (permissions still
-  // undetermined there; already-decided on every later app open, so this
-  // extra wait is a no-op in the overwhelmingly common case). Navigating
-  // blind into that dialog is a known hard-crash class — a native OS dialog
-  // racing a JS-driven screen transition kills the process below the JS
-  // layer, so ErrorBoundary never even sees it. Found + fixed 2026-09-09,
-  // see bug_fixes_2026-07-23.md. Capped so a stuck/never-released flag can't
-  // strand the user on this screen forever.
+  // 0 = go now (tap, or the interstitial is switched off); otherwise the auto-advance delay.
+  const delay = skipInterstitial || skipRequested ? 0 : legacy ? LEGACY_ADVANCE_MS : AUTO_ADVANCE_MS;
+
+  // Navigate to home after `delay` — unless a native permission dialog (push
+  // notifications, fired the instant login succeeded — see
+  // usePushNotifications.dev.ts) may still be up. That's only possible on a
+  // clean install (permissions still undetermined there; already-decided on
+  // every later app open, so this extra wait is a no-op in the overwhelmingly
+  // common case). Navigating blind into that dialog is a known hard-crash
+  // class — a native OS dialog racing a JS-driven screen transition kills the
+  // process below the JS layer, so ErrorBoundary never even sees it. Found +
+  // fixed 2026-09-09, see bug_fixes_2026-07-23.md. Capped so a stuck/never-
+  // released flag can't strand the user on this screen forever.
   useEffect(() => {
     let cancelled = false;
-    let pollTimer: ReturnType<typeof setTimeout> | null = null;
-    const hardDeadline = Date.now() + 2000 + 8000;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const hardDeadline = Date.now() + delay + PROMPT_HARD_CAP_MS;
 
     const tryAdvance = () => {
-      if (cancelled) return;
+      if (cancelled || advancedRef.current) return;
       if (isNativePromptPending() && Date.now() < hardDeadline) {
-        pollTimer = setTimeout(tryAdvance, 250);
+        timer = setTimeout(tryAdvance, PROMPT_POLL_MS);
         return;
       }
+      advancedRef.current = true;
       router.replace("/(tabs)/home");
     };
 
-    const initialTimer = setTimeout(tryAdvance, 2000);
+    timer = setTimeout(tryAdvance, delay);
     return () => {
       cancelled = true;
-      clearTimeout(initialTimer);
-      if (pollTimer) clearTimeout(pollTimer);
+      if (timer) clearTimeout(timer);
     };
-  }, []);
+  }, [delay]);
 
-  // Entrance motion for the greeting and location bands (staggered). Purely
-  // visual and independent of the auto-advance timer above.
-  const [greetAnim] = useState(() => new Animated.Value(0));
-  const [locationAnim] = useState(() => new Animated.Value(0));
-  useEffect(() => {
-    const entrance = Animated.stagger(120, [
-      Animated.timing(greetAnim, { toValue: 1, duration: 350, useNativeDriver: true }),
-      Animated.timing(locationAnim, { toValue: 1, duration: 350, useNativeDriver: true }),
-    ]);
-    entrance.start();
-    return () => entrance.stop();
-  }, [greetAnim, locationAnim]);
+  const skip = () => setSkipRequested(true);
 
   return (
     <Screen bg={C.card}>
-      <View style={styles.container}>
-        {/* Logo */}
-        <View style={styles.logoSection}>
-          <Image
-            source={require("../assets/near_now_image.png")}
-            style={styles.logo}
-            resizeMode="contain"
-          />
-        </View>
+      {/* The whole screen is the (silent) skip target; under the legacy flag it is not tappable. */}
+      <Pressable
+        style={styles.fill}
+        onPress={legacy ? undefined : skip}
+        disabled={legacy}
+        accessibilityRole={legacy ? "none" : "button"}
+        accessibilityLabel={legacy ? undefined : "Continue to Home"}
+        accessibilityHint={legacy ? undefined : "Skips the welcome screen"}
+      >
+        <Animated.View entering={enter.fade()} style={styles.container}>
+          {/* Logo */}
+          <View style={styles.logoSection}>
+            <Image
+              source={require("../assets/near_now_image.png")}
+              style={styles.logo}
+              resizeMode="contain"
+              accessibilityIgnoresInvertColors
+              accessible={false}
+            />
+          </View>
 
-        {/* Greeting */}
-        <Animated.View style={[styles.greetSection, rise(greetAnim)]}>
-          <Text style={styles.greetTitle} accessibilityRole="header">
-            Welcome{user ? `, ${firstName}` : ""}!
-          </Text>
-          <Text style={styles.greetSub}>You&apos;re all set to start shopping.</Text>
-        </Animated.View>
-
-        {/* Location */}
-        <Animated.View style={[styles.locationSection, rise(locationAnim)]}>
-          <IconWrap
-            size={56}
-            circle
-            bg={T.greenXLight}
-            icon={getLocationIcon(displayLabel)}
-            iconSize={26}
-            iconColor={T.green}
-            style={styles.locationIconCircle}
-          />
-          <Text style={styles.locationLabel} numberOfLines={1}>
-            {displayLabel ?? "Your location"}
-          </Text>
-          {displayAddress ? (
-            <Text style={styles.locationAddress} numberOfLines={3}>
-              {displayAddress}
+          {/* Greeting */}
+          <View style={styles.greetSection}>
+            <Text style={styles.greetTitle} accessibilityRole="header">
+              Welcome{user ? `, ${firstName}` : ""}!
             </Text>
-          ) : null}
+            <Text style={styles.greetSub}>You&apos;re all set to start shopping.</Text>
+          </View>
+
+          {/* Location */}
+          <View style={styles.locationSection}>
+            <IconWrap
+              size={56}
+              circle
+              bg={C.primaryXLight}
+              icon={getLocationIcon(displayLabel)}
+              iconSize={26}
+              iconColor={C.primary}
+              style={styles.locationIconCircle}
+            />
+            <Text style={styles.locationLabel} numberOfLines={1}>
+              {displayLabel ?? "Your location"}
+            </Text>
+            {displayAddress ? (
+              <Text style={styles.locationAddress} numberOfLines={3}>
+                {displayAddress}
+              </Text>
+            ) : null}
+          </View>
         </Animated.View>
-      </View>
+      </Pressable>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
+  fill: { flex: 1 },
   container: {
     flex: 1,
     alignItems: "center",
@@ -152,23 +155,25 @@ const styles = StyleSheet.create({
   greetTitle: {
     fontSize: 28,
     fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: T.bark,
+    color: C.text,
     letterSpacing: -0.3,
     textAlign: "center",
   },
-  greetSub: { fontFamily: "PlusJakartaSans_500Medium", fontSize: 14, color: T.barkLight, textAlign: "center" },
+  greetSub: { fontFamily: "PlusJakartaSans_500Medium", fontSize: 14, color: C.textSub, textAlign: "center" },
 
   locationSection: { alignItems: "center", gap: 8, width: "100%" },
   locationIconCircle: { marginBottom: 4 },
-  locationLabel: { fontFamily: "PlusJakartaSans_800ExtraBold",
+  locationLabel: {
+    fontFamily: "PlusJakartaSans_800ExtraBold",
     fontSize: 18,
-    color: T.bark,
+    color: C.text,
     letterSpacing: -0.3,
     textAlign: "center",
   },
-  locationAddress: { fontFamily: "PlusJakartaSans_500Medium",
+  locationAddress: {
+    fontFamily: "PlusJakartaSans_500Medium",
     fontSize: 13,
-    color: T.barkLight,
+    color: C.textSub,
     textAlign: "center",
     lineHeight: 19,
     paddingHorizontal: 16,

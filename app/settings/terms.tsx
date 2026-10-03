@@ -1,16 +1,18 @@
-import { router } from "expo-router";
 import React from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { Card, Divider, Screen, ScreenHeader } from "../../components/ui";
 import { C } from "../../constants/colors";
-import { layout } from "../../constants/ui";
+import { fontFamily, layout, text } from "../../constants/ui";
 
+// Terms & privacy — static policy copy. Typography pass only (MAP K8 / BP-37): headings are `text.h3`,
+// body is `text.body` at lineHeight 22, and the 800ExtraBold faces on 12–13 px body/bullets/footnote are
+// gone. The header has no `onBack` so BackButton's deep-link-safe fallback applies (MAP U27).
 
 export default function TermsAndPrivacyScreen() {
   return (
-    <Screen>
-      <ScreenHeader title="Terms & Privacy" onBack={() => router.back()} />
+    <Screen bg={C.card}>
+      <ScreenHeader title="Terms & Privacy" backFallbackHref="/(tabs)/home" />
       <ScrollView
         contentContainerStyle={styles.container}
         showsVerticalScrollIndicator={false}
@@ -157,7 +159,7 @@ function PolicySection({
 }) {
   return (
     <View>
-      <Text style={styles.sectionTitle}>{title}</Text>
+      <Text style={styles.sectionTitle} accessibilityRole="header">{title}</Text>
       {children}
     </View>
   );
@@ -176,20 +178,25 @@ function Bullet({ children }: { children: React.ReactNode }) {
   );
 }
 
+// ─── Styles ──────────────────────────────────────────────────────────────────
+
+/** Long-form body: `text.body` (14/400 C.textSub) opened up to lineHeight 22 for reading. */
+const BODY_LINE_HEIGHT = 22;
+
 const styles = StyleSheet.create({
   container: { padding: layout.gutter, paddingBottom: layout.scrollBottom },
-  pageSubtitle: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 13, color: C.textSub, marginBottom: 16, lineHeight: 19 },
+  pageSubtitle: { fontFamily: fontFamily.bold, fontSize: 13, color: C.textSub, marginBottom: 16, lineHeight: 19 },
 
   card: { padding: layout.cardPaddingLg },
-  sectionTitle: { fontSize: 14, fontFamily: "PlusJakartaSans_800ExtraBold", color: C.primary, marginBottom: 8 },
-  paragraph: { fontFamily: "PlusJakartaSans_400Regular", fontSize: 13, color: C.textSub, lineHeight: 21, marginBottom: 10 },
+  sectionTitle: { ...text.h3, marginBottom: 8 },
+  paragraph: { ...text.body, lineHeight: BODY_LINE_HEIGHT, marginBottom: 10 },
   bulletRow: { flexDirection: "row", gap: 8, marginBottom: 6 },
-  bulletGlyph: { fontFamily: "PlusJakartaSans_400Regular", color: C.textSub, fontSize: 13, lineHeight: 21, width: 10 },
-  bullet: { fontFamily: "PlusJakartaSans_800ExtraBold", flex: 1, fontSize: 13, color: C.textSub, lineHeight: 21 },
+  bulletGlyph: { ...text.body, lineHeight: BODY_LINE_HEIGHT, width: 10 },
+  bullet: { ...text.body, lineHeight: BODY_LINE_HEIGHT, flex: 1 },
   sectionDivider: { marginTop: 6, marginBottom: 16 },
 
-  footerNote: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 12, color: C.textLight, marginTop: 16, textAlign: "center", lineHeight: 18 },
+  footerNote: { fontFamily: fontFamily.medium, fontSize: 12, lineHeight: 18, color: C.textSub, marginTop: 16, textAlign: "center" },
   footer: { marginTop: 28, alignItems: "center" },
-  footerBrand: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 16, color: C.primary },
-  footerTagline: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 12, color: C.textSub, marginTop: 4 },
+  footerBrand: { fontFamily: fontFamily.extrabold, fontSize: 16, color: C.primary },
+  footerTagline: { fontFamily: fontFamily.semibold, fontSize: 12, color: C.textSub, marginTop: 4 },
 });

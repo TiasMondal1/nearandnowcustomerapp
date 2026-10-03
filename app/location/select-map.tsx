@@ -1,775 +1,661 @@
+// codename: quartz
+// Map picker: a FIXED centre pin over an uncontrolled MapView (`initialRegion` + `animateToRegion`, U18). The pin
+// lifts on the first `onRegionChange`, settles on `onRegionChangeComplete` with one `select` tick and a
+// queue-latest reverse geocode (latest wins, no stale overwrite); the bottom dock shows the address (or
+// "Pinned location" when the geocode is off / failed) and "Confirm location" → add-details with `returnTo`.
+// Permission denied shows an EmptyState with "Open settings" instead of silently sitting on Kolkata (C39).
+// Under `Dev_Quartz_inhibit_Feature` the old draggable Marker (with its tracksViewChanges hygiene) comes back.
+// No global layout-animation calls anywhere — they flicker over MapView on Android (MAP §7.17). (2026-10-03)
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import * as Location from "expo-location";
-import { router } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { router, useLocalSearchParams } from "expo-router";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    Animated,
-    FlatList,
-    Keyboard,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  FlatList,
+  InteractionManager,
+  Keyboard,
+  Linking,
+  Platform,
+  StyleSheet,
+  Text,
+  View,
+  type TextInput,
 } from "react-native";
-import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import MapView, { Marker, PROVIDER_GOOGLE, type Region } from "react-native-maps";
+import Animated from "react-native-reanimated";
 
+import { CentrePin } from "../../components/location/CentrePin";
 import {
+  BottomDock,
+  EmptyState,
+  IconButton,
+  Input,
+  ListRow,
   PrimaryButton,
   Screen,
   ScreenHeader,
-  Skeleton,
-  SkeletonText,
+  enter,
+  exit,
+  notify,
+  useDockHeight,
 } from "../../components/ui";
-import {
-  reverseGeocode as reverseGeocodeApi,
-  autocomplete as autocompleteApi,
-  placeDetails as placeDetailsApi,
-} from "../../lib/placesService";
+import { C } from "../../constants/colors";
+import { clipOverflow, fontFamily, layout, radius, shadow, text } from "../../constants/ui";
+import { useLocation } from "../../context/LocationContext";
+import { useDeviceAddress } from "../../hooks/useDeviceAddress";
+import { parseReturnTo } from "../../lib/addressService";
+import { useDevFlag } from "../../lib/devFlags";
+import { feedback } from "../../lib/feedback";
 import { logError } from "../../lib/logError";
 import { logSilentFailure } from "../../lib/logSilentFailure";
+import {
+  autocomplete,
+  newPlacesSessionToken,
+  placeDetails,
+  reverseGeocode,
+  type AutocompletePrediction,
+  type ReverseGeocodeResult,
+} from "../../lib/placesService";
 
-const T = {
-  green: "#2D7A4F",
-  sand: "#F3F1EB",
-  bark: "#3C2F1E",
-  barkMid: "#6B5744",
-  barkLight: "#A89282",
-  white: "#FFFFFF",
-  pink: "#E91E63",
-  cardBorder: "rgba(60,47,30,0.08)",
-};
+// ─── Constants ────────────────────────────────────────────────────────────────
 
-// Single Places Autocomplete session token keeps pricing correct across
-// predictions+details within one user search.
-function newSessionToken() {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
+type LatLng = { latitude: number; longitude: number };
 
-type Prediction = {
-  place_id: string;
-  description: string;
-  main_text: string;
-  secondary_text: string;
-};
+/** Where the map opens with no active location and no GPS fix yet (the old default; never persisted). */
+const DEFAULT_CENTRE: LatLng = { latitude: 22.5726, longitude: 88.3639 };
+const REGION_DELTA = 0.01;
+const ANIMATE_MS = 350;
+/** A programmatic jump that produces no region change never settles — release the suppress flag after this. */
+const SETTLE_SUPPRESS_MS = 1500;
+/** Android re-rasterises a Marker's children; keep `tracksViewChanges` on only briefly after a move (MAP §7.17). */
+const MARKER_TRACK_MS = 700;
+const SEARCH_DEBOUNCE_MS = 300;
+const SEARCH_TOP = 12;
+const SEARCH_HEIGHT = 48;
+const PANEL_GAP = 6;
+const PANEL_MAX_HEIGHT = 280;
+const GPS_BUTTON = 48;
+const SEARCH_ICON = 20;
+const CLEAR_BUTTON = 32;
+const CLEAR_ICON = 18;
+const PIN_ICON = 20;
 
-type PlaceDetails = {
-  place_id: string;
-  formatted_address: string;
-  latitude: number;
-  longitude: number;
+type PickedPlace = {
+  /** Neighbourhood / place name shown above the address (optional). */
   name?: string;
-  city?: string;
-  state?: string;
-  pincode?: string;
-  country?: string;
-  raw: any;
+  address: string;
+  placeId?: string;
+  components: ReverseGeocodeResult["components"];
+  raw: unknown;
 };
 
-function extractAddressParts(components: any[]): Pick<
-  PlaceDetails,
-  "city" | "state" | "pincode" | "country"
-> {
-  const find = (type: string) =>
-    components?.find((c) => c?.types?.includes(type))?.long_name ?? undefined;
-  return {
-    city:
-      find("locality") ||
-      find("postal_town") ||
-      find("administrative_area_level_2") ||
-      find("sublocality_level_1") ||
-      undefined,
-    state: find("administrative_area_level_1"),
-    pincode: find("postal_code"),
-    country: find("country"),
-  };
+type MarkerDragEnd = NonNullable<React.ComponentProps<typeof Marker>["onDragEnd"]>;
+
+// ─── Pure helpers ─────────────────────────────────────────────────────────────
+
+function isValidCoords(lat: number, lng: number): boolean {
+  return Number.isFinite(lat) && Number.isFinite(lng) && !(lat === 0 && lng === 0);
 }
 
-export default function SelectMapLocationScreen() {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [predictions, setPredictions] = useState<Prediction[]>([]);
-  const [predictionsOpen, setPredictionsOpen] = useState(false);
-  const [predicting, setPredicting] = useState(false);
-  const sessionTokenRef = useRef<string>(newSessionToken());
+function regionFor(c: LatLng): Region {
+  return { latitude: c.latitude, longitude: c.longitude, latitudeDelta: REGION_DELTA, longitudeDelta: REGION_DELTA };
+}
 
-  const [coords, setCoords] = useState({
-    latitude: 22.5726,
-    longitude: 88.3639,
-  });
-  const [region, setRegion] = useState<Region>({
-    latitude: 22.5726,
-    longitude: 88.3639,
-    latitudeDelta: 0.01,
-    longitudeDelta: 0.01,
-  });
-  const [locationName, setLocationName] = useState("");
-  const [locationAddress, setLocationAddress] = useState("");
-  const [reverseLoading, setReverseLoading] = useState(false);
+function placeFromReverse(r: ReverseGeocodeResult): PickedPlace {
+  return { name: r.components.area, address: r.formatted_address, placeId: r.place_id, components: r.components, raw: r.raw };
+}
 
-  const insets = useSafeAreaInsets();
+function predictionTitle(p: AutocompletePrediction): string {
+  return p.structured_formatting?.main_text || p.description;
+}
 
-  // Presentational only: fade the predictions dropdown in when it opens.
-  // (LayoutAnimation is avoided here — it flickers over MapView on Android.)
-  const panelFade = useMemo(() => new Animated.Value(0), []);
-  useEffect(() => {
-    if (!predictionsOpen) {
-      panelFade.setValue(0);
-      return;
-    }
-    const anim = Animated.timing(panelFade, {
-      toValue: 1,
-      duration: 120,
-      useNativeDriver: true,
-    });
-    anim.start();
-    return () => anim.stop();
-  }, [predictionsOpen, panelFade]);
+/** The Google row travels to add-details as a string param (as today); never let a stringify failure block Confirm. */
+function safeStringify(value: unknown): string {
+  try {
+    return value ? JSON.stringify(value) : "";
+  } catch {
+    return "";
+  }
+}
 
-  // Android's react-native-maps rasterises the custom marker view once and
-  // caches that snapshot. If the icon font hasn't finished loading at that
-  // moment, the marker ends up "half drawn". We flip `tracksViewChanges` on
-  // for a short window whenever the pin moves, so the snapshot is retaken
-  // after the glyph is definitely painted.
-  const [tracksChanges, setTracksChanges] = useState(true);
-  useEffect(() => {
-    setTracksChanges(true);
-    const t = setTimeout(() => setTracksChanges(false), 700);
-    return () => clearTimeout(t);
-  }, [coords.latitude, coords.longitude]);
+// ─── Screen ───────────────────────────────────────────────────────────────────
 
-  // Richer place data we carry forward to the add-details screen so the form
-  // can prefill city / state / pincode, and so the insert into
-  // customer_saved_addresses has google_place_id + google_formatted_address.
-  const [placeDetails, setPlaceDetails] = useState<PlaceDetails | null>(null);
+export default function SelectMapLocationScreen(): React.JSX.Element {
+  const params = useLocalSearchParams<{ returnTo?: string }>();
+  const returnTo = parseReturnTo(params.returnTo);
+  const legacyMarker = useDevFlag("Dev_Quartz_inhibit_Feature");
 
-  const isGeocodingRef = useRef(false);
-  const pendingReverseGeocodeRef = useRef<{ lat: number; lng: number } | null>(null);
-  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(
-    undefined,
+  const { location: activeLocation } = useLocation();
+  const { request: requestDeviceAddress, busy: gpsBusy, denied: gpsDenied } = useDeviceAddress();
+  const dockHeight = useDockHeight();
+
+  const mapRef = useRef<MapView>(null);
+  const searchRef = useRef<TextInput>(null);
+  const mountedRef = useRef(false);
+
+  // The map opens on the active delivery location when there is one (no prompt), else on the default centre
+  // and asks for GPS once interactions settle. `coords` is null until the user, GPS or a search places the pin.
+  const [initialCoords] = useState<LatLng | null>(() =>
+    activeLocation && isValidCoords(activeLocation.latitude, activeLocation.longitude)
+      ? { latitude: activeLocation.latitude, longitude: activeLocation.longitude }
+      : null,
   );
+  const [initialRegion] = useState<Region>(() => regionFor(initialCoords ?? DEFAULT_CENTRE));
+  const [coords, setCoords] = useState<LatLng | null>(initialCoords);
+  const [place, setPlace] = useState<PickedPlace | null>(null);
+  const [geocoding, setGeocoding] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [permissionDenied, setPermissionDenied] = useState(false);
+  const [searchInstead, setSearchInstead] = useState(false);
 
-  const reverseGeocode = useCallback(async (lat: number, lng: number) => {
-    // Queue-latest-while-busy: a second drag arriving before the first
-    // call's response lands used to be silently dropped, leaving the
-    // displayed address stale relative to the pin's actual position.
-    if (isGeocodingRef.current) {
-      pendingReverseGeocodeRef.current = { lat, lng };
-      return;
-    }
-
-    isGeocodingRef.current = true;
-    setReverseLoading(true);
-
-    try {
-      const json = await reverseGeocodeApi(lat, lng);
-
-      if (json.status === "OK" && json.results?.[0]) {
-        const result = json.results[0];
-        const addressComponents = result.address_components || [];
-
-        const neighborhood =
-          addressComponents.find((c: any) =>
-            c.types.includes("neighborhood"),
-          )?.long_name ||
-          addressComponents.find((c: any) =>
-            c.types.includes("sublocality_level_2"),
-          )?.long_name ||
-          "";
-
-        const sublocality =
-          addressComponents.find((c: any) =>
-            c.types.includes("sublocality_level_1"),
-          )?.long_name || "";
-
-        const parts = extractAddressParts(addressComponents);
-
-        setLocationName(neighborhood || sublocality || "Selected Location");
-        setLocationAddress(result.formatted_address);
-        setPlaceDetails({
-          place_id: result.place_id,
-          formatted_address: result.formatted_address,
-          latitude: lat,
-          longitude: lng,
-          name: neighborhood || sublocality || undefined,
-          ...parts,
-          raw: result,
-        });
-      }
-    } catch (error) {
-      logSilentFailure("Reverse geocoding", error);
-    } finally {
-      setReverseLoading(false);
-      isGeocodingRef.current = false;
-      const pending = pendingReverseGeocodeRef.current;
-      if (pending) {
-        pendingReverseGeocodeRef.current = null;
-        reverseGeocode(pending.lat, pending.lng);
-      }
-    }
-  }, []);
-
-  const getCurrentLocation = useCallback(async () => {
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") return;
-
-      const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
-
-      const { latitude, longitude } = location.coords;
-      setCoords({ latitude, longitude });
-      setRegion({
-        latitude,
-        longitude,
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
-      });
-
-      reverseGeocode(latitude, longitude);
-    } catch (error) {
-      logSilentFailure("Get current location", error);
-    }
-  }, [reverseGeocode]);
+  const draggingRef = useRef(false);
+  const suppressSettleRef = useRef(false);
+  const suppressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const geoBusyRef = useRef(false);
+  const geoPendingRef = useRef<LatLng | null>(null);
+  const geoSeqRef = useRef(0);
 
   useEffect(() => {
-    void getCurrentLocation();
-  }, [getCurrentLocation]);
-
-  useEffect(() => {
+    mountedRef.current = true;
     return () => {
-      if (searchTimeoutRef.current) {
-        clearTimeout(searchTimeoutRef.current);
-      }
+      mountedRef.current = false;
+      if (suppressTimerRef.current) clearTimeout(suppressTimerRef.current);
     };
   }, []);
 
-  const fetchPredictions = useCallback(async (input: string) => {
-    if (!input.trim()) {
-      setPredictions([]);
-      setPredictionsOpen(false);
+  // ── Reverse geocode: queue-latest-while-busy; a result only lands if nothing newer superseded it ──
+  const runGeocode = useCallback(async (lat: number, lng: number): Promise<void> => {
+    if (geoBusyRef.current) {
+      geoPendingRef.current = { latitude: lat, longitude: lng };
       return;
     }
-
-    setPredicting(true);
+    geoBusyRef.current = true;
+    const seq = ++geoSeqRef.current;
+    setGeocoding(true);
     try {
-      const json = await autocompleteApi(input, sessionTokenRef.current);
-
-      if (json.status === "OK" && Array.isArray(json.predictions)) {
-        const mapped: Prediction[] = json.predictions.map((p: any) => ({
-          place_id: p.place_id,
-          description: p.description,
-          main_text: p.structured_formatting?.main_text || p.description,
-          secondary_text: p.structured_formatting?.secondary_text || "",
-        }));
-        setPredictions(mapped);
-        setPredictionsOpen(mapped.length > 0);
-      } else if (json.status === "ZERO_RESULTS") {
-        setPredictions([]);
-        setPredictionsOpen(true);
-      } else {
-        if (json.error_message) {
-          logSilentFailure(`Places Autocomplete (${json.status})`, json.error_message);
-        }
-        setPredictions([]);
-        setPredictionsOpen(false);
+      // null under Dev_Quartz_inhibit_ReverseGeocode and on failure (logged) — the card keeps "Pinned location".
+      const result = await reverseGeocode(lat, lng);
+      if (mountedRef.current && seq === geoSeqRef.current && !geoPendingRef.current) {
+        setPlace(result ? placeFromReverse(result) : null);
       }
-    } catch (err) {
-      logSilentFailure("Places Autocomplete", err);
-      setPredictions([]);
-      setPredictionsOpen(false);
     } finally {
-      setPredicting(false);
+      geoBusyRef.current = false;
+      const next = geoPendingRef.current;
+      if (next) {
+        geoPendingRef.current = null;
+        void runGeocode(next.latitude, next.longitude);
+      } else if (mountedRef.current) {
+        setGeocoding(false);
+      }
     }
   }, []);
 
-  const handleSearch = (text: string) => {
-    setSearchQuery(text);
+  /** Moves the pin programmatically (GPS / search). A known place skips the settle geocode so its text never flickers. */
+  const jumpTo = useCallback(
+    (lat: number, lng: number, known: PickedPlace | null) => {
+      setCoords({ latitude: lat, longitude: lng });
+      setPermissionDenied(false);
+      if (known) {
+        geoSeqRef.current += 1; // drop any in-flight geocode result
+        geoPendingRef.current = null;
+        setPlace(known);
+      } else {
+        void runGeocode(lat, lng);
+      }
+      suppressSettleRef.current = true;
+      if (suppressTimerRef.current) clearTimeout(suppressTimerRef.current);
+      suppressTimerRef.current = setTimeout(() => {
+        suppressSettleRef.current = false;
+      }, SETTLE_SUPPRESS_MS);
+      mapRef.current?.animateToRegion(regionFor({ latitude: lat, longitude: lng }), ANIMATE_MS);
+    },
+    [runGeocode],
+  );
 
-    if (searchTimeoutRef.current) {
-      clearTimeout(searchTimeoutRef.current);
-    }
+  // ── GPS (the hook owns the OS prompt inside beginNativePrompt; it never throws and never navigates) ──
+  const [gpsAttempt, setGpsAttempt] = useState(0);
+  const gpsHandledRef = useRef(0);
 
-    if (!text.trim()) {
-      setPredictions([]);
-      setPredictionsOpen(false);
+  // Whether the pending attempt was the automatic mount fix (no gesture → no error haptic, W3 R4-05).
+  const autoAttemptRef = useRef(false);
+  const locate = useCallback(async (opts?: { auto?: boolean }) => {
+    const result = await requestDeviceAddress();
+    if (!mountedRef.current) return;
+    if (!result) {
+      autoAttemptRef.current = !!opts?.auto;
+      setGpsAttempt((n) => n + 1);
       return;
     }
+    jumpTo(result.lat, result.lng, { address: result.address, components: {}, raw: null });
+  }, [requestDeviceAddress, jumpTo]);
 
-    searchTimeoutRef.current = setTimeout(() => {
-      void fetchPredictions(text);
-    }, 300);
+  // A null fix is "denied" (EmptyState, no toast) or a failed read (one error + toast); `denied` lands in the
+  // same commit as the attempt bump, so the effect sees the settled value.
+  useEffect(() => {
+    if (gpsAttempt === 0 || gpsHandledRef.current === gpsAttempt) return;
+    gpsHandledRef.current = gpsAttempt;
+    if (gpsDenied) {
+      setPermissionDenied(true);
+      return;
+    }
+    const auto = autoAttemptRef.current;
+    autoAttemptRef.current = false;
+    if (!auto) feedback.error();
+    notify({ id: "gps-error", title: "Couldn't get your location", message: "Move the map or search instead", tone: "error", haptic: false });
+  }, [gpsAttempt, gpsDenied]);
+
+  // Mount: geocode the active location, or ask for GPS once the push transition has settled (MAP §2.8 #31).
+  const startedRef = useRef(false);
+  useEffect(() => {
+    if (startedRef.current) return;
+    startedRef.current = true;
+    const task = InteractionManager.runAfterInteractions(() => {
+      if (initialCoords) void runGeocode(initialCoords.latitude, initialCoords.longitude);
+      else void locate({ auto: true });
+    });
+    return () => task.cancel();
+  }, [initialCoords, runGeocode, locate]);
+
+  // ── Map events ──
+  const handleRegionChange = () => {
+    if (legacyMarker) return;
+    if (!draggingRef.current) {
+      draggingRef.current = true;
+      setDragging(true);
+    }
   };
 
-  const handleSelectPrediction = async (pred: Prediction) => {
+  const handleRegionChangeComplete = (region: Region) => {
+    const wasDragging = draggingRef.current;
+    draggingRef.current = false;
+    if (wasDragging) setDragging(false);
+    if (legacyMarker) return;
+    if (suppressSettleRef.current) {
+      suppressSettleRef.current = false;
+      return;
+    }
+    // Only a move the user made counts: the initial layout settle must not geocode the default centre.
+    if (!wasDragging) return;
+    const lat = region.latitude;
+    const lng = region.longitude;
+    if (!isValidCoords(lat, lng)) return;
+    setCoords({ latitude: lat, longitude: lng });
+    feedback.select();
+    void runGeocode(lat, lng);
+  };
+
+  // Legacy draggable marker (flag): same settle semantics, driven by the drag end.
+  const markerCoords = coords ?? { latitude: initialRegion.latitude, longitude: initialRegion.longitude };
+  const [tracksChanges, setTracksChanges] = useState(true);
+  useEffect(() => {
+    if (!legacyMarker) return;
+    setTracksChanges(true);
+    const t = setTimeout(() => setTracksChanges(false), MARKER_TRACK_MS);
+    return () => clearTimeout(t);
+  }, [legacyMarker, markerCoords.latitude, markerCoords.longitude]);
+
+  const handleMarkerDragEnd: MarkerDragEnd = (e) => {
+    const { latitude, longitude } = e.nativeEvent.coordinate;
+    if (!isValidCoords(latitude, longitude)) return;
+    setCoords({ latitude, longitude });
+    feedback.select();
+    void runGeocode(latitude, longitude);
+  };
+
+  // ── Places search (session token shared by the predictions and the Details call that ends them) ──
+  const [query, setQuery] = useState("");
+  const [predictions, setPredictions] = useState<AutocompletePrediction[] | null>(null);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const tokenRef = useRef(newPlacesSessionToken());
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchSeqRef = useRef(0);
+  const pickingRef = useRef(false);
+
+  useEffect(
+    () => () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      searchSeqRef.current += 1;
+    },
+    [],
+  );
+
+  const runSearch = async (q: string) => {
+    const seq = ++searchSeqRef.current;
+    setSearching(true);
+    const results = await autocomplete(q, tokenRef.current); // never throws ([] on ZERO_RESULTS / failure)
+    if (seq !== searchSeqRef.current || !mountedRef.current) return;
+    setPredictions(results);
+    setPanelOpen(true);
+    setSearching(false);
+  };
+
+  const handleQueryChange = (t: string) => {
+    setQuery(t);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const q = t.trim();
+    if (!q) {
+      searchSeqRef.current += 1;
+      setPredictions(null);
+      setPanelOpen(false);
+      setSearching(false);
+      return;
+    }
+    debounceRef.current = setTimeout(() => {
+      void runSearch(q);
+    }, SEARCH_DEBOUNCE_MS);
+  };
+
+  const clearSearch = () => handleQueryChange("");
+
+  const handleSelectPrediction = async (p: AutocompletePrediction) => {
+    if (pickingRef.current) return;
+    pickingRef.current = true;
     Keyboard.dismiss();
-    setPredictionsOpen(false);
-    setSearchQuery(pred.main_text);
-    setReverseLoading(true);
-
+    setPanelOpen(false);
+    const title = predictionTitle(p);
+    setQuery(title);
+    setPicking(true);
     try {
-      const json = await placeDetailsApi(pred.place_id, sessionTokenRef.current);
-
-      // Per Google's guidance, rotate the session token after Details is used.
-      sessionTokenRef.current = newSessionToken();
-
-      if (json.status !== "OK" || !json.result) {
-        Alert.alert("Sorry", "Couldn't load that place. Please pick another.");
+      const r = await placeDetails(p.place_id, tokenRef.current);
+      // Per Google's guidance the session ends with a Details call: rotate the token for the next search.
+      tokenRef.current = newPlacesSessionToken();
+      if (!mountedRef.current) return;
+      if (!r) {
+        feedback.error();
+        notify({ id: "place-error", title: "Couldn't load that place", message: "Pick another result", tone: "error" });
         return;
       }
-
-      const r = json.result;
-      const lat = r.geometry?.location?.lat;
-      const lng = r.geometry?.location?.lng;
-      if (typeof lat !== "number" || typeof lng !== "number") {
-        Alert.alert("Sorry", "This place has no coordinates.");
-        return;
-      }
-
-      const parts = extractAddressParts(r.address_components || []);
-
-      setCoords({ latitude: lat, longitude: lng });
-      setRegion({
-        latitude: lat,
-        longitude: lng,
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
-      });
-      setLocationName(pred.main_text);
-      setLocationAddress(r.formatted_address || pred.description);
-      setPlaceDetails({
-        place_id: r.place_id,
-        formatted_address: r.formatted_address || pred.description,
-        latitude: lat,
-        longitude: lng,
-        name: pred.main_text,
-        ...parts,
-        raw: r,
+      jumpTo(r.geometry.location.lat, r.geometry.location.lng, {
+        name: title,
+        address: r.formatted_address || p.description,
+        placeId: r.place_id,
+        components: r.components,
+        raw: r.raw,
       });
     } catch (err) {
       logError("Place details", err);
-      Alert.alert("Error", "Could not load that place.");
+      feedback.error();
+      notify({
+        id: "place-error",
+        title: "Couldn't load that place",
+        message: err instanceof Error ? err.message : undefined,
+        tone: "error",
+      });
     } finally {
-      setReverseLoading(false);
+      pickingRef.current = false;
+      if (mountedRef.current) setPicking(false);
     }
   };
 
-  const handleMarkerDragEnd = (e: any) => {
-    const { latitude, longitude } = e.nativeEvent.coordinate;
-    setCoords({ latitude, longitude });
-    reverseGeocode(latitude, longitude);
-  };
-
-  const handleRegionChangeComplete = (newRegion: Region) => {
-    setRegion(newRegion);
-  };
-
-  const handleConfirmLocation = () => {
+  // ── Confirm → add-details (coords + place as string params, as today, plus returnTo) ──
+  const handleConfirm = () => {
+    if (!coords || geocoding) return;
+    Keyboard.dismiss();
     router.push({
       pathname: "/location/add-details",
       params: {
-        latitude: coords.latitude.toString(),
-        longitude: coords.longitude.toString(),
-        address: locationAddress,
-        placeName: locationName,
-        google_place_id: placeDetails?.place_id ?? "",
-        google_formatted_address: placeDetails?.formatted_address ?? "",
-        google_place_data: placeDetails?.raw
-          ? JSON.stringify(placeDetails.raw)
-          : "",
-        city: placeDetails?.city ?? "",
-        state: placeDetails?.state ?? "",
-        pincode: placeDetails?.pincode ?? "",
-        country: placeDetails?.country ?? "India",
+        latitude: String(coords.latitude),
+        longitude: String(coords.longitude),
+        address: place?.address ?? "",
+        placeName: place?.name ?? "",
+        google_place_id: place?.placeId ?? "",
+        google_formatted_address: place?.address ?? "",
+        google_place_data: safeStringify(place?.raw),
+        city: place?.components.city ?? "",
+        state: place?.components.state ?? "",
+        pincode: place?.components.pincode ?? "",
+        country: place?.components.country ?? "India",
+        ...(returnTo ? { returnTo } : {}),
       },
     });
   };
 
-  const myLocationInFlightRef = useRef(false);
-
-  const handleMyLocation = async () => {
-    // Recenter button had no guard at all against a fast double-tap firing
-    // two overlapping requestForegroundPermissionsAsync()/getCurrentPositionAsync()
-    // calls — already try/catch'd so not a crash risk, just a wasted duplicate
-    // native-module call.
-    if (myLocationInFlightRef.current) return;
-    myLocationInFlightRef.current = true;
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") {
-        Alert.alert(
-          "Permission Required",
-          "Please enable location permissions",
-        );
-        return;
-      }
-
-      const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
-      });
-
-      const { latitude, longitude } = location.coords;
-      setCoords({ latitude, longitude });
-      setRegion({
-        latitude,
-        longitude,
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
-      });
-
-      reverseGeocode(latitude, longitude);
-    } catch (error) {
-      Alert.alert("Error", "Failed to get your current location");
-    } finally {
-      myLocationInFlightRef.current = false;
-    }
+  const openSettings = () => {
+    Linking.openSettings().catch((err) => logSilentFailure("Open settings", err));
   };
 
+  const handleSearchInstead = () => {
+    setSearchInstead(true);
+    searchRef.current?.focus();
+  };
+
+  // ── Derived ──
+  const addressText = place?.address ?? (coords ? "Pinned location" : "Move the map or search to place the pin");
+  const showDenied = permissionDenied && !coords && !searchInstead;
+  const canConfirm = !!coords && !geocoding;
+
   return (
-    <Screen bg={T.white} edges={["top"]}>
-      <ScreenHeader
-        title="Select Your Location"
-        onBack={() => {
-          if (router.canGoBack()) {
-            router.back();
-          } else {
-            router.replace("/(tabs)/home");
-          }
-        }}
-        backProps={{ bg: T.sand, color: T.bark }}
-        titleStyle={styles.headerTitle}
-        style={styles.header}
-      />
+    <Screen bg={C.card} edges={["top"]}>
+      <ScreenHeader title="Pin your location" backFallbackHref={returnTo ?? "/(tabs)/home"} />
 
-      <View style={styles.searchContainer}>
-        <View style={styles.searchBar}>
-          <MaterialCommunityIcons name="magnify" size={20} color={T.barkLight} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search for apartment, street name…"
-            placeholderTextColor={T.barkLight}
-            value={searchQuery}
-            onChangeText={handleSearch}
-            onFocus={() => {
-              if (predictions.length > 0) setPredictionsOpen(true);
-            }}
-            returnKeyType="search"
-          />
-          {predicting && <ActivityIndicator size="small" color={T.green} />}
-          {!predicting && searchQuery.length > 0 && (
-            <TouchableOpacity
-              onPress={() => {
-                setSearchQuery("");
-                setPredictions([]);
-                setPredictionsOpen(false);
-              }}
-              hitSlop={12}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel="Clear search"
-            >
-              <MaterialCommunityIcons
-                name="close-circle"
-                size={18}
-                color={T.barkLight}
-              />
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {predictionsOpen && (
-          <Animated.View
-            style={[styles.predictionsPanel, { opacity: panelFade }]}
-          >
-            {predictions.length === 0 ? (
-              <View style={styles.predictionEmpty}>
-                <MaterialCommunityIcons
-                  name="map-search-outline"
-                  size={18}
-                  color={T.barkLight}
-                />
-                <Text style={styles.predictionEmptyText}>
-                  No matching places. Try another search.
-                </Text>
-              </View>
-            ) : (
-              <FlatList
-                data={predictions}
-                keyExtractor={(it) => it.place_id}
-                keyboardShouldPersistTaps="handled"
-                ItemSeparatorComponent={() => (
-                  <View style={styles.predictionDivider} />
-                )}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    style={styles.predictionRow}
-                    onPress={() => handleSelectPrediction(item)}
-                    activeOpacity={0.7}
-                    accessibilityRole="button"
-                  >
-                    <MaterialCommunityIcons
-                      name="map-marker-outline"
-                      size={20}
-                      color={T.barkMid}
-                    />
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.predictionMain} numberOfLines={1}>
-                        {item.main_text}
-                      </Text>
-                      {!!item.secondary_text && (
-                        <Text
-                          style={styles.predictionSecondary}
-                          numberOfLines={1}
-                        >
-                          {item.secondary_text}
-                        </Text>
-                      )}
-                    </View>
-                  </TouchableOpacity>
-                )}
-              />
-            )}
-          </Animated.View>
-        )}
-      </View>
-
-      <View style={styles.mapContainer}>
+      <View style={styles.mapArea}>
         <MapView
+          // The web mock (web-mocks/react-native-maps.js) is a plain function component: no ref, no animateToRegion.
+          ref={Platform.OS === "web" ? undefined : mapRef}
           provider={PROVIDER_GOOGLE}
-          style={styles.map}
-          region={region}
+          style={StyleSheet.absoluteFill}
+          initialRegion={initialRegion}
+          onRegionChange={handleRegionChange}
           onRegionChangeComplete={handleRegionChangeComplete}
           showsUserLocation
           showsMyLocationButton={false}
+          toolbarEnabled={false}
+          accessibilityLabel="Map, move to position the pin"
         >
-          <Marker
-            coordinate={coords}
-            draggable
-            onDragEnd={handleMarkerDragEnd}
-            anchor={{ x: 0.5, y: 1 }}
-            tracksViewChanges={tracksChanges}
-          >
-            {/*
-              Pin is composed of three solid Views (head, inner dot, tail
-              triangle) instead of a font icon. Font icons race against the
-              native marker snapshot on Android and routinely render
-              half-drawn; plain Views always rasterise correctly because
-              they don't depend on a font file being loaded.
-            */}
-            <View style={styles.pinWrap}>
-              <View style={styles.pinHead}>
-                <View style={styles.pinDot} />
+          {legacyMarker ? (
+            <Marker
+              coordinate={markerCoords}
+              draggable
+              onDragEnd={handleMarkerDragEnd}
+              anchor={{ x: 0.5, y: 1 }}
+              tracksViewChanges={tracksChanges}
+            >
+              {/*
+                Three solid Views (head, dot, tail) instead of a font glyph: font icons race the native marker
+                snapshot on Android and render half-drawn; plain Views always rasterise (MAP §7.17).
+              */}
+              <View style={styles.pinWrap}>
+                <View style={styles.pinHead}>
+                  <View style={styles.pinDot} />
+                </View>
+                <View style={styles.pinTail} />
               </View>
-              <View style={styles.pinTail} />
-            </View>
-          </Marker>
+            </Marker>
+          ) : null}
         </MapView>
 
-        <View style={styles.tooltipContainer} pointerEvents="none">
-          <View style={styles.tooltip}>
-            <Text style={styles.tooltipTitle}>Order will be delivered here</Text>
-            <Text style={styles.tooltipSubtitle}>
-              Move the map or drag the pin to fine-tune
-            </Text>
-          </View>
-        </View>
+        {!legacyMarker ? <CentrePin lifted={dragging} /> : null}
 
-        <TouchableOpacity
-          style={styles.myLocationBtn}
-          onPress={handleMyLocation}
-          activeOpacity={0.7}
-          accessibilityRole="button"
-          accessibilityLabel="Use my current location"
-        >
-          <MaterialCommunityIcons
-            name="crosshairs-gps"
-            size={24}
-            color={T.white}
+        {showDenied ? (
+          <View style={[StyleSheet.absoluteFill, styles.deniedLayer]} accessibilityLiveRegion="polite">
+            <EmptyState
+              fill
+              iconWrap
+              icon="map-marker-off-outline"
+              title="Location permission needed"
+              text="Allow location access or search for your address"
+              action={{ label: "Open settings", onPress: openSettings }}
+            >
+              <PrimaryButton size="sm" variant="ghost" icon="magnify" label="Search instead" onPress={handleSearchInstead} />
+            </EmptyState>
+          </View>
+        ) : null}
+
+        <IconButton
+          icon="crosshairs-gps"
+          shape="circle"
+          size={GPS_BUTTON}
+          bg={C.card}
+          color={C.primary}
+          shadow="cardLg"
+          disabled={gpsBusy}
+          accessibilityLabel={gpsBusy ? "Finding your location" : "Use current location"}
+          onPress={() => void locate()}
+          style={[styles.gpsButton, { bottom: dockHeight + 16 }]}
+        />
+
+        {/* Search sits above the map and the denied layer; the predictions panel drops under it. */}
+        <View style={styles.searchLayer} pointerEvents="box-none">
+          <Input
+            inputRef={searchRef}
+            variant="outlined"
+            placeholder="Search for apartment, street…"
+            value={query}
+            onChangeText={handleQueryChange}
+            onFocus={() => {
+              if (predictions && predictions.length > 0) setPanelOpen(true);
+            }}
+            returnKeyType="search"
+            autoCorrect={false}
+            accessibilityLabel="Search for an apartment or street"
+            containerStyle={styles.searchContainer}
+            inputStyle={styles.searchInput}
+            left={<MaterialCommunityIcons name="magnify" size={SEARCH_ICON} color={C.textSub} style={styles.searchIcon} />}
+            right={
+              searching || picking ? (
+                <ActivityIndicator size="small" color={C.primary} />
+              ) : query.length > 0 ? (
+                <IconButton
+                  icon="close-circle"
+                  size={CLEAR_BUTTON}
+                  iconSize={CLEAR_ICON}
+                  bg="transparent"
+                  color={C.textLight}
+                  accessibilityLabel="Clear search"
+                  onPress={clearSearch}
+                />
+              ) : null
+            }
           />
-        </TouchableOpacity>
+          {panelOpen && predictions ? (
+            <Animated.View entering={enter.fade()} exiting={exit.fade()} style={styles.panelShadow}>
+              <View style={styles.panel}>
+                {predictions.length === 0 ? (
+                  <View style={styles.panelEmpty}>
+                    <MaterialCommunityIcons name="map-search-outline" size={18} color={C.textLight} />
+                    <Text style={styles.panelEmptyText} maxFontSizeMultiplier={1.3}>
+                      No matching places. Try another search.
+                    </Text>
+                  </View>
+                ) : (
+                  <FlatList
+                    data={predictions}
+                    keyExtractor={(p) => p.place_id}
+                    keyboardShouldPersistTaps="handled"
+                    renderItem={({ item, index }) => (
+                      <ListRow
+                        icon="map-marker-outline"
+                        iconColor={C.textSub}
+                        iconBg="transparent"
+                        title={predictionTitle(item)}
+                        subtitle={item.structured_formatting?.secondary_text || undefined}
+                        titleLines={1}
+                        onPress={() => void handleSelectPrediction(item)}
+                        divider={index < predictions.length - 1}
+                        disabled={picking}
+                      />
+                    )}
+                  />
+                )}
+              </View>
+            </Animated.View>
+          ) : null}
+        </View>
       </View>
 
-      <View
-        style={[
-          styles.bottomSheet,
-          { paddingBottom: Math.max(insets.bottom, 16) + 8 },
-        ]}
-      >
-        <View style={styles.locationInfo}>
-          <MaterialCommunityIcons
-            name="map-marker"
-            size={24}
-            color={T.green}
-          />
-          <View style={styles.locationTextContainer}>
-            {reverseLoading ? (
-              <View accessible accessibilityLabel="Fetching address…">
-                <Skeleton
-                  width="55%"
-                  height={18}
-                  color={T.sand}
-                  style={styles.skeletonName}
-                />
-                <SkeletonText
-                  lines={2}
-                  lineHeight={12}
-                  gap={8}
-                  width="92%"
-                  lastLineWidth="70%"
-                  color={T.sand}
-                />
-              </View>
-            ) : (
-              <>
-                <Text style={styles.locationName} numberOfLines={1}>
-                  {locationName || "Selected Location"}
-                </Text>
-                <Text style={styles.locationAddress} numberOfLines={2}>
-                  {locationAddress || "Pick a place from search or tap on the map"}
-                </Text>
-              </>
-            )}
+      <BottomDock>
+        <Text style={styles.eyebrow} maxFontSizeMultiplier={1.3}>
+          Delivering to
+        </Text>
+        <View style={styles.addressRow}>
+          <MaterialCommunityIcons name="map-marker" size={PIN_ICON} color={C.primary} style={styles.addressIcon} />
+          <View style={styles.addressCol}>
+            {place?.name ? (
+              <Text style={styles.placeName} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+                {place.name}
+              </Text>
+            ) : null}
+            <Animated.Text
+              key={addressText}
+              entering={enter.fade()}
+              exiting={exit.fade()}
+              style={styles.address}
+              numberOfLines={2}
+              maxFontSizeMultiplier={1.3}
+              accessibilityLiveRegion="polite"
+            >
+              {addressText}
+            </Animated.Text>
           </View>
+          {geocoding ? <ActivityIndicator size="small" color={C.primary} /> : null}
         </View>
-
         <PrimaryButton
           size="lg"
-          shadow
-          label="Confirm Location"
-          onPress={handleConfirmLocation}
-          disabled={!locationAddress || reverseLoading}
-          style={styles.confirmBtn}
+          label="Confirm location"
+          onPress={handleConfirm}
+          disabled={!canConfirm}
+          accessibilityLabel={`Confirm location, ${addressText}`}
         />
-      </View>
+      </BottomDock>
     </Screen>
   );
 }
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  header: {
-    borderBottomColor: T.cardBorder,
-  },
-  headerTitle: {
-    color: T.bark,
-  },
-  searchContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: T.white,
-    borderBottomWidth: 1,
-    borderBottomColor: T.cardBorder,
-    // Stack the predictions panel above the map
+  mapArea: { flex: 1, backgroundColor: C.bgSoft },
+  deniedLayer: { backgroundColor: C.card, paddingTop: SEARCH_TOP + SEARCH_HEIGHT },
+  gpsButton: { position: "absolute", right: layout.gutter },
+
+  searchLayer: {
+    position: "absolute",
+    top: SEARCH_TOP,
+    left: layout.gutter,
+    right: layout.gutter,
     zIndex: 10,
     elevation: 10,
   },
-  searchBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    // Fixed height keeps the bar identical on iOS/Android so the absolutely
-    // positioned predictions panel (top: 62 = 12 + 44 + 6) always lines up.
-    height: 44,
-    backgroundColor: T.sand,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    gap: 12,
-  },
-  searchInput: {
-    flex: 1,
-    height: "100%",
-    paddingVertical: 0,
-    fontSize: 15,
-    color: T.bark,
-    fontFamily: "PlusJakartaSans_500Medium",
-  },
-  predictionsPanel: {
-    position: "absolute",
-    left: 16,
-    right: 16,
-    top: 62,
-    maxHeight: 280,
-    backgroundColor: T.white,
-    borderRadius: 12,
+  searchContainer: { backgroundColor: C.card, borderRadius: radius.xl, ...shadow.card },
+  // Fixed height keeps the field identical on iOS/Android so the panel always lines up under it.
+  searchInput: { minHeight: SEARCH_HEIGHT - 2 },
+  searchIcon: { marginRight: 8 },
+  // Shadow on the OUTER view, radius clip on the INNER one (Android drops elevation under overflow hidden — MAP §7.4).
+  panelShadow: { marginTop: PANEL_GAP, borderRadius: radius.xl, backgroundColor: C.card, ...shadow.cardLg },
+  panel: {
+    maxHeight: PANEL_MAX_HEIGHT,
+    borderRadius: radius.xl,
     borderWidth: 1,
-    borderColor: T.cardBorder,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
-    elevation: 12,
-    overflow: "hidden",
+    borderColor: C.border,
+    backgroundColor: C.card,
+    overflow: Platform.OS === "android" ? "hidden" : clipOverflow,
   },
-  predictionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    gap: 12,
-  },
-  predictionMain: { fontFamily: "PlusJakartaSans_700Bold",
-    fontSize: 14,
-    color: T.bark,
-  },
-  predictionSecondary: { fontFamily: "PlusJakartaSans_400Regular",
-    fontSize: 12,
-    color: T.barkMid,
-    marginTop: 2,
-  },
-  predictionDivider: {
-    height: 1,
-    backgroundColor: T.cardBorder,
-    // = predictionRow paddingHorizontal 16 + icon 20 + gap 12
-    marginLeft: 48,
-  },
-  predictionEmpty: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 20,
-  },
-  predictionEmptyText: { fontFamily: "PlusJakartaSans_400Regular",
-    fontSize: 13,
-    color: T.barkMid,
-  },
-  mapContainer: {
-    flex: 1,
-    position: "relative",
-  },
-  map: {
-    flex: 1,
-  },
-  pinWrap: {
-    width: 36,
-    height: 48,
-    alignItems: "center",
-    justifyContent: "flex-start",
-    backgroundColor: "transparent",
-  },
+  panelEmpty: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingHorizontal: 16, paddingVertical: 20 },
+  panelEmptyText: { ...text.bodySm },
+
+  eyebrow: { ...text.eyebrow, marginBottom: 8 },
+  addressRow: { flexDirection: "row", alignItems: "flex-start", gap: 10, marginBottom: 14 },
+  addressIcon: { marginTop: 1 },
+  addressCol: { flex: 1 },
+  placeName: { fontFamily: fontFamily.bold, fontSize: 15, color: C.text, marginBottom: 2 },
+  address: { fontFamily: fontFamily.semibold, fontSize: 14, lineHeight: 20, color: C.text },
+
+  // Legacy marker (Dev_Quartz_inhibit_Feature): the old 3-View pin on the brand green.
+  pinWrap: { width: 36, height: 48, alignItems: "center", justifyContent: "flex-start", backgroundColor: "transparent" },
   pinHead: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: T.pink,
+    backgroundColor: C.primary,
     borderWidth: 3,
-    borderColor: T.white,
+    borderColor: C.white,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3,
-    elevation: 4,
+    ...shadow.cardLg,
   },
-  pinDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: T.white,
-  },
+  pinDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.white },
   pinTail: {
     width: 0,
     height: 0,
@@ -778,92 +664,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 12,
     borderLeftColor: "transparent",
     borderRightColor: "transparent",
-    borderTopColor: T.pink,
+    borderTopColor: C.primary,
     marginTop: -2,
-  },
-  tooltipContainer: {
-    position: "absolute",
-    top: 20,
-    left: 16,
-    right: 16,
-    alignItems: "center",
-  },
-  tooltip: {
-    backgroundColor: "rgba(0, 0, 0, 0.85)",
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 12,
-    maxWidth: "90%",
-  },
-  tooltipTitle: { fontFamily: "PlusJakartaSans_700Bold",
-    fontSize: 15,
-    color: T.white,
-    textAlign: "center",
-    marginBottom: 2,
-  },
-  tooltipSubtitle: { fontFamily: "PlusJakartaSans_500Medium",
-    fontSize: 13,
-    color: "rgba(255, 255, 255, 0.8)",
-    textAlign: "center",
-  },
-  myLocationBtn: {
-    position: "absolute",
-    // Sit just above the bottom sheet, bottom-right.
-    bottom: 16,
-    right: 16,
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: T.pink,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.18,
-    shadowRadius: 6,
-    elevation: 8,
-  },
-  bottomSheet: {
-    backgroundColor: T.white,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    // Fallback; the inline style adds the bottom safe-area inset on top.
-    paddingBottom: 24,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 12,
-  },
-  locationInfo: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    marginBottom: 16,
-    gap: 12,
-  },
-  locationTextContainer: {
-    flex: 1,
-  },
-  locationName: { fontFamily: "PlusJakartaSans_700Bold",
-    fontSize: 18,
-    color: T.bark,
-    marginBottom: 4,
-  },
-  locationAddress: { fontFamily: "PlusJakartaSans_500Medium",
-    fontSize: 14,
-    color: T.barkMid,
-    lineHeight: 20,
-  },
-  skeletonName: {
-    marginBottom: 8,
-  },
-  confirmBtn: {
-    // Screen accent stays pink; the primitive supplies geometry/type/shadow.
-    backgroundColor: T.pink,
-    borderRadius: 14,
-    shadowColor: T.pink,
-    shadowOpacity: 0.18,
   },
 });

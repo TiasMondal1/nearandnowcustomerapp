@@ -1,35 +1,32 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+// Tax invoice: seeds the order from `peekOrder(id)` (refreshed through `getOrderById`), then fetches the real
+// backend-generated invoice (`/api/invoices/order/:id/customer` — proper HSN/GST math, auto-generated on first
+// access) and offers Open / Share. The invoice endpoint is only called once the order is eligible
+// (`isInvoiceAvailable`), so an ineligible order shows "Invoice not ready yet" instead of a 409.
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useCallback, useEffect, useState } from "react";
-import {
-    ActivityIndicator,
-    Alert,
-    Linking,
-    ScrollView,
-    Share,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
-} from "react-native";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Linking, ScrollView, Share, StyleSheet, Text, View } from "react-native";
 
 import {
-    Card,
-    EmptyState,
-    IconButton,
-    IconWrap,
-    Screen,
-    ScreenHeader,
-    Skeleton,
-    SkeletonCircle,
+  EmptyState,
+  IconButton,
+  IconWrap,
+  notify,
+  PrimaryButton,
+  Screen,
+  ScreenHeader,
+  Skeleton,
+  SkeletonCircle,
+  SkeletonScreen,
 } from "../../../components/ui";
 import { C } from "../../../constants/colors";
-import { text } from "../../../constants/ui";
+import { fontFamily, layout, radius, text } from "../../../constants/ui";
+import { useForceSkeleton, useSlowLoad } from "../../../hooks/useSlowLoad";
 import { apiFetch } from "../../../lib/apiClient";
+import { formatMoney } from "../../../lib/formatMoney";
+import { isInvoiceAvailable } from "../../../lib/invoiceEligibility";
 import { logError } from "../../../lib/logError";
 import { logSilentFailure } from "../../../lib/logSilentFailure";
-import { getUserOrders, type Order } from "../../../lib/orderService";
-import { useAuth } from "../../../context/AuthContext";
+import { getOrderById, peekOrder, type Order } from "../../../lib/orderService";
 
 interface InvoiceResponse {
   success: boolean;
@@ -40,269 +37,259 @@ interface InvoiceResponse {
   grand_total?: number;
 }
 
-function formatInvoiceDate(isoDate: string): string {
-  const date = new Date(isoDate);
-  return date.toLocaleDateString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
+const SKELETON_LINES = [0, 1, 2, 3] as const;
+
+/** "01 Oct 2026" — hand-rolled so no Intl runs; computed once per invoice (memo), never per render. */
+function formatInvoiceDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const day = d.getDate();
+  return `${day < 10 ? "0" : ""}${day} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 }
 
 export default function InvoiceScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
-  const { userId } = useAuth();
+  const params = useLocalSearchParams<{ id: string }>();
+  const orderId = typeof params.id === "string" ? params.id : "";
 
-  const [order, setOrder] = useState<Order | null>(null);
+  const [order, setOrder] = useState<Order | null>(() => peekOrder(orderId) ?? null);
   const [invoice, setInvoice] = useState<InvoiceResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [notReady, setNotReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [opening, setOpening] = useState(false);
+  const seqRef = useRef(0);
 
   const load = useCallback(async () => {
-    if (!id) return;
+    if (!orderId) return;
+    const seq = ++seqRef.current;
     setLoading(true);
     setError(null);
+    setNotReady(false);
     try {
-      // Real backend-generated tax invoice (proper HSN/GST math), not a
-      // client-side approximation — auto-generates on first access if this
-      // order's invoice PDF doesn't exist yet.
-      const [invoiceData, orders] = await Promise.all([
-        apiFetch<InvoiceResponse>(`/api/invoices/order/${id}/customer`),
-        userId ? getUserOrders(userId) : Promise.resolve<Order[]>([]),
-      ]);
-      setInvoice(invoiceData);
-      setOrder(orders.find((o) => o.id === id) ?? null);
-    } catch (err: any) {
+      // Order first (memory seed or a single-order fetch — never the whole history, MAP P8).
+      let current = peekOrder(orderId) ?? null;
+      if (current) {
+        setOrder(current);
+        // Background refresh keeps the order number / status current without blocking the invoice.
+        getOrderById(orderId)
+          .then((fresh) => {
+            if (seq === seqRef.current) setOrder(fresh);
+          })
+          .catch((err) => logSilentFailure("Refresh order for invoice", err));
+      } else {
+        current = await getOrderById(orderId);
+        if (seq !== seqRef.current) return;
+        setOrder(current);
+      }
+
+      if (!isInvoiceAvailable(current)) {
+        setInvoice(null);
+        setNotReady(true);
+        return;
+      }
+
+      const data = await apiFetch<InvoiceResponse>(`/api/invoices/order/${encodeURIComponent(orderId)}/customer`);
+      if (seq !== seqRef.current) return;
+      setInvoice(data);
+    } catch (err) {
+      if (seq !== seqRef.current) return;
       logError("Load invoice", err);
-      setError(err?.message || "Failed to load invoice");
+      setError(err instanceof Error ? err.message : "Couldn't load the invoice");
     } finally {
-      setLoading(false);
+      if (seq === seqRef.current) setLoading(false);
     }
-  }, [id, userId]);
+  }, [orderId]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  const handleOpen = async () => {
-    if (!invoice?.url) return;
+  const invoiceDate = useMemo(() => (invoice?.invoice_date ? formatInvoiceDate(invoice.invoice_date) : ""), [invoice?.invoice_date]);
+  const grandTotal = invoice?.grand_total != null ? formatMoney(invoice.grand_total, { decimals: 2 }) : null;
+
+  const handleOpen = useCallback(async () => {
+    if (!invoice?.url || opening) return;
     setOpening(true);
     try {
       const supported = await Linking.canOpenURL(invoice.url);
       if (!supported) throw new Error("No app available to open this invoice");
       await Linking.openURL(invoice.url);
-    } catch (err: any) {
-      Alert.alert("Error", err?.message || "Failed to open invoice");
+    } catch (err) {
+      logError("Open invoice", err);
+      notify({
+        id: "invoice-open",
+        tone: "error",
+        title: "Couldn't open the invoice",
+        message: err instanceof Error ? err.message : undefined,
+      });
     } finally {
       setOpening(false);
     }
-  };
+  }, [invoice?.url, opening]);
 
-  const handleShare = async () => {
+  const handleShare = useCallback(async () => {
     if (!invoice) return;
     try {
       await Share.share({
-        message: `Invoice ${invoice.invoice_number ?? ""} for order ${
-          order?.order_number ?? id
-        }${invoice.grand_total != null ? ` — ₹${invoice.grand_total.toFixed(2)}` : ""}\n${invoice.url}`,
+        message: `Invoice ${invoice.invoice_number ?? ""} for order ${order?.order_number ?? orderId}${
+          grandTotal ? ` — ${grandTotal}` : ""
+        }\n${invoice.url}`,
         title: invoice.invoice_number || "Invoice",
       });
     } catch (err) {
-      // Also fires on a plain user-cancelled share sheet, not just a real
-      // failure — no UI change either way, matches the fire-and-forget case.
+      // Also fires on a plain user-cancelled share sheet, not just a real failure — no UI change either way.
       logSilentFailure("Share invoice", err);
     }
-  };
+  }, [invoice, order?.order_number, orderId, grandTotal]);
 
-  if (loading) {
+  // ─── States ────────────────────────────────────────────────────────────────
+  const showSkeleton = useForceSkeleton(loading && !invoice && !notReady);
+  const slow = useSlowLoad(showSkeleton);
+
+  if (showSkeleton) {
     return (
-      <Screen>
-        <ScreenHeader title="Tax Invoice" align="left" onBack={() => router.back()} />
-        <View style={styles.content} accessible accessibilityLabel="Loading invoice">
-          <Card shadow="card" style={styles.summaryCard}>
+      <Screen bg={C.card}>
+        <ScreenHeader title="Tax invoice" backFallbackHref="/orders" />
+        <SkeletonScreen label="Loading invoice" style={styles.content}>
+          <View style={styles.hero}>
             <SkeletonCircle size={72} />
-            <View style={styles.rows}>
-              {[0, 1, 2, 3].map((i) => (
-                <View key={i} style={styles.summaryRow}>
-                  <Skeleton width={90} height={12} />
-                  <Skeleton width={120} height={12} />
-                </View>
-              ))}
-            </View>
-            <Skeleton width="70%" height={10} style={styles.hintSkeleton} />
-          </Card>
-          <View style={styles.actions}>
-            <Skeleton height={48} radius={12} style={styles.actionSkeleton} />
-            <Skeleton height={48} radius={12} style={styles.actionSkeleton} />
+            <Skeleton width={160} height={16} />
           </View>
-        </View>
+          <View style={styles.rows}>
+            {SKELETON_LINES.map((i) => (
+              <View key={i} style={styles.row}>
+                <Skeleton width={90} height={12} />
+                <Skeleton width={120} height={12} />
+              </View>
+            ))}
+          </View>
+          <View style={styles.actions}>
+            <Skeleton height={48} radius={radius.xl} style={styles.flex1} />
+            <Skeleton height={48} radius={radius.xl} style={styles.flex1} />
+          </View>
+        </SkeletonScreen>
+        {slow ? (
+          <View style={styles.slowWrap}>
+            <Text style={styles.slowText}>Still loading… check your connection</Text>
+            <PrimaryButton size="xs" variant="ghost" label="Retry" onPress={load} />
+          </View>
+        ) : null}
+      </Screen>
+    );
+  }
+
+  if (notReady) {
+    return (
+      <Screen bg={C.card}>
+        <ScreenHeader title="Tax invoice" backFallbackHref="/orders" />
+        <EmptyState
+          fill
+          iconWrap
+          icon="file-document-outline"
+          title="Invoice not ready yet"
+          text="Available once the order is delivered"
+          action={{ label: "Back to order", onPress: () => router.replace(`/order/${orderId}`) }}
+        />
       </Screen>
     );
   }
 
   if (error || !invoice) {
     return (
-      <Screen>
-        <ScreenHeader title="Tax Invoice" align="left" onBack={() => router.back()} />
+      <Screen bg={C.card}>
+        <ScreenHeader title="Tax invoice" backFallbackHref="/orders" />
         <EmptyState
           fill
+          tone="error"
           icon="file-alert-outline"
-          iconSize={64}
-          iconColor={C.danger}
-          title={error || "Invoice not found"}
-          action={{ label: "Go Back", onPress: () => router.back() }}
+          title="Couldn't load the invoice"
+          text={error ?? undefined}
+          action={{ label: "Retry", icon: "refresh", onPress: load }}
         />
       </Screen>
     );
   }
 
   return (
-    <Screen>
+    <Screen bg={C.card}>
       <ScreenHeader
-        title="Tax Invoice"
+        title="Tax invoice"
         subtitle={invoice.invoice_number}
-        align="left"
-        onBack={() => router.back()}
+        backFallbackHref="/orders"
         right={
-          <IconButton
-            icon="share-variant"
-            iconSize={20}
-            bg={C.primaryLight}
-            color={C.primary}
-            accessibilityLabel="Share invoice"
-            onPress={handleShare}
-          />
+          <IconButton icon="share-variant" iconSize={20} accessibilityLabel="Share invoice" onPress={handleShare} />
         }
       />
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <Card shadow="card" style={styles.summaryCard}>
-          <IconWrap size={72} radius={20} icon="file-document-outline" iconSize={36} />
-
-          <View style={styles.rows}>
-            {invoice.invoice_number && (
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Invoice Number</Text>
-                <Text style={styles.summaryValue}>{invoice.invoice_number}</Text>
-              </View>
-            )}
-            {invoice.invoice_date && (
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Date</Text>
-                <Text style={styles.summaryValue}>{formatInvoiceDate(invoice.invoice_date)}</Text>
-              </View>
-            )}
-            {order?.order_number && (
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Order</Text>
-                <Text style={styles.summaryValue}>#{order.order_number}</Text>
-              </View>
-            )}
-            {invoice.grand_total != null && (
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Total Amount</Text>
-                <Text style={styles.grandTotalValue}>₹{invoice.grand_total.toFixed(2)}</Text>
-              </View>
-            )}
-          </View>
-
-          <Text style={styles.hint}>
-            Your full tax invoice, with itemized GST breakdown, is ready as a PDF.
+        <View style={styles.hero}>
+          <IconWrap size={72} radius={radius.xxxl} icon="file-document-outline" iconSize={36} />
+          <Text style={styles.heroTitle} maxFontSizeMultiplier={1.3}>
+            Your tax invoice is ready
           </Text>
-        </Card>
+          <Text style={styles.hint}>Full itemised GST breakdown as a PDF</Text>
+        </View>
 
-        {/* Action Buttons — kept local: the download button swaps its icon for a spinner
-            while the label stays visible, which PrimaryButton's `loading` mode does not do. */}
+        <View style={styles.rows}>
+          {invoice.invoice_number ? <SummaryRow label="Invoice number" value={invoice.invoice_number} /> : null}
+          {invoiceDate ? <SummaryRow label="Date" value={invoiceDate} /> : null}
+          {order?.order_number ? <SummaryRow label="Order" value={`#${order.order_number}`} /> : null}
+          {grandTotal ? <SummaryRow label="Total amount" value={grandTotal} strong last /> : null}
+        </View>
+
         <View style={styles.actions}>
-          <TouchableOpacity
-            style={[styles.actionBtn, styles.downloadBtn, opening && styles.actionBtnDisabled]}
+          <PrimaryButton
+            label="Open invoice"
+            icon="file-pdf-box"
+            loading={opening}
             onPress={handleOpen}
-            activeOpacity={0.8}
-            disabled={opening}
-            accessibilityRole="button"
-            accessibilityState={{ disabled: opening, busy: opening }}
-          >
-            {opening ? (
-              <ActivityIndicator size="small" color={C.card} />
-            ) : (
-              <MaterialCommunityIcons name="file-pdf-box" size={20} color={C.card} />
-            )}
-            <Text style={styles.actionBtnText}>View / Download PDF</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.actionBtn, styles.shareActionBtn]}
+            style={styles.flex1}
+            accessibilityLabel={`Open invoice ${invoice.invoice_number ?? ""} as a PDF`}
+          />
+          <PrimaryButton
+            label="Share"
+            icon="share-variant"
+            variant="outline"
             onPress={handleShare}
-            activeOpacity={0.8}
-            accessibilityRole="button"
-          >
-            <MaterialCommunityIcons name="share-variant" size={20} color={C.card} />
-            <Text style={styles.actionBtnText}>Share</Text>
-          </TouchableOpacity>
+            style={styles.flex1}
+            accessibilityLabel={`Share invoice ${invoice.invoice_number ?? ""}`}
+          />
         </View>
       </ScrollView>
     </Screen>
   );
 }
 
+function SummaryRow({ label, value, strong, last }: { label: string; value: string; strong?: boolean; last?: boolean }) {
+  return (
+    <View style={[styles.row, !last && styles.rowBorder]}>
+      <Text style={styles.rowLabel}>{label}</Text>
+      {/* Values wrap instead of truncating — an invoice number must stay fully readable. */}
+      <Text style={[styles.rowValue, strong && styles.rowValueStrong]} selectable>
+        {value}
+      </Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  // flexGrow (not flex) so the card stays centered on tall screens and scrolls on short ones.
-  content: { flexGrow: 1, padding: 16, justifyContent: "center" },
+  flex1: { flex: 1 },
+  // flexGrow (not flex) so the block stays centred on tall screens and scrolls on short ones.
+  content: { flexGrow: 1, padding: layout.gutter, justifyContent: "center", gap: 24 },
+  slowWrap: { alignItems: "center", gap: 6, paddingVertical: 12 },
+  slowText: { ...text.caption, textAlign: "center" },
 
-  summaryCard: {
-    padding: 24,
-    alignItems: "center",
-    gap: 12,
-  },
+  hero: { alignItems: "center", gap: 12 },
+  heroTitle: { ...text.sectionTitleLg, textAlign: "center" },
+  hint: { ...text.bodySm, textAlign: "center" },
+
   rows: { alignSelf: "stretch" },
-  summaryRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: C.borderSoft,
-  },
-  summaryLabel: { color: C.textSub, fontSize: 13, fontFamily: "PlusJakartaSans_600SemiBold", flexShrink: 0 },
-  // Values wrap instead of truncating — an invoice number must stay fully readable.
-  summaryValue: { fontFamily: "PlusJakartaSans_700Bold", color: C.text, fontSize: 14, flexShrink: 1, marginLeft: 12, textAlign: "right" },
-  grandTotalValue: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.primary, fontSize: 16, flexShrink: 1, marginLeft: 12, textAlign: "right" },
-  hint: { fontFamily: "PlusJakartaSans_400Regular",
-    color: C.textLight,
-    fontSize: 12,
-    textAlign: "center",
-    marginTop: 8,
-  },
-  hintSkeleton: { marginTop: 8 },
+  row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 12, gap: 12 },
+  rowBorder: { borderBottomWidth: 1, borderBottomColor: C.border },
+  rowLabel: { ...text.label, flexShrink: 0 },
+  rowValue: { fontFamily: fontFamily.bold, fontSize: 14, color: C.text, flexShrink: 1, textAlign: "right", fontVariant: ["tabular-nums"] },
+  rowValueStrong: { fontFamily: fontFamily.extrabold, fontSize: 16 },
 
-  actions: {
-    flexDirection: "row",
-    gap: 12,
-    marginTop: 24,
-  },
-  actionSkeleton: { flex: 1 },
-  actionBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    paddingVertical: 14,
-    borderRadius: 12,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  actionBtnDisabled: { opacity: 0.7 },
-  downloadBtn: {
-    backgroundColor: C.primary,
-    shadowColor: C.primary,
-  },
-  shareActionBtn: {
-    backgroundColor: C.success,
-    shadowColor: C.success,
-  },
-  actionBtnText: { ...text.buttonSm },
+  actions: { flexDirection: "row", gap: 12 },
 });

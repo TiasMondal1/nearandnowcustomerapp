@@ -1,1108 +1,1189 @@
+// codename: vega
+// Order again — one vertical FlashList (W2-order-again · CONTRACTS §4.9/§4.11/§3.1/§2.17 · design/blinkit-parity §3.3,
+// BP-05, BP-11, BP-21 · speed-and-ease 14 / 19). Item kinds: hero (TabHeader) · lastOrder ("Your last order · Add all")
+// · chips (category filter strip with thumbs) · group (scope header + "See all") · gridRow (two ProductCard grid cells)
+// · legacy (an item that left the catalog → quiet "Find similar" row) · end ("Show more" paging or the end stamp) ·
+// empty (no history / error, both on EmptyState). Data: memory/disk order seed → getUserOrders (cached 20 s, deduped
+// with Home) after interactions; the catalog comes from the Home cache (memory, then disk) and is matched by master id
+// first, then by a name index built once per catalog identity; category slugs resolve from the cached categories
+// (MAP C15) so "See all" never 404s. Feedback: Add all → cartActions.addMany silent + ONE feedback.add() + a toast
+// with Undo (silent); chips → Chip's own select haptic; pull-to-refresh → tapSound; everything that only navigates is
+// silent. Nothing here subscribes to the whole cart — each ProductCard's Stepper subscribes to its own quantity.
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
 import { Image } from "expo-image";
-import { router } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { router, useFocusEffect } from "expo-router";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-    FlatList,
-    InteractionManager,
-    Pressable,
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
-    type PressableStateCallbackType,
+  FlatList,
+  InteractionManager,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+  type ListRenderItemInfo as RailRenderItemInfo,
 } from "react-native";
 
-import { LinearGradient } from "expo-linear-gradient";
-
 import {
-    DoodleBackdrop,
-    IconWrap,
-    PAGE_WALLPAPER_DOODLES,
-    PrimaryButton,
-    Screen,
-    Skeleton,
-    SoftPanel,
-    TAB_HEADER_DOODLES,
+  Chip,
+  EmptyState,
+  notify,
+  PressableScale,
+  PrimaryButton,
+  ProductCard,
+  Screen,
+  Skeleton,
+  SkeletonProductCard,
+  SkeletonScreen,
+  TabHeader,
+  useCartBarFootprint,
 } from "../../components/ui";
+import { CATEGORY_GROUPS, DEFAULT_GROUP, getGroupForCategoryName } from "../../constants/categoryGroups";
 import { C } from "../../constants/colors";
-import {
-    CATEGORY_GROUPS,
-    DEFAULT_GROUP,
-    getGroupForCategoryName,
-} from "../../constants/categoryGroups";
-import { HIT_SLOP, opacity } from "../../constants/ui";
+import { fontFamily, HIT_SLOP, layout, motion, radius, text } from "../../constants/ui";
 import { useAuth } from "../../context/AuthContext";
-import { useCart, useCartItemMap, type CartItem } from "../../context/CartContext";
+import { cartActions, getCartSnapshot } from "../../context/CartContext";
+import { useLocation } from "../../context/LocationContext";
+import { useProfileMenu } from "../../context/ProfileMenuContext";
+import { useRefetchOnReconnect } from "../../hooks/useRefetchOnReconnect";
+import { useForceSkeleton, useSlowLoad } from "../../hooks/useSlowLoad";
+import { getAllCategories, peekCategories, resolveCategorySlug, type Category } from "../../lib/categoryService";
+import { getDevFlag, useDevFlag } from "../../lib/devFlags";
+import { feedback } from "../../lib/feedback";
+import { formatMoney } from "../../lib/formatMoney";
 import { cdnImage } from "../../lib/imageUrl";
+import { logSilentFailure } from "../../lib/logSilentFailure";
 import {
-    buildOrderAgainItems,
-    getUserOrders,
-    readUserOrdersCache,
-    type Order,
-    type OrderAgainItem,
+  buildOrderAgainItems,
+  buildReorderItems,
+  getMemoryOrders,
+  getUserOrders,
+  readUserOrdersCache,
+  type Order,
+  type OrderAgainItem,
+  type ReorderItem,
 } from "../../lib/orderService";
 import {
-    getMemoryHomeCache,
-    readHomeCatalogCache,
-    type Product,
+  getCachedProduct,
+  getMemoryHomeCache,
+  readHomeCatalogCache,
+  type HomeCatalogCache,
+  type Product,
 } from "../../lib/productService";
 
-// ─── Design tokens ────────────────────────────────────────────────────────────
-const T = {
-  green: "#2D7A4F",
-  // Terracotta deal accent — mirrors C.deal in constants/colors.ts; deals only.
-  deal: "#EA580C",
-  greenXLight: "#EAF6EE",
-  // Header-band gradient top stop — same as home's T.greenWash.
-  greenWash: "#D6EDE0",
-  greenBorder: "rgba(45,122,79,0.15)",
-  white: "#FFFFFF",
-  bg: "#F7F6F2",
-  bark: "#3C2F1E",
-  barkLight: "#A89282",
-  cardBorder: "rgba(60,47,30,0.07)",
-  cardShadow: "rgba(0,0,0,0.06)",
-};
+// ─── Constants ────────────────────────────────────────────────────────────────
 
-// Extra reach for the compact ADD chip so the effective target clears 44pt.
-const ADD_HIT_SLOP = { top: 8, bottom: 8, left: 6, right: 6 };
-const SKELETON_CARDS = [0, 1, 2];
-const SKELETON_CHIPS = [0, 1, 2, 3];
+/**
+ * The grid renders a growing window instead of mounting every distinct previously-bought product at once: a
+ * long-tenured customer's full history would otherwise mount hundreds of image cards (MAP P10). FlashList
+ * virtualises what is in the window; the window itself grows by "Show more".
+ */
+const GRID_PAGE_SIZE = 24;
+/** Legacy (non-catalog) items and products without a category land here, as before. */
+const OTHERS_CATEGORY = "Others";
+/** Overlapping thumbs on the last-order card (design BP-21: 3 × 40 px). */
+const LAST_ORDER_THUMBS = 3;
+const THUMB_SIZE = 40;
+const THUMB_OVERLAP = 12;
+const LEGACY_THUMB_SIZE = 44;
+/** Width hints for `cdnImage` (≈ rendered px × 3). */
+const IMAGE_WIDTH = { chip: 72, thumb: 120 } as const;
+/** One toast id so a second "Add all" replaces the first instead of stacking. */
+const REORDER_TOAST_ID = "reorder-last-order";
+const REFRESH_ERROR_TOAST_ID = "order-again-refresh-error";
+const SKELETON_CHIPS = [0, 1, 2, 3] as const;
+const SKELETON_THUMBS = [0, 1, 2] as const;
+const NO_STICKY: number[] = [];
 
-const cardPressStyle = ({ pressed }: PressableStateCallbackType) => [
-  styles.pressFill,
-  pressed && styles.pressed,
-];
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-// ─── Interfaces ────────────────────────────────────────────────────────────────
-interface DisplayItem {
+/** A previously bought item, either matched to a live catalog product or left as a legacy name. */
+type DisplayItem =
+  | { kind: "catalog"; key: string; product: Product; category: string }
+  | { kind: "legacy"; key: string; name: string; unit?: string; image?: string; category: string };
+
+type ChipDef = {
   key: string;
-  name: string;
-  price: number;
-  originalPrice?: number;
-  image?: string;
-  unit?: string;
-  category: string;
-  product?: Product;
-  purchasable: boolean;
-  addableId?: string;
-  totalQty: number;
-}
-
-type CategoryChipDef = {
-  name: string;
-  count: number;
-  imageUrl?: string;
+  /** null = the "All" chip. */
+  name: string | null;
+  label: string;
+  /** Precomputed 24 px thumb (the first image in that category), so the strip never maps images per render. */
+  thumbUri?: string;
 };
 
-// ─── Product Card ─────────────────────────────────────────────────────────────
-const ProductCard = React.memo(
-  function ProductCard({
-    p,
-    cartItem,
-    onAdd,
-    onUpdateQty,
-    width,
-  }: {
-    p: Product;
-    cartItem: CartItem | undefined;
-    onAdd: (p: Product) => void;
-    onUpdateQty: (p: Product, delta: number) => void;
-    width?: number;
-  }) {
-    const hasDiscount = p.original_price != null && p.original_price > p.price;
-    const discountPct = hasDiscount
-      ? Math.round(((p.original_price! - p.price) / p.original_price!) * 100)
-      : 0;
-
-    const handleOpen = useCallback(() => { router.push(`/product/${p.id}` as any); }, [p.id]);
-    const handleAdd = useCallback(() => onAdd(p), [onAdd, p]);
-    const handleMinus = useCallback(() => onUpdateQty(p, -1), [onUpdateQty, p]);
-    const handlePlus = useCallback(() => onUpdateQty(p, 1), [onUpdateQty, p]);
-
-    return (
-      <View style={[styles.card, width ? { width } : undefined]}>
-        <Pressable
-          onPress={handleOpen}
-          style={cardPressStyle}
-          accessibilityRole="button"
-          accessibilityLabel={p.name}
-        >
-          <View style={styles.imageWrap}>
-            {p.image_url ? (
-              <Image
-                source={{ uri: cdnImage(p.image_url, 280) }}
-                style={styles.cardImage}
-                contentFit="contain"
-                cachePolicy="memory-disk"
-                transition={120}
-                recyclingKey={p.id}
-                priority="low"
-              />
-            ) : (
-              <MaterialCommunityIcons name="image-off-outline" size={30} color={T.barkLight} />
-            )}
-            {hasDiscount && (
-              <View style={styles.discountBadge}>
-                <Text style={styles.discountBadgeText}>{discountPct}% OFF</Text>
-              </View>
-            )}
-          </View>
-          <View style={styles.cardBody}>
-            {p.unit ? <Text style={styles.unitText} numberOfLines={1}>{p.unit}</Text> : null}
-            <Text style={styles.nameText} numberOfLines={2}>{p.name}</Text>
-            <View style={styles.priceRow}>
-              <View style={{ flexShrink: 1 }}>
-                <Text style={styles.priceText}>₹{p.price}</Text>
-                {hasDiscount && (
-                  <Text style={styles.oldPriceText}>₹{p.original_price}</Text>
-                )}
-              </View>
-              {cartItem ? (
-                <View style={styles.qtyBox}>
-                  <TouchableOpacity
-                    style={styles.qtyBtn}
-                    onPress={handleMinus}
-                    hitSlop={HIT_SLOP}
-                    activeOpacity={opacity.pressIcon}
-                    accessibilityRole="button"
-                    accessibilityLabel="Decrease quantity"
-                  >
-                    <MaterialCommunityIcons name="minus" size={14} color={T.white} />
-                  </TouchableOpacity>
-                  <Text style={styles.qtyVal}>{cartItem.quantity}</Text>
-                  <TouchableOpacity
-                    style={styles.qtyBtn}
-                    onPress={handlePlus}
-                    hitSlop={HIT_SLOP}
-                    activeOpacity={opacity.pressIcon}
-                    accessibilityRole="button"
-                    accessibilityLabel="Increase quantity"
-                  >
-                    <MaterialCommunityIcons name="plus" size={14} color={T.white} />
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                <TouchableOpacity
-                  style={styles.addBtn}
-                  onPress={handleAdd}
-                  hitSlop={ADD_HIT_SLOP}
-                  activeOpacity={opacity.pressCta}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Add ${p.name}`}
-                >
-                  <Text style={styles.addBtnText}>ADD</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          </View>
-        </Pressable>
-      </View>
-    );
-  },
-  (prev, next) =>
-    prev.p === next.p &&
-    prev.cartItem === next.cartItem &&
-    prev.onAdd === next.onAdd &&
-    prev.onUpdateQty === next.onUpdateQty &&
-    prev.width === next.width,
-);
-
-const LegacyItemCard = React.memo(function LegacyItemCard({
-  item,
-  width,
-}: {
-  item: DisplayItem;
-  width?: number;
-}) {
-  const onPress = useCallback(() => {
-    router.push({ pathname: "/support/search" as any, params: { q: item.name } });
-  }, [item.name]);
-
-  return (
-    <Pressable
-      style={({ pressed }) => [styles.card, width ? { width } : undefined, pressed && styles.pressed]}
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={`Find ${item.name}`}
-    >
-      <View style={styles.imageWrap}>
-        {item.image ? (
-          <Image
-            source={{ uri: cdnImage(item.image, 280) }}
-            style={styles.cardImage}
-            contentFit="contain"
-            cachePolicy="memory-disk"
-            transition={120}
-            recyclingKey={item.key}
-            priority="low"
-          />
-        ) : (
-          <MaterialCommunityIcons name="image-off-outline" size={30} color={T.barkLight} />
-        )}
-      </View>
-      <View style={styles.cardBody}>
-        {item.unit ? <Text style={styles.unitText} numberOfLines={1}>{item.unit}</Text> : null}
-        <Text style={styles.nameText} numberOfLines={2}>{item.name}</Text>
-        <View style={styles.priceRow}>
-          <Text style={styles.priceText}>₹{item.price}</Text>
-          <View style={styles.findBtn}>
-            <MaterialCommunityIcons name="magnify" size={12} color={T.green} />
-            <Text style={styles.findBtnText}>FIND</Text>
-          </View>
-        </View>
-      </View>
-    </Pressable>
-  );
-});
-
-// ─── Category chip ────────────────────────────────────────────────────────────
-const CategoryChip = React.memo(function CategoryChip({
-  title,
-  count,
-  sampleImages,
-  onPress,
-}: {
+type HeroItem = {
+  kind: "hero";
+  key: "hero";
+  showAvatar: boolean;
+  unread: boolean;
+  addressLabel: string | null;
+  addressLine: string | null;
+  avatarInitial: string | undefined;
+};
+type LastOrderItem = {
+  kind: "lastOrder";
+  key: "last-order";
+  order: Order;
+  thumbs: string[];
+  itemCount: number;
+  totalLabel: string;
+  whenLabel: string;
+  orderNumber: string | null;
+};
+type ChipsItem = { kind: "chips"; key: "chips"; chips: ChipDef[]; active: string | null };
+type GroupItem = {
+  kind: "group";
+  key: string;
   title: string;
   count: number;
-  sampleImages: (string | undefined)[];
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      style={({ pressed }) => [styles.chip, pressed && styles.chipPressed]}
-    >
-      <View style={styles.chipImgWrap}>
-        <View style={styles.chipImgRow}>
-          {sampleImages.slice(0, 2).map((src, i) =>
-            src ? (
-              <Image
-                key={`${src}-${i}`}
-                source={{ uri: cdnImage(src, 120) }}
-                style={styles.chipImg}
-                contentFit="cover"
-                cachePolicy="memory-disk"
-                transition={100}
-                priority="low"
-              />
-            ) : (
-              <View key={`ph-${i}`} style={[styles.chipImg, { alignItems: "center", justifyContent: "center" }]}>
-                <MaterialCommunityIcons name="basket-outline" size={16} color={T.green} />
-              </View>
-            ),
-          )}
-        </View>
-        {count > 2 && (
-          <View style={styles.chipBadge}>
-            <Text style={styles.chipBadgeText}>+{count - 2}</Text>
-          </View>
-        )}
-      </View>
-      <Text style={styles.chipLabel} numberOfLines={2}>{title}</Text>
-      <Text style={styles.chipCount}>{count} item{count !== 1 ? "s" : ""}</Text>
-    </Pressable>
-  );
-});
+  seeAllSlug: string | null;
+  seeAllName: string | null;
+};
+type GridRowItem = { kind: "gridRow"; key: string; left: Product; right: Product | null };
+type LegacyItem = { kind: "legacy"; key: string; name: string; unit?: string; image?: string };
+type EndItem = { kind: "end"; key: "end"; remaining: number };
+type EmptyItem = { kind: "empty"; key: "empty"; variant: "none" | "error"; message?: string };
 
-// ─── Section header ───────────────────────────────────────────────────────────
-function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }) {
+type OrderAgainListItem =
+  | HeroItem
+  | LastOrderItem
+  | ChipsItem
+  | GroupItem
+  | GridRowItem
+  | LegacyItem
+  | EndItem
+  | EmptyItem;
+
+type CatalogIndex = {
+  identity: HomeCatalogCache | null;
+  byId: Map<string, Product>;
+  byName: Map<string, Product[]>;
+};
+
+type CatalogState = { cache: HomeCatalogCache | null; resolved: boolean };
+
+// ─── Module-level list helpers (stable identities for FlashList) ──────────────
+
+const keyExtractor = (item: OrderAgainListItem): string => item.key;
+/** Recycles cells by kind — every kind has a different box model. */
+const getItemType = (item: OrderAgainListItem): string => item.kind;
+const chipKeyExtractor = (chip: ChipDef): string => chip.key;
+
+const goToSelectLocation = () => {
+  router.push({ pathname: "/select-location", params: { returnTo: "/(tabs)/order-again" } });
+};
+const goToSignIn = () => {
+  router.push("/phone");
+};
+// A tab switch, not a replace: REPLACE targeted at a sibling tab is swallowed by the tab router (W3 R6-02).
+const goToHome = () => {
+  router.navigate("/(tabs)/home");
+};
+
+const EMPTY_CATEGORIES: Category[] = [];
+const EMPTY_DISPLAY_ITEMS: DisplayItem[] = [];
+const EMPTY_INDEX: CatalogIndex = { identity: null, byId: new Map(), byName: new Map() };
+
+// ─── Pure helpers ─────────────────────────────────────────────────────────────
+
+function normalise(value: string | undefined | null): string {
+  return (value || "").trim().toLowerCase();
+}
+
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
+}
+
+function createdAtMs(order: Order): number {
+  const t = Date.parse(order.created_at);
+  return Number.isFinite(t) ? t : 0;
+}
+
+/** "today" · "yesterday" · "3 days ago" · "2 weeks ago" · "12 Aug" — short enough for the meta line. */
+function describeWhen(iso: string, now: number): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "";
+  const days = Math.floor((now - t) / 86_400_000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days} days ago`;
+  if (days < 30) {
+    const weeks = Math.floor(days / 7);
+    return weeks === 1 ? "last week" : `${weeks} weeks ago`;
+  }
+  return new Date(t).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+}
+
+/** One pass over the catalog: id → product and nameKey → products (speed-and-ease 14: built once per catalog identity). */
+function buildCatalogIndex(cache: HomeCatalogCache | null): CatalogIndex {
+  if (!cache) return EMPTY_INDEX;
+  const byId = new Map<string, Product>();
+  const byName = new Map<string, Product[]>();
+  for (const p of cache.products) {
+    byId.set(p.id, p);
+    const nameKey = normalise(p.name);
+    if (!nameKey) continue;
+    const bucket = byName.get(nameKey);
+    if (bucket) bucket.push(p);
+    else byName.set(nameKey, [p]);
+  }
+  return { identity: cache, byId, byName };
+}
+
+/** Same unit wins; otherwise the first product with that name (the pre-rewrite fallback order). */
+function matchByName(index: CatalogIndex, item: OrderAgainItem): Product | undefined {
+  const candidates = index.byName.get(normalise(item.name));
+  if (!candidates || candidates.length === 0) return undefined;
+  const unitKey = normalise(item.unit);
+  if (!unitKey) return candidates[0];
+  return candidates.find((p) => normalise(p.unit) === unitKey) ?? candidates[0];
+}
+
+/** Distinct previously-bought items, deduplicated by catalog id, in `buildOrderAgainItems` order (most recent first). */
+function buildDisplayItems(orders: Order[] | null, index: CatalogIndex): DisplayItem[] {
+  if (!orders || orders.length === 0) return EMPTY_DISPLAY_ITEMS;
+  const orderItems = buildOrderAgainItems(orders);
+  if (orderItems.length === 0) return EMPTY_DISPLAY_ITEMS;
+
+  const seen = new Set<string>();
+  const out: DisplayItem[] = [];
+  for (const it of orderItems) {
+    const product = (it.masterProductId ? index.byId.get(it.masterProductId) : undefined) ?? matchByName(index, it);
+    if (product) {
+      if (seen.has(product.id)) continue;
+      seen.add(product.id);
+      out.push({ kind: "catalog", key: `c:${product.id}`, product, category: product.category || OTHERS_CATEGORY });
+    } else {
+      out.push({ kind: "legacy", key: it.key, name: it.name, unit: it.unit, image: it.image, category: OTHERS_CATEGORY });
+    }
+  }
+  return out;
+}
+
+/** "All" + one chip per category present, ordered by category group, each with its first image as the thumb. */
+function buildChips(items: DisplayItem[]): ChipDef[] {
+  const chips: ChipDef[] = [{ key: "all", name: null, label: "All" }];
+  if (items.length === 0) return chips;
+
+  const firstImage = new Map<string, string | undefined>();
+  const categoriesByGroup = new Map<string, string[]>();
+  for (const it of items) {
+    if (!firstImage.has(it.category)) {
+      firstImage.set(it.category, it.kind === "catalog" ? it.product.image_url : it.image);
+      const group = getGroupForCategoryName(it.category);
+      const list = categoriesByGroup.get(group.id);
+      if (list) list.push(it.category);
+      else categoriesByGroup.set(group.id, [it.category]);
+    } else if (!firstImage.get(it.category)) {
+      firstImage.set(it.category, it.kind === "catalog" ? it.product.image_url : it.image);
+    }
+  }
+  for (const group of [...CATEGORY_GROUPS, DEFAULT_GROUP]) {
+    const names = categoriesByGroup.get(group.id);
+    if (!names) continue;
+    for (const name of names) {
+      chips.push({ key: `cat:${name}`, name, label: name, thumbUri: cdnImage(firstImage.get(name), IMAGE_WIDTH.chip) });
+    }
+  }
+  return chips;
+}
+
+function pickLatestOrder(orders: Order[] | null): Order | null {
+  if (!orders || orders.length === 0) return null;
+  let latest = orders[0];
+  for (const o of orders) if (createdAtMs(o) > createdAtMs(latest)) latest = o;
+  return latest;
+}
+
+function buildLastOrderItem(order: Order, index: CatalogIndex, now: number): LastOrderItem {
+  const lines = order.items ?? [];
+  const thumbs: string[] = [];
+  for (const line of lines) {
+    if (thumbs.length >= LAST_ORDER_THUMBS) break;
+    const fromCatalog = line.master_product_id ? index.byId.get(line.master_product_id)?.image_url : undefined;
+    const uri = cdnImage(line.image || fromCatalog, IMAGE_WIDTH.thumb);
+    if (uri) thumbs.push(uri);
+  }
+  const itemCount = lines.length > 0 ? lines.length : (order.items_count ?? 0);
+  return {
+    kind: "lastOrder",
+    key: "last-order",
+    order,
+    thumbs,
+    itemCount,
+    totalLabel: formatMoney(Number(order.order_total) || 0),
+    whenLabel: describeWhen(order.created_at, now),
+    orderNumber: order.order_number ? `Order ${order.order_number}` : null,
+  };
+}
+
+/** Undo for "Add all": lines that existed before go back to their old quantity; new lines are removed. All silent. */
+function undoReorder(items: ReorderItem[], before: Map<string, number>): void {
+  for (const item of items) {
+    const prev = before.get(item.product_id);
+    if (prev == null) cartActions.removeItem(item.product_id, { silent: true });
+    else cartActions.updateQty(item.product_id, prev, { silent: true });
+  }
+}
+
+// ─── Cells ────────────────────────────────────────────────────────────────────
+
+function ThumbStack({ uris }: { uris: string[] }) {
+  if (uris.length === 0) {
+    return (
+      <View style={styles.thumbStack} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+        <View style={styles.thumb}>
+          <MaterialCommunityIcons name="basket-outline" size={18} color={C.primary} />
+        </View>
+      </View>
+    );
+  }
   return (
-    <View style={styles.sectionHeaderRow}>
-      <Text style={styles.sectionTitle} accessibilityRole="header">{title}</Text>
-      {subtitle ? <Text style={styles.sectionSubtitle}>{subtitle}</Text> : null}
+    <View style={styles.thumbStack} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+      {uris.map((uri, i) => (
+        <View key={uri} style={[styles.thumb, i > 0 && styles.thumbOverlap]}>
+          <Image
+            source={{ uri }}
+            style={styles.thumbImage}
+            contentFit="contain"
+            cachePolicy="memory-disk"
+            transition={motion.imageFade}
+            priority="low"
+            accessibilityIgnoresInvertColors
+          />
+        </View>
+      ))}
     </View>
   );
 }
 
-// ─── Screen ──────────────────────────────────────────────────────────────────
+const LastOrderCard = React.memo(function LastOrderCard({
+  item,
+  onAddAll,
+}: {
+  item: LastOrderItem;
+  onAddAll: (order: Order) => void;
+}) {
+  const handleAdd = useCallback(() => onAddAll(item.order), [item.order, onAddAll]);
+  const meta = `${plural(item.itemCount, "item")} · ${item.totalLabel}${item.whenLabel ? ` · ${item.whenLabel}` : ""}`;
+  return (
+    <View style={styles.lastOrderWrap}>
+      <View style={styles.lastOrderCard}>
+        <View
+          style={styles.lastOrderTop}
+          accessible
+          accessibilityLabel={`Your last order, ${plural(item.itemCount, "item")}, ${item.totalLabel}${item.whenLabel ? `, ${item.whenLabel}` : ""}`}
+        >
+          <ThumbStack uris={item.thumbs} />
+          <View style={styles.lastOrderText}>
+            <Text style={styles.lastOrderTitle} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+              Your last order
+            </Text>
+            <Text style={styles.lastOrderMeta} numberOfLines={2} maxFontSizeMultiplier={1.3}>
+              {meta}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.lastOrderActions}>
+          {item.orderNumber ? (
+            <Text style={styles.lastOrderNumber} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+              {item.orderNumber}
+            </Text>
+          ) : (
+            <View />
+          )}
+          <PrimaryButton
+            size="sm"
+            label="Add all"
+            icon="cart-plus"
+            onPress={handleAdd}
+            accessibilityLabel="Add all items from your last order"
+            testID="order-again-add-all"
+          />
+        </View>
+      </View>
+    </View>
+  );
+});
+
+const FilterChip = React.memo(function FilterChip({
+  name,
+  label,
+  thumbUri,
+  selected,
+  onSelect,
+}: {
+  name: string | null;
+  label: string;
+  thumbUri?: string;
+  selected: boolean;
+  onSelect: (name: string | null) => void;
+}) {
+  const handlePress = useCallback(() => {
+    if (!selected) onSelect(name);
+  }, [name, onSelect, selected]);
+  // Re-pressing the active chip changes nothing, so it stays silent (one gesture → one haptic only on a real change).
+  return (
+    <Chip
+      label={label}
+      thumbUri={thumbUri}
+      selected={selected}
+      accessibilityRole="tab"
+      haptic={selected ? false : "select"}
+      onPress={handlePress}
+      testID={`order-again-chip-${name ?? "all"}`}
+    />
+  );
+});
+
+const ChipStrip = React.memo(function ChipStrip({
+  item,
+  onSelect,
+}: {
+  item: ChipsItem;
+  onSelect: (name: string | null) => void;
+}) {
+  const renderChip = useCallback(
+    ({ item: chip }: RailRenderItemInfo<ChipDef>) => (
+      <FilterChip
+        name={chip.name}
+        label={chip.label}
+        thumbUri={chip.thumbUri}
+        selected={item.active === chip.name}
+        onSelect={onSelect}
+      />
+    ),
+    [item.active, onSelect],
+  );
+  return (
+    <View style={styles.chipBand}>
+      <FlatList
+        data={item.chips}
+        keyExtractor={chipKeyExtractor}
+        renderItem={renderChip}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.chipRail}
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        windowSize={3}
+        accessibilityRole="tablist"
+        accessibilityLabel="Filter by category"
+        testID="order-again-chips"
+      />
+    </View>
+  );
+});
+
+const GroupHeader = React.memo(function GroupHeader({ item }: { item: GroupItem }) {
+  const slug = item.seeAllSlug;
+  const handleSeeAll = useCallback(() => {
+    if (slug) router.push(`/category/${slug}`);
+  }, [slug]);
+  return (
+    <View style={styles.groupHeader}>
+      <View style={styles.groupText}>
+        <Text style={styles.groupTitle} numberOfLines={1} accessibilityRole="header" maxFontSizeMultiplier={1.3}>
+          {item.title}
+        </Text>
+        <Text style={styles.groupCount} maxFontSizeMultiplier={1.3}>
+          {plural(item.count, "item")}
+        </Text>
+      </View>
+      {slug ? (
+        <PressableScale
+          scale={motion.scale.row}
+          onPress={handleSeeAll}
+          accessibilityRole="button"
+          accessibilityLabel={`See all in ${item.seeAllName ?? item.title}`}
+          hitSlop={HIT_SLOP}
+          innerStyle={styles.seeAll}
+          pressedStyle={styles.seeAllPressed}
+          testID="order-again-see-all"
+        >
+          <Text style={styles.seeAllText} maxFontSizeMultiplier={1.3}>
+            See all
+          </Text>
+          <MaterialCommunityIcons name="chevron-right" size={16} color={C.link} />
+        </PressableScale>
+      ) : null}
+    </View>
+  );
+});
+
+/** Two grid cards per row at (W − 32 − 8) / 2 each; a lone last card keeps its half width via the spacer. */
+const GridRow = React.memo(function GridRow({ item }: { item: GridRowItem }) {
+  return (
+    <View style={styles.gridRow}>
+      <ProductCard variant="grid" product={item.left} style={styles.gridCard} recycled />
+      {item.right ? (
+        <ProductCard variant="grid" product={item.right} style={styles.gridCard} recycled />
+      ) : (
+        <View style={styles.gridCard} />
+      )}
+    </View>
+  );
+});
+
+/** An item that left the catalog: never purchasable-looking — name, unit and a quiet "Find similar" chip. */
+const LegacyRow = React.memo(function LegacyRow({ item }: { item: LegacyItem }) {
+  const name = item.name;
+  const handleFind = useCallback(() => {
+    router.push({ pathname: "/support/search", params: { q: name } });
+  }, [name]);
+  const uri = cdnImage(item.image, IMAGE_WIDTH.thumb);
+  return (
+    <View style={styles.legacyRow}>
+      <View style={styles.legacyThumb} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+        {uri ? (
+          <Image
+            source={{ uri }}
+            style={styles.legacyImage}
+            contentFit="contain"
+            cachePolicy="memory-disk"
+            transition={motion.imageFade}
+            recyclingKey={item.key}
+            priority="low"
+            accessibilityIgnoresInvertColors
+          />
+        ) : (
+          <MaterialCommunityIcons name="image-off-outline" size={20} color={C.textLight} />
+        )}
+      </View>
+      <View style={styles.legacyText}>
+        <Text style={styles.legacyName} numberOfLines={2} maxFontSizeMultiplier={1.3}>
+          {name}
+        </Text>
+        <Text style={styles.legacyMeta} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+          {item.unit ? `${item.unit} · ` : ""}Not available right now
+        </Text>
+      </View>
+      <Chip
+        label="Find similar"
+        icon="magnify"
+        size="sm"
+        haptic={false}
+        onPress={handleFind}
+        accessibilityLabel={`Find similar to ${name}`}
+        testID="order-again-find-similar"
+      />
+    </View>
+  );
+});
+
+const EndCell = React.memo(function EndCell({ item, onShowMore }: { item: EndItem; onShowMore: () => void }) {
+  if (item.remaining > 0) {
+    return (
+      <View style={styles.endMore}>
+        <PrimaryButton
+          variant="outline"
+          size="sm"
+          label="Show more"
+          onPress={onShowMore}
+          accessibilityLabel={`Show more, ${plural(item.remaining, "item")} remaining`}
+          testID="order-again-show-more"
+        />
+        <Text style={styles.endCaption} maxFontSizeMultiplier={1.3}>
+          {plural(item.remaining, "more item")}
+        </Text>
+      </View>
+    );
+  }
+  return (
+    <View style={styles.endRow}>
+      <MaterialCommunityIcons name="history" size={14} color={C.textSub} />
+      <Text style={styles.endText} maxFontSizeMultiplier={1.3}>
+        That&apos;s everything you&apos;ve ordered
+      </Text>
+    </View>
+  );
+});
+
+const EmptyCell = React.memo(function EmptyCell({ item, onRetry }: { item: EmptyItem; onRetry: () => void }) {
+  const { height } = useWindowDimensions();
+  // A definite height lets `EmptyState fill` centre itself under the band (the cell has no flex parent).
+  const cellHeight = Math.max(360, Math.round(height * 0.6));
+  if (item.variant === "error") {
+    return (
+      <View style={{ height: cellHeight }}>
+        <EmptyState
+          fill
+          iconWrap
+          icon="cloud-off-outline"
+          title="Couldn't load your orders"
+          text={item.message ?? "Check your connection and try again."}
+          action={{ label: "Retry", onPress: onRetry }}
+          testID="order-again-error"
+        />
+      </View>
+    );
+  }
+  return (
+    <View style={{ height: cellHeight }}>
+      <EmptyState
+        fill
+        iconWrap
+        icon="history"
+        title="Nothing to reorder yet"
+        text="Your past orders will show up here"
+        action={{ label: "Start shopping", onPress: goToHome }}
+        testID="order-again-empty"
+      />
+    </View>
+  );
+});
+
+// ─── Skeleton ─────────────────────────────────────────────────────────────────
+
+function OrderAgainSkeleton({ slow, onRetry }: { slow: boolean; onRetry: () => void }) {
+  return (
+    <View style={styles.skeletonRoot}>
+      <SkeletonScreen label="Loading your order history…">
+        {/* Last-order card */}
+        <View style={styles.lastOrderWrap}>
+          <View style={styles.lastOrderCard}>
+            <View style={styles.lastOrderTop}>
+              <View style={styles.thumbStack}>
+                {SKELETON_THUMBS.map((k) => (
+                  <Skeleton
+                    key={k}
+                    width={THUMB_SIZE}
+                    height={THUMB_SIZE}
+                    radius={radius.lg}
+                    style={k > 0 ? styles.thumbOverlap : undefined}
+                  />
+                ))}
+              </View>
+              <View style={styles.lastOrderText}>
+                <Skeleton width={120} height={14} />
+                <Skeleton width={180} height={12} style={styles.mt6} />
+              </View>
+            </View>
+            <View style={styles.lastOrderActions}>
+              <Skeleton width={90} height={11} />
+              <Skeleton width={104} height={40} radius={radius.xl} />
+            </View>
+          </View>
+        </View>
+        {/* Chip strip */}
+        <View style={styles.skeletonChips}>
+          {SKELETON_CHIPS.map((k) => (
+            <Skeleton key={k} width={k === 0 ? 56 : 96} height={32} radius={radius.pill} />
+          ))}
+        </View>
+        {/* Scope header */}
+        <View style={styles.groupHeader}>
+          <View style={styles.groupText}>
+            <Skeleton width={180} height={17} />
+            <Skeleton width={60} height={12} style={styles.mt6} />
+          </View>
+        </View>
+        {/* Four grid twins */}
+        <View style={styles.gridRow}>
+          <SkeletonProductCard variant="grid" style={styles.gridCard} />
+          <SkeletonProductCard variant="grid" style={styles.gridCard} />
+        </View>
+        <View style={styles.gridRow}>
+          <SkeletonProductCard variant="grid" style={styles.gridCard} />
+          <SkeletonProductCard variant="grid" style={styles.gridCard} />
+        </View>
+      </SkeletonScreen>
+      {slow ? (
+        <View style={styles.slowWrap}>
+          <Text style={styles.slowText} maxFontSizeMultiplier={1.3}>
+            Still loading… check your connection
+          </Text>
+          <PrimaryButton variant="ghost" size="xs" label="Retry" onPress={onRetry} testID="order-again-slow-retry" />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+// ─── Screen ───────────────────────────────────────────────────────────────────
+
 export default function OrderAgainScreen() {
-  const { userId } = useAuth();
-  const { addItem, incrementQty } = useCart();
-  const cartItemsByProductId = useCartItemMap();
+  const { userId, user } = useAuth();
+  const { location } = useLocation();
+  const { open, unreadCount } = useProfileMenu();
+  const inhibitAtlas = useDevFlag("Dev_Atlas_inhibit_Feature");
+  const inhibitVega = useDevFlag("Dev_Vega_inhibit_Feature");
+  const inhibitReorder = useDevFlag("Dev_Vega_inhibit_Reorder");
+  const cartFootprint = useCartBarFootprint();
 
-  const [orders, setOrders] = useState<Order[] | null>(null);
-  const [allProducts, setAllProducts] = useState<Product[] | null>(() => {
-    const mem = getMemoryHomeCache();
-    return mem?.products ?? null;
-  });
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  // "All Previously Bought" renders a growing window instead of mounting
-  // every distinct previously-bought product's ProductCard at once — unlike
-  // the sections above it (which already use tuned, virtualized horizontal
-  // FlatLists), this section used a plain `.map()` inside the screen's
-  // outer ScrollView, so a long-tenured customer's full product history
-  // mounted (image + add/quantity controls each) simultaneously, on and
-  // off screen, defeating virtualization entirely.
-  const GRID_PAGE_SIZE = 24;
-  const [gridVisibleCount, setGridVisibleCount] = useState(GRID_PAGE_SIZE);
+  // ── Orders: memory mirror → disk cache → network (after interactions) ──────
+  const [orders, setOrders] = useState<Order[] | null>(() => (userId ? getMemoryOrders() : null));
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const seqRef = useRef(0);
 
-  // ── Product catalog ─────────────────────────────────────────────────────
-  useEffect(() => {
-    if (allProducts) return;
-    let cancelled = false;
-    (async () => {
+  const fetchOrders = useCallback(
+    async (opts?: { force?: boolean }) => {
+      if (!userId) return;
+      const seq = ++seqRef.current;
       try {
-        const cached = await readHomeCatalogCache();
-        if (!cancelled && cached?.products) setAllProducts(cached.products);
-      } catch { /* best-effort */ }
-    })();
-    return () => { cancelled = true; };
-  }, [allProducts]);
-
-  // ── Orders (SWR) ────────────────────────────────────────────────────────
-  const fetchOrders = useCallback(async (opts?: { isRefresh?: boolean }) => {
-    if (!userId) { setOrders([]); setLoading(false); return; }
-    if (!opts?.isRefresh) setLoading(true);
-    try {
-      const data = await getUserOrders(userId);
-      setOrders(data);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load your orders.");
-    } finally {
-      setLoading(false);
-    }
-  }, [userId]);
+        const data = await getUserOrders(userId, opts);
+        if (seq !== seqRef.current) return;
+        setOrders(data);
+        setError(null);
+      } catch (err) {
+        if (seq !== seqRef.current) return;
+        logSilentFailure("Order again: fetch orders", err);
+        setError(err instanceof Error ? err.message : "Could not load your orders.");
+      }
+    },
+    [userId],
+  );
 
   useEffect(() => {
-    if (!userId) { setLoading(false); setOrders([]); return; }
+    if (!userId) return undefined;
     let cancelled = false;
-    (async () => {
-      const cached = await readUserOrdersCache(userId);
-      if (cancelled) return;
-      if (cached && cached.length > 0) { setOrders(cached); setLoading(false); }
-    })();
+    // The disk row is only worth reading while the memory mirror is empty (orders.tsx does the same — W3 R1-19).
+    if (getMemoryOrders() === null) {
+      readUserOrdersCache(userId)
+        .then((cached) => {
+          // The memory seed (if any) is at least as fresh as the disk row; never replace it with the disk copy.
+          if (!cancelled && cached && cached.length > 0) setOrders((prev) => prev ?? cached);
+        })
+        .catch((err) => logSilentFailure("Order again: read orders cache", err));
+    }
+    // The first network fetch waits for the tab transition to settle so the cached paint is never janked.
     const task = InteractionManager.runAfterInteractions(() => {
-      if (!cancelled) fetchOrders();
+      if (!cancelled) void fetchOrders();
     });
-    return () => { cancelled = true; task.cancel(); };
+    return () => {
+      cancelled = true;
+      task.cancel();
+    };
   }, [fetchOrders, userId]);
 
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await fetchOrders({ isRefresh: true });
-    setRefreshing(false);
-  }, [fetchOrders]);
-
-  // ── Build DisplayItems — deduplicated by catalog.id ─────────────────────
-  const displayItems = useMemo<DisplayItem[]>(() => {
-    if (!orders || orders.length === 0) return [];
-    const orderItems = buildOrderAgainItems(orders);
-    if (orderItems.length === 0) return [];
-    const byMasterId = new Map<string, Product>();
-    if (allProducts) for (const p of allProducts) byMasterId.set(p.id, p);
-
-    const matchByName = (item: OrderAgainItem): Product | undefined => {
-      if (!allProducts) return undefined;
-      const nameKey = (item.name || "").trim().toLowerCase();
-      if (!nameKey) return undefined;
-      const unitKey = (item.unit || "").trim().toLowerCase();
-      let fallback: Product | undefined;
-      for (const p of allProducts) {
-        if ((p.name || "").trim().toLowerCase() !== nameKey) continue;
-        if (!unitKey) return p;
-        if ((p.unit || "").trim().toLowerCase() === unitKey) return p;
-        fallback = fallback || p;
-      }
-      return fallback;
+  // ── Catalog: Home's memory cache, then its disk row (null under Dev_Cache_inhibit_HomeCatalog → legacy rows) ──
+  const [catalogState, setCatalogState] = useState<CatalogState>(() => {
+    const mem = getMemoryHomeCache();
+    return { cache: mem, resolved: mem !== null };
+  });
+  useEffect(() => {
+    if (catalogState.resolved) return undefined;
+    let cancelled = false;
+    readHomeCatalogCache()
+      .then((cache) => {
+        if (!cancelled) setCatalogState({ cache, resolved: true });
+      })
+      .catch((err) => {
+        logSilentFailure("Order again: read home catalog cache", err);
+        if (!cancelled) setCatalogState({ cache: null, resolved: true });
+      });
+    return () => {
+      cancelled = true;
     };
+  }, [catalogState.resolved]);
 
-    const seenCatalogIds = new Map<string, number>();
-    const out: DisplayItem[] = [];
+  // ── Categories for slug resolution (C15): queryCache peek → fetch; the home cache's list is the fallback ──
+  const [categories, setCategories] = useState<Category[] | null>(() => peekCategories() ?? null);
+  useEffect(() => {
+    if (categories) return undefined;
+    let cancelled = false;
+    getAllCategories()
+      .then((list) => {
+        if (!cancelled && list.length > 0) setCategories(list);
+      })
+      .catch((err) => logSilentFailure("Order again: fetch categories", err));
+    return () => {
+      cancelled = true;
+    };
+  }, [categories]);
 
-    for (const it of orderItems) {
-      const catalog = (it.masterProductId && byMasterId.get(it.masterProductId)) || matchByName(it);
-      if (catalog) {
-        const existingIdx = seenCatalogIds.get(catalog.id);
-        if (existingIdx !== undefined) {
-          out[existingIdx].totalQty += it.totalQty;
-          continue;
+  // ── Revalidate on later focuses (skipped under the vega master flag: mount-only fetch) and on reconnect ──
+  const firstFocusRef = useRef(true);
+  useFocusEffect(
+    useCallback(() => {
+      // Home may have loaded the catalog since this tab last painted; pick it up without a remount.
+      const mem = getMemoryHomeCache();
+      if (mem) setCatalogState((prev) => (prev.cache === mem ? prev : { cache: mem, resolved: true }));
+      if (firstFocusRef.current) {
+        firstFocusRef.current = false;
+        return;
+      }
+      if (!userId || getDevFlag("Dev_Vega_inhibit_Feature")) return;
+      void fetchOrders();
+    }, [fetchOrders, userId]),
+  );
+  useRefetchOnReconnect(() => {
+    void fetchOrders();
+  }, !!userId);
+
+  // A failed refresh over cached data is a toast, not a replaced screen.
+  useEffect(() => {
+    if (error && orders && orders.length > 0) {
+      notify({ id: REFRESH_ERROR_TOAST_ID, title: "Couldn't refresh your orders", message: error, tone: "error" });
+    }
+  }, [error, orders]);
+
+  // ── Derived data ───────────────────────────────────────────────────────────
+  const catalogIndex = useMemo(() => buildCatalogIndex(catalogState.cache), [catalogState.cache]);
+  const displayItems = useMemo(() => buildDisplayItems(orders, catalogIndex), [orders, catalogIndex]);
+  const chips = useMemo(() => buildChips(displayItems), [displayItems]);
+
+  const [activeChip, setActiveChip] = useState<string | null>(null);
+  // A chip that vanished with a refresh falls back to "All" without touching state.
+  const activeName = activeChip && chips.some((c) => c.name === activeChip) ? activeChip : null;
+
+  // Catalog items first (grid), legacy rows after, so "Show more" never interleaves the two.
+  const filtered = useMemo(() => {
+    const scoped = activeName ? displayItems.filter((it) => it.category === activeName) : displayItems;
+    const catalog: DisplayItem[] = [];
+    const legacy: DisplayItem[] = [];
+    for (const it of scoped) (it.kind === "catalog" ? catalog : legacy).push(it);
+    return legacy.length === 0 ? catalog : [...catalog, ...legacy];
+  }, [displayItems, activeName]);
+
+  // Paging is keyed on the item signature, not array identity: a refresh that returns the same items keeps the window.
+  const signature = useMemo(() => filtered.map((it) => it.key).join(","), [filtered]);
+  const [pagedSignature, setPagedSignature] = useState(signature);
+  const [visibleCount, setVisibleCount] = useState(GRID_PAGE_SIZE);
+  if (pagedSignature !== signature) {
+    setPagedSignature(signature);
+    setVisibleCount(GRID_PAGE_SIZE);
+  }
+
+  const categoryList = categories ?? catalogState.cache?.categories ?? EMPTY_CATEGORIES;
+  const seeAllSlug = activeName ? resolveCategorySlug(activeName, categoryList) : null;
+
+  const lastOrder = useMemo(() => pickLatestOrder(orders), [orders]);
+  const lastOrderItem = useMemo(
+    () => (lastOrder ? buildLastOrderItem(lastOrder, catalogIndex, Date.now()) : null),
+    [lastOrder, catalogIndex],
+  );
+
+  const addressLabel = location?.label ?? null;
+  const addressLine = location?.address ?? null;
+  const avatarInitial = user?.name;
+  const unread = unreadCount > 0;
+  const heroItem = useMemo<HeroItem>(
+    () => ({ kind: "hero", key: "hero", showAvatar: !inhibitAtlas, unread, addressLabel, addressLine, avatarInitial }),
+    [inhibitAtlas, unread, addressLabel, addressLine, avatarInitial],
+  );
+
+  const showLastOrder = !!lastOrderItem && !inhibitVega && !inhibitReorder;
+  const hasData = !!orders && orders.length > 0;
+
+  const { listData, stickyIndices } = useMemo(() => {
+    const items: OrderAgainListItem[] = [heroItem];
+    if (error && !hasData) {
+      items.push({ kind: "empty", key: "empty", variant: "error", message: error });
+      return { listData: items, stickyIndices: NO_STICKY };
+    }
+    if (displayItems.length === 0) {
+      items.push({ kind: "empty", key: "empty", variant: "none" });
+      return { listData: items, stickyIndices: NO_STICKY };
+    }
+    if (showLastOrder && lastOrderItem) items.push(lastOrderItem);
+    const chipsIndex = items.length;
+    items.push({ kind: "chips", key: "chips", chips, active: activeName });
+    items.push({
+      kind: "group",
+      key: `group:${activeName ?? "all"}`,
+      title: activeName ?? "Everything you've bought",
+      count: filtered.length,
+      seeAllSlug,
+      seeAllName: activeName,
+    });
+    const page = filtered.slice(0, visibleCount);
+    let pending: Product | null = null;
+    for (const it of page) {
+      if (it.kind === "catalog") {
+        if (pending) {
+          items.push({ kind: "gridRow", key: `row:${pending.id}:${it.product.id}`, left: pending, right: it.product });
+          pending = null;
+        } else {
+          pending = it.product;
         }
-        seenCatalogIds.set(catalog.id, out.length);
-        out.push({
-          key: `c:${catalog.id}`,
-          name: catalog.name,
-          price: catalog.price,
-          originalPrice: catalog.original_price,
-          image: catalog.image_url,
-          unit: catalog.unit,
-          category: catalog.category || "Others",
-          product: catalog,
-          purchasable: true,
-          addableId: catalog.id,
-          totalQty: it.totalQty,
-        });
       } else {
-        out.push({
-          key: it.key,
-          name: it.name,
-          price: it.price,
-          image: it.image,
-          unit: it.unit,
-          category: "Others",
-          purchasable: false,
-          totalQty: it.totalQty,
-        });
+        if (pending) {
+          items.push({ kind: "gridRow", key: `row:${pending.id}`, left: pending, right: null });
+          pending = null;
+        }
+        items.push({ kind: "legacy", key: it.key, name: it.name, unit: it.unit, image: it.image });
       }
     }
-    return out;
-  }, [orders, allProducts]);
+    if (pending) items.push({ kind: "gridRow", key: `row:${pending.id}`, left: pending, right: null });
+    items.push({ kind: "end", key: "end", remaining: Math.max(0, filtered.length - visibleCount) });
+    return { listData: items, stickyIndices: [chipsIndex] };
+  }, [heroItem, error, hasData, displayItems.length, showLastOrder, lastOrderItem, chips, activeName, filtered, seeAllSlug, visibleCount]);
 
-  useEffect(() => { setGridVisibleCount(GRID_PAGE_SIZE); }, [displayItems]);
-
-  // Top items sorted by how often they were ordered
-  const topItems = useMemo(
-    () => [...displayItems].sort((a, b) => b.totalQty - a.totalQty).slice(0, 16),
-    [displayItems],
-  );
-
-  const itemsByCategory = useMemo<Record<string, DisplayItem[]>>(() => {
-    const out: Record<string, DisplayItem[]> = {};
-    for (const it of displayItems) (out[it.category] ||= []).push(it);
-    return out;
-  }, [displayItems]);
-
-  const { chips, itemsByGroup } = useMemo(() => {
-    const chips: CategoryChipDef[] = [];
-    const byGroup: Record<string, DisplayItem[]> = {};
-    const allGroupOrder = [...CATEGORY_GROUPS, DEFAULT_GROUP].map((g) => g.id);
-    const categoriesByGroup = new Map<string, string[]>();
-    for (const cat of Object.keys(itemsByCategory)) {
-      const grp = getGroupForCategoryName(cat);
-      const list = categoriesByGroup.get(grp.id) || [];
-      list.push(cat);
-      categoriesByGroup.set(grp.id, list);
+  // ── Handlers (all identity-stable so `renderItem` never churns) ────────────
+  const handleAddAll = useCallback((order: Order) => {
+    const { items, unavailable } = buildReorderItems(order, getCachedProduct);
+    if (items.length === 0) {
+      feedback.error();
+      notify({
+        id: REORDER_TOAST_ID,
+        title: "Nothing to add",
+        message: unavailable.length > 0 ? `${plural(unavailable.length, "item")} no longer available` : undefined,
+        tone: "warning",
+      });
+      return;
     }
-    for (const gid of allGroupOrder) {
-      const cats = categoriesByGroup.get(gid);
-      if (!cats) continue;
-      const groupItems: DisplayItem[] = [];
-      for (const cat of cats) {
-        const list = itemsByCategory[cat] || [];
-        groupItems.push(...list);
-        chips.push({ name: cat, count: list.length, imageUrl: list[0]?.image });
-      }
-      byGroup[gid] = groupItems;
+    const before = new Map(getCartSnapshot().items.map((line) => [line.product_id, line.quantity] as const));
+    const { added } = cartActions.addMany(items, { silent: true });
+    if (added === 0) {
+      feedback.error();
+      notify({ id: REORDER_TOAST_ID, title: "Already at the maximum", message: "These items are at 99 in your cart", tone: "warning" });
+      return;
     }
-    return { chips, itemsByGroup: byGroup };
-  }, [itemsByCategory]);
-
-  const handleAdd = useCallback(
-    (p: Product) =>
-      addItem({ product_id: p.id, name: p.name, price: p.price, unit: p.unit, image_url: p.image_url, isLoose: p.isLoose }),
-    [addItem],
-  );
-  const handleUpdateQty = useCallback(
-    (p: Product, delta: number) => incrementQty(p.id, delta),
-    [incrementQty],
-  );
-  const handleChipPress = useCallback((chip: CategoryChipDef) => {
-    const slug = chip.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-    router.push(`/category/${slug}` as any);
+    // One commit, ONE `add` for the whole batch — never a sound per line (addMany is silent; the toast is silent by design).
+    // `success` is reserved for order placement (W3 F7 / R2-24).
+    feedback.add();
+    const priceChanged = items.filter((it) => it.priceChanged).length;
+    notify({
+      id: REORDER_TOAST_ID,
+      title: `Added ${plural(added, "item")}${unavailable.length > 0 ? ` · ${unavailable.length} unavailable` : ""}`,
+      message: priceChanged > 0 ? `Prices updated for ${plural(priceChanged, "item")}` : undefined,
+      tone: "success",
+      action: { label: "Undo", onPress: () => undoReorder(items, before) },
+    });
   }, []);
 
-  const renderTopItem = useCallback(
-    ({ item }: { item: DisplayItem }) =>
-      item.product ? (
-        <ProductCard
-          p={item.product}
-          cartItem={cartItemsByProductId.get(item.product.id)}
-          onAdd={handleAdd}
-          onUpdateQty={handleUpdateQty}
-          width={148}
-        />
-      ) : (
-        <LegacyItemCard item={item} width={148} />
-      ),
-    [cartItemsByProductId, handleAdd, handleUpdateQty],
+  const handleSelectChip = useCallback((name: string | null) => {
+    setActiveChip(name);
+  }, []);
+
+  const handleShowMore = useCallback(() => {
+    setVisibleCount((count) => count + GRID_PAGE_SIZE);
+  }, []);
+
+  const handleRetry = useCallback(() => {
+    setError(null);
+    void fetchOrders({ force: true });
+  }, [fetchOrders]);
+
+  const onRefresh = useCallback(async () => {
+    if (!userId) return;
+    feedback.tapSound();
+    setRefreshing(true);
+    await fetchOrders({ force: true });
+    setRefreshing(false);
+  }, [fetchOrders, userId]);
+
+  const renderItem = useCallback(
+    ({ item }: ListRenderItemInfo<OrderAgainListItem>) => {
+      switch (item.kind) {
+        case "hero":
+          return (
+            <TabHeader
+              variant="tab"
+              title="Order again"
+              addressLabel={item.addressLabel}
+              addressLine={item.addressLine}
+              onAddressPress={goToSelectLocation}
+              avatarInitial={item.avatarInitial}
+              onAvatarPress={open}
+              showAvatar={item.showAvatar}
+              unread={item.unread}
+              testID="order-again-header"
+            />
+          );
+        case "lastOrder":
+          return <LastOrderCard item={item} onAddAll={handleAddAll} />;
+        case "chips":
+          return <ChipStrip item={item} onSelect={handleSelectChip} />;
+        case "group":
+          return <GroupHeader item={item} />;
+        case "gridRow":
+          return <GridRow item={item} />;
+        case "legacy":
+          return <LegacyRow item={item} />;
+        case "end":
+          return <EndCell item={item} onShowMore={handleShowMore} />;
+        case "empty":
+          return <EmptyCell item={item} onRetry={handleRetry} />;
+        default:
+          return null;
+      }
+    },
+    [open, handleAddAll, handleSelectChip, handleShowMore, handleRetry],
   );
 
-  const renderGroupItem = useCallback(
-    ({ item }: { item: DisplayItem }) =>
-      item.product ? (
-        <ProductCard
-          p={item.product}
-          cartItem={cartItemsByProductId.get(item.product.id)}
-          onAdd={handleAdd}
-          onUpdateQty={handleUpdateQty}
-          width={140}
-        />
-      ) : (
-        <LegacyItemCard item={item} width={140} />
-      ),
-    [cartItemsByProductId, handleAdd, handleUpdateQty],
+  const contentContainerStyle = useMemo(
+    () => ({ paddingBottom: layout.scrollBottomTab + cartFootprint }),
+    [cartFootprint],
   );
 
-  const keyExtractor = useCallback((item: DisplayItem) => item.key, []);
+  const loading = useForceSkeleton(!!userId && !error && (orders === null || !catalogState.resolved));
+  const slow = useSlowLoad(loading);
 
-  // ── States ────────────────────────────────────────────────────────────────
+  // ── Guest gate (S3 excluded: kept as the sign-in EmptyState) ───────────────
   if (!userId) {
     return (
-      <Screen bg={T.bg} edges={["top"]}>
-        <DoodleBackdrop doodles={PAGE_WALLPAPER_DOODLES} baseOpacity={0.05} />
-        <Header />
-        <View style={styles.emptyWrap}>
-          <IconWrap
-            size={72}
-            circle
-            bg={T.greenXLight}
-            icon="account-outline"
-            iconSize={36}
-            iconColor={T.green}
-            style={styles.emptyIconWrap}
-          />
-          <Text style={styles.emptyTitle}>Sign in first</Text>
-          <Text style={styles.emptyDesc}>Reorder your favourites in one tap once you&apos;re signed in.</Text>
-          <PrimaryButton
-            label="Sign in"
-            onPress={() => router.push("/phone" as any)}
-            fullWidth={false}
-            shadow
-            style={styles.emptyBtn}
-            textStyle={styles.emptyBtnText}
-          />
-        </View>
+      <Screen bg={C.bg} edges={["top"]}>
+        <TabHeader
+          variant="tab"
+          title="Order again"
+          addressLabel={addressLabel}
+          addressLine={addressLine}
+          onAddressPress={goToSelectLocation}
+          onAvatarPress={open}
+          showAvatar={!inhibitAtlas}
+          unread={unread}
+          testID="order-again-header"
+        />
+        <EmptyState
+          fill
+          iconWrap
+          icon="account-outline"
+          title="Sign in first"
+          text="Reorder your favourites in one tap once you're signed in."
+          action={{ label: "Sign in", onPress: goToSignIn }}
+          testID="order-again-guest"
+        />
       </Screen>
     );
   }
 
-  if (loading && !orders) {
+  if (loading) {
     return (
-      <Screen bg={T.bg} edges={["top"]}>
-        <Header />
-        <View
-          style={styles.skeletonWrap}
-          accessible
-          accessibilityRole="progressbar"
-          accessibilityLabel="Loading your order history…"
-        >
-          <View style={styles.section}>
-            <View style={styles.sectionHeaderRow}>
-              <Skeleton width={150} height={16} color={T.cardBorder} />
-              <Skeleton width={120} height={10} color={T.cardBorder} />
-            </View>
-            <View style={[styles.hList, styles.skeletonRow]}>
-              {SKELETON_CARDS.map((i) => (
-                <View key={i} style={[styles.card, styles.skeletonCard]}>
-                  <View style={styles.imageWrap} />
-                  <View style={styles.cardBody}>
-                    <Skeleton width={40} height={10} color={T.cardBorder} />
-                    <Skeleton width="100%" height={12} color={T.cardBorder} />
-                    <Skeleton width="70%" height={12} color={T.cardBorder} />
-                    <View style={styles.priceRow}>
-                      <Skeleton width={44} height={14} color={T.cardBorder} />
-                      <Skeleton width={52} height={30} radius={8} color={T.cardBorder} />
-                    </View>
-                  </View>
-                </View>
-              ))}
-            </View>
-          </View>
-          <View style={styles.section}>
-            <View style={styles.sectionHeaderRow}>
-              <Skeleton width={200} height={16} color={T.cardBorder} />
-              <Skeleton width={80} height={10} color={T.cardBorder} />
-            </View>
-            <View style={[styles.hList, styles.skeletonRow]}>
-              {SKELETON_CHIPS.map((i) => (
-                <View key={i} style={styles.chip}>
-                  <Skeleton width={96} height={80} radius={14} color={T.cardBorder} />
-                  <Skeleton width={64} height={12} color={T.cardBorder} />
-                  <Skeleton width={40} height={10} color={T.cardBorder} />
-                </View>
-              ))}
-            </View>
-          </View>
-        </View>
-      </Screen>
-    );
-  }
-
-  if (!loading && (orders?.length === 0 || displayItems.length === 0)) {
-    return (
-      <Screen bg={T.bg} edges={["top"]}>
-        <DoodleBackdrop doodles={PAGE_WALLPAPER_DOODLES} baseOpacity={0.05} />
-        <Header />
-        <View style={styles.emptyWrap}>
-          <IconWrap
-            size={72}
-            circle
-            bg={T.greenXLight}
-            icon="basket-outline"
-            iconSize={36}
-            iconColor={T.green}
-            style={styles.emptyIconWrap}
-          />
-          <Text style={styles.emptyTitle}>No past orders yet</Text>
-          <Text style={styles.emptyDesc}>
-            Place your first order and come back here to reorder in a tap.
-          </Text>
-          <PrimaryButton
-            label="Start shopping"
-            onPress={() => router.replace("/(tabs)/home" as any)}
-            fullWidth={false}
-            shadow
-            style={styles.emptyBtn}
-            textStyle={styles.emptyBtnText}
-          />
-        </View>
+      <Screen bg={C.bg} edges={["top"]}>
+        <TabHeader
+          variant="tab"
+          title="Order again"
+          addressLabel={addressLabel}
+          addressLine={addressLine}
+          onAddressPress={goToSelectLocation}
+          avatarInitial={avatarInitial}
+          onAvatarPress={open}
+          showAvatar={!inhibitAtlas}
+          unread={unread}
+          testID="order-again-header"
+        />
+        <OrderAgainSkeleton slow={slow} onRetry={handleRetry} />
       </Screen>
     );
   }
 
   return (
-    <Screen bg={T.bg} edges={["top"]}>
-      <Header />
-
-      <ScrollView
-        contentContainerStyle={styles.scroll}
+    <Screen bg={C.bg} edges={["top"]}>
+      <FlashList
+        data={listData}
+        renderItem={renderItem}
+        keyExtractor={keyExtractor}
+        getItemType={getItemType}
+        stickyHeaderIndices={stickyIndices}
+        contentContainerStyle={contentContainerStyle}
         showsVerticalScrollIndicator={false}
-        removeClippedSubviews
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={T.green} colors={[T.green]} />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} colors={[C.primary]} />
         }
-      >
-        {error ? (
-          <View style={styles.errorBanner}>
-            <MaterialCommunityIcons name="alert-circle-outline" size={16} color={C.danger} />
-            <Text style={styles.errorText}>{error}</Text>
-          </View>
-        ) : null}
-
-        {/* ── Previously Ordered ─────────────────────────────────────── */}
-        {topItems.length > 0 && (
-          <View style={styles.section}>
-            {/* Rounded green wash grounds the hero carousel as a container
-                box — same zoning as home's shop-by-category panel. */}
-            <SoftPanel style={styles.sectionPanel} />
-            <SectionHeader
-              title="Previously Ordered"
-              subtitle="Your go-to items, ready to add"
-            />
-            <FlatList
-              data={topItems}
-              keyExtractor={keyExtractor}
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.hList}
-              renderItem={renderTopItem}
-              initialNumToRender={4}
-              maxToRenderPerBatch={4}
-              windowSize={3}
-              removeClippedSubviews
-            />
-          </View>
-        )}
-
-        {/* ── Categories you ordered from ───────────────────────────── */}
-        {chips.length > 0 && (
-          <View style={styles.section}>
-            <SoftPanel style={styles.sectionPanel} />
-            <SectionHeader
-              title="Categories you ordered from"
-              subtitle={`${chips.length} categor${chips.length !== 1 ? "ies" : "y"}`}
-            />
-            <FlatList
-              data={chips}
-              keyExtractor={(c) => c.name}
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.hList}
-              renderItem={({ item: chip }) => (
-                <CategoryChip
-                  title={chip.name}
-                  count={chip.count}
-                  sampleImages={(itemsByCategory[chip.name] || []).map((p) => p.image)}
-                  onPress={() => handleChipPress(chip)}
-                />
-              )}
-              initialNumToRender={5}
-            />
-          </View>
-        )}
-
-        {/* ── Per-group carousels ───────────────────────────────────── */}
-        {[...CATEGORY_GROUPS, DEFAULT_GROUP].map((g) => {
-          const items = itemsByGroup[g.id];
-          if (!items || items.length === 0) return null;
-          return (
-            <View key={g.id} style={styles.section}>
-              <SectionHeader title={g.title} />
-              <FlatList
-                data={items.slice(0, 12)}
-                keyExtractor={keyExtractor}
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.hList}
-                renderItem={renderGroupItem}
-                initialNumToRender={4}
-                maxToRenderPerBatch={4}
-                windowSize={3}
-                removeClippedSubviews
-              />
-            </View>
-          );
-        })}
-
-        {/* ── Full grid of all previously bought ───────────────────── */}
-        <View style={styles.section}>
-          {/* Tall section: extra-faint wallpaper glyphs show through the
-              gutters between the grid cards. */}
-          <DoodleBackdrop doodles={PAGE_WALLPAPER_DOODLES} baseOpacity={0.04} />
-          <SectionHeader
-            title="All Previously Bought"
-            subtitle={`${displayItems.length} item${displayItems.length !== 1 ? "s" : ""}`}
-          />
-          <View style={styles.grid}>
-            {displayItems.slice(0, gridVisibleCount).map((it) => (
-              <View key={it.key} style={styles.gridCell}>
-                {it.product ? (
-                  <ProductCard
-                    p={it.product}
-                    cartItem={cartItemsByProductId.get(it.product.id)}
-                    onAdd={handleAdd}
-                    onUpdateQty={handleUpdateQty}
-                  />
-                ) : (
-                  <LegacyItemCard item={it} />
-                )}
-              </View>
-            ))}
-          </View>
-          {gridVisibleCount < displayItems.length && (
-            <TouchableOpacity
-              style={styles.loadMoreBtn}
-              onPress={() => setGridVisibleCount((c) => c + GRID_PAGE_SIZE)}
-              activeOpacity={opacity.pressCta}
-              accessibilityRole="button"
-            >
-              <Text style={styles.loadMoreText}>
-                Load More ({displayItems.length - gridVisibleCount} remaining)
-              </Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {/* Bottom stamp */}
-        <View style={styles.endRow}>
-          <MaterialCommunityIcons name="history" size={14} color={T.barkLight} />
-          <Text style={styles.endText}>That&apos;s everything you&apos;ve ordered</Text>
-        </View>
-      </ScrollView>
+        testID="order-again-list"
+      />
     </Screen>
   );
 }
 
-// ─── Header ──────────────────────────────────────────────────────────────────
-const Header = React.memo(function Header() {
-  return (
-    <View style={styles.header}>
-      {/* Same decorated band as home's address bar: green wash + grocery
-          line-art, both non-interactive. */}
-      <LinearGradient
-        colors={[T.greenWash, T.white]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 0, y: 1 }}
-        style={StyleSheet.absoluteFillObject}
-        pointerEvents="none"
-      />
-      <DoodleBackdrop doodles={TAB_HEADER_DOODLES} />
-      <View>
-        <Text style={styles.headerTitle} accessibilityRole="header">Order Again</Text>
-        <Text style={styles.headerSub}>Your favourites, one tap away</Text>
-      </View>
-      <IconWrap size={40} radius={12} bg={T.greenXLight} icon="history" iconSize={20} iconColor={T.green} />
-    </View>
-  );
-});
+// ─── Styles ───────────────────────────────────────────────────────────────────
 
-// ─── Styles ──────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  loadMoreBtn: {
-    alignSelf: "center",
-    marginTop: 16,
-    minHeight: 44,
-    justifyContent: "center",
-    paddingVertical: 12,
-    paddingHorizontal: 28,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: T.green,
+  // Last-order card (vega): flat white card on cream, hairline border, no shadow.
+  lastOrderWrap: { paddingHorizontal: layout.gutter, paddingTop: 12, paddingBottom: 4 },
+  lastOrderCard: {
+    backgroundColor: C.card,
+    borderRadius: radius.xxl,
+    borderWidth: 1,
+    borderColor: C.hairline,
+    padding: layout.cardPadding,
+    gap: 12,
   },
-  loadMoreText: { color: T.green, fontFamily: "PlusJakartaSans_700Bold", fontSize: 13 },
+  lastOrderTop: { flexDirection: "row", alignItems: "center", gap: 12 },
+  lastOrderText: { flex: 1, minWidth: 0, gap: 2 },
+  lastOrderTitle: { ...text.rowTitle },
+  lastOrderMeta: { fontFamily: fontFamily.medium, fontSize: 13, lineHeight: 18, color: C.textSub },
+  lastOrderActions: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  lastOrderNumber: { ...text.caption, flexShrink: 1 },
+  thumbStack: { flexDirection: "row", alignItems: "center" },
+  thumb: {
+    width: THUMB_SIZE,
+    height: THUMB_SIZE,
+    borderRadius: radius.lg,
+    borderWidth: 2,
+    borderColor: C.card,
+    backgroundColor: C.bgSoft,
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  thumbOverlap: { marginLeft: -THUMB_OVERLAP },
+  thumbImage: { position: "absolute", top: 3, right: 3, bottom: 3, left: 3 },
 
-  // Header (shared tab-header spec with categories.tsx)
-  header: {
+  // Chip strip (sticky while the grid scrolls, so it needs an opaque ground).
+  chipBand: { backgroundColor: C.bg },
+  chipRail: { paddingHorizontal: layout.gutter, paddingVertical: 8, gap: layout.gridGap },
+
+  // Scope header
+  groupHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 12,
-    backgroundColor: T.white,
-    borderBottomWidth: 1,
-    borderBottomColor: T.cardBorder,
-    overflow: "hidden", // clips the doodle glyphs; no shadow here, so safe on Android
-  },
-  headerTitle: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 22, color: T.bark, letterSpacing: -0.4 },
-  headerSub: { fontFamily: "PlusJakartaSans_500Medium", fontSize: 12, color: T.barkLight, marginTop: 2 },
-
-  // Scroll
-  scroll: { paddingBottom: 140 },
-
-  // Loading skeleton — mirrors the first two section bands
-  skeletonWrap: { flex: 1, overflow: "hidden" },
-  skeletonRow: { flexDirection: "row" },
-  skeletonCard: { width: 148 },
-
-  // Empty / signed-out
-  emptyWrap: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 40,
     gap: 12,
+    paddingHorizontal: layout.gutter,
+    paddingTop: 8,
+    paddingBottom: 10,
   },
-  emptyIconWrap: {
-    borderWidth: 1.5,
-    borderColor: T.greenBorder,
-  },
-  emptyTitle: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 18, color: T.bark, letterSpacing: -0.2 },
-  emptyDesc: { fontFamily: "PlusJakartaSans_400Regular", fontSize: 14, color: T.barkLight, textAlign: "center", lineHeight: 21 },
-  emptyBtn: {
-    paddingHorizontal: 28,
-    paddingVertical: 14,
-    backgroundColor: T.green,
-    shadowColor: T.green,
-    shadowOpacity: 0.18,
-    elevation: 3,
-  },
-  emptyBtnText: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 14 },
-
-  // Error
-  errorBanner: {
+  groupText: { flex: 1, minWidth: 0, gap: 2 },
+  groupTitle: { ...text.h3 },
+  groupCount: { ...text.rowSubtitle },
+  seeAll: {
     flexDirection: "row",
-    gap: 8,
     alignItems: "center",
-    marginHorizontal: 16,
-    marginTop: 12,
-    marginBottom: 4,
+    gap: 2,
+    paddingVertical: 6,
+    paddingLeft: 10,
+    paddingRight: 4,
+    borderRadius: radius.md,
+  },
+  seeAllPressed: { backgroundColor: C.primaryXLight },
+  seeAllText: { ...text.link },
+
+  // Grid: two cards per row, each (W − 32 − 8) / 2 via flex.
+  gridRow: { flexDirection: "row", gap: layout.gridGap, paddingHorizontal: layout.gutter, paddingBottom: layout.gridGap },
+  gridCard: { flex: 1, minWidth: 0 },
+
+  // Legacy row: quiet, not a product card.
+  legacyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginHorizontal: layout.gutter,
+    marginBottom: layout.gridGap,
     padding: 12,
-    borderRadius: 12,
-    backgroundColor: C.dangerLight,
-  },
-  errorText: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.danger, flex: 1, fontSize: 13 },
-
-  // Section
-  section: {
-    paddingTop: 20,
-    paddingBottom: 6,
-    backgroundColor: T.white,
-    borderTopWidth: 8,
-    borderTopColor: T.bg,
-    overflow: "hidden", // clips the SoftPanel / doodle layers; sections carry no shadow
-  },
-  // Wraps header + carousel inside the white section band as one rounded box.
-  sectionPanel: { top: 10, bottom: 10 },
-  sectionHeaderRow: {
-    paddingHorizontal: 16,
-    marginBottom: 16,
-    gap: 4,
-  },
-  sectionTitle: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    fontSize: 17,
-    color: T.bark,
-    letterSpacing: -0.3,
-  },
-  sectionSubtitle: { fontFamily: "PlusJakartaSans_500Medium",
-    fontSize: 12,
-    color: T.barkLight,
-  },
-
-  // Horizontal list
-  hList: {
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-    gap: 12,
-  },
-
-  // Category chips
-  chip: {
-    width: 100,
-    alignItems: "center",
-    gap: 4,
-  },
-  chipPressed: { opacity: opacity.pressCard, transform: [{ scale: 0.97 }] },
-  chipImgWrap: {
-    width: 96,
-    height: 80,
-    borderRadius: 14,
-    backgroundColor: T.greenXLight,
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
-    padding: 8,
-    position: "relative",
-  },
-  chipImgRow: {
-    flexDirection: "row",
-    gap: 4,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  chipImg: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    backgroundColor: T.white,
-  },
-  chipBadge: {
-    position: "absolute",
-    bottom: 4,
-    right: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    borderRadius: 8,
+    borderRadius: radius.xl,
     borderWidth: 1,
-    borderColor: T.cardBorder,
-    backgroundColor: "rgba(255,255,255,0.9)",
+    borderColor: C.hairline,
+    backgroundColor: C.card,
   },
-  chipBadgeText: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 10, color: T.green },
-  chipLabel: { fontFamily: "PlusJakartaSans_700Bold",
-    fontSize: 12,
-    color: T.bark,
-    textAlign: "center",
-    lineHeight: 16,
-  },
-  chipCount: { fontFamily: "PlusJakartaSans_600SemiBold",
-    fontSize: 10,
-    color: T.barkLight,
-  },
-
-  // Product card
-  card: {
-    backgroundColor: T.white,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: T.cardBorder,
+  legacyThumb: {
+    width: LEGACY_THUMB_SIZE,
+    height: LEGACY_THUMB_SIZE,
+    borderRadius: radius.lg,
+    backgroundColor: C.bgSoft,
     overflow: "hidden",
-    shadowColor: T.cardShadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 1,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  pressFill: { flex: 1 },
-  pressed: { opacity: 0.92 },
-  imageWrap: {
-    height: 120,
-    backgroundColor: T.bg,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: T.cardBorder,
     alignItems: "center",
     justifyContent: "center",
-    position: "relative",
   },
-  cardImage: { width: "100%", height: "100%" },
-  discountBadge: {
-    position: "absolute",
-    top: 8,
-    left: 8,
-    backgroundColor: T.deal,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  discountBadgeText: { fontFamily: "PlusJakartaSans_800ExtraBold", color: T.white, fontSize: 10, letterSpacing: 0.2 },
-  cardBody: { padding: 10, gap: 4 },
-  unitText: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 10, color: T.barkLight },
-  nameText: { fontFamily: "PlusJakartaSans_700Bold",
-    fontSize: 12,
-    color: T.bark,
-    lineHeight: 15,
-    minHeight: 30,
-  },
-  priceRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: 4,
-  },
-  priceText: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 13, color: T.bark, letterSpacing: -0.3 },
-  oldPriceText: { fontFamily: "PlusJakartaSans_300Light",
-    fontSize: 10,
-    color: T.barkLight,
-    textDecorationLine: "line-through",
-    marginTop: 1,
-  },
-  addBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 8,
-    backgroundColor: T.greenXLight,
-    borderWidth: 1.5,
-    borderColor: T.green,
-    minWidth: 52,
-    alignItems: "center",
-  },
-  addBtnText: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 11, color: T.green, letterSpacing: 0.8 },
-  findBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    paddingHorizontal: 8,
-    paddingVertical: 8,
-    borderRadius: 8,
-    backgroundColor: T.greenXLight,
-    borderWidth: 1.5,
-    borderColor: T.green,
-    minWidth: 52,
-    justifyContent: "center",
-  },
-  findBtnText: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 11, color: T.green, letterSpacing: 0.5 },
-  qtyBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: T.green,
-    borderRadius: 8,
-    paddingHorizontal: 2,
-    paddingVertical: 2,
-    minWidth: 76,
-    justifyContent: "space-between",
-  },
-  qtyBtn: {
-    width: 28,
-    height: 28,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 8,
-  },
-  qtyVal: { fontFamily: "PlusJakartaSans_800ExtraBold", color: T.white, fontSize: 12, minWidth: 14, textAlign: "center" },
+  legacyImage: { position: "absolute", top: 4, right: 4, bottom: 4, left: 4 },
+  legacyText: { flex: 1, minWidth: 0, gap: 2 },
+  legacyName: { fontFamily: fontFamily.semibold, fontSize: 13, lineHeight: 17, color: C.text },
+  legacyMeta: { ...text.caption },
 
-  // Grid
-  grid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    paddingHorizontal: 10,
-    paddingBottom: 8,
-  },
-  gridCell: { width: "50%", padding: 6 },
+  // End: paging button or the stamp.
+  endMore: { alignItems: "center", gap: 8, paddingTop: 12, paddingBottom: 20 },
+  endCaption: { ...text.caption },
+  endRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 24 },
+  endText: { fontFamily: fontFamily.semibold, fontSize: 12, color: C.textSub },
 
-  // End
-  endRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 24,
-  },
-  endText: { fontFamily: "PlusJakartaSans_600SemiBold", fontSize: 12, color: T.barkLight },
+  // Skeleton
+  skeletonRoot: { flex: 1 },
+  skeletonChips: { flexDirection: "row", gap: layout.gridGap, paddingHorizontal: layout.gutter, paddingVertical: 8 },
+  slowWrap: { alignItems: "center", gap: 4, paddingTop: 8 },
+  slowText: { ...text.caption, textAlign: "center" },
+  mt6: { marginTop: 6 },
 });

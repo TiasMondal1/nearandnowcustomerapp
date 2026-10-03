@@ -1,83 +1,182 @@
+// codename: cinder
+// Checkout IS the cart (DECISIONS D5 · design/blinkit-parity §3.7 / BP-17 / BP-18 / BP-35 · motion M19 / M32 / M33).
+// One flat white page on the owner's 8 px band pattern: titled header ("Cart · N items · Delivery in 12 min"), the
+// item rows with the shared Stepper (remove at min → Undo toast), the price-drift row (kepler), the
+// "Did you forget?" strip + Offers row (W2-checkout-plumbing, composed by their frozen props), the bill with
+// sheet-based fee info, tip chips capped at ₹500, GSTIN / "order for" / instructions on underline Inputs with
+// INLINE validation (Pay never bounces to an Alert), the aligned policy note, and a pay dock that carries the sticky
+// address block, the helper line and the method selector + pay button. The dock lifts with the Android keyboard.
+//
+// Payment invariants (MAP §7.16) are preserved in intent: the order row exists BEFORE payment, cancel/fail actively
+// void it, `verify_failed`/`unverified` keep it and clear the cart, `placingRef` is the synchronous double-tap lock,
+// `navigatingAwayRef` (+ its state twin) is set BEFORE `clearCart()`, `goToOrderConfirmation` is dismiss-to-home-
+// then-push (Home is the one route under the confirmation — W3 R6-RR-1), and `RazorpayUI` is mounted here. Checkout fires NO success feedback — the confirmation screen is the single
+// owner of the success haptic + chime (CONTRACTS §8); this screen plays `error` on cancel / fail / validation only.
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Image } from "expo-image";
-import { LinearGradient } from "expo-linear-gradient";
-import { router } from "expo-router";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { router, useFocusEffect } from "expo-router";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    LayoutAnimation,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  Alert,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  type KeyboardEvent,
+  type LayoutChangeEvent,
+  type TextInput,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 
+import { AddressBlock } from "../../components/checkout/AddressBlock";
+import { BillSection } from "../../components/checkout/BillSection";
+import { DidYouForgetStrip } from "../../components/checkout/DidYouForgetStrip";
+import { ItemsSection } from "../../components/checkout/ItemsSection";
+import { OffersRow } from "../../components/checkout/OffersRow";
+import { OrderForSection, type OrderForValue, type ReceiverField } from "../../components/checkout/OrderForSection";
+import { PayDock, type PayDockHelper } from "../../components/checkout/PayDock";
+import { TipSection, type TipPreset } from "../../components/checkout/TipSection";
 import { PaymentProcessingOverlay } from "../../components/PaymentProcessingOverlay";
-import { BackButton, BottomDock, Divider, SectionLabel, Skeleton } from "../../components/ui";
+import {
+  ChevronRotate,
+  Collapsible,
+  dismissToast,
+  dur,
+  ease,
+  EmptyState,
+  IconButton,
+  IconWrap,
+  Input,
+  ListRow,
+  notify,
+  PressableScale,
+  Screen,
+  ScreenHeader,
+  Skeleton,
+  SkeletonScreen,
+  useDockHeight,
+  useMotionReduced,
+} from "../../components/ui";
 import { C } from "../../constants/colors";
 import { calcOrderTotal, DELIVERY_FEE_WAS } from "../../constants/fees";
+import { fontFamily, motion, radius } from "../../constants/ui";
 import { useAuth } from "../../context/AuthContext";
-import { useCart } from "../../context/CartContext";
+import { cartActions, getCartSnapshot, useCart, type CartItem, type PriceDrift } from "../../context/CartContext";
 import { useLocation } from "../../context/LocationContext";
+import { useDeliveryEta } from "../../hooks/useDeliveryEta";
+import { useIsOnline } from "../../hooks/useIsOnline";
 import { usePaymentFlow } from "../../hooks/usePaymentFlow";
-import { cdnImage } from "../../lib/imageUrl";
-import { formatQuantityDisplay } from "../../lib/quantityFormat";
-import { markOrderPlaced } from "../../lib/orderHistoryFlag";
-import { cancelOrder, createOrder, type Order } from "../../lib/orderService";
-import {
-    getPaymentSelection,
-    subscribePaymentSelection,
-    type PaymentSelection,
-} from "../../lib/paymentSelection";
-import { PAYMENT_LOGOS } from "../../lib/paymentLogos";
-import { getWalletBalance, payOrderWithWallet } from "../../lib/walletService";
-import { logSilentFailure } from "../../lib/logSilentFailure";
+import { useForceSkeleton } from "../../hooks/useSlowLoad";
+import { getDevFlag, useDevFlag } from "../../lib/devFlags";
+import { feedback } from "../../lib/feedback";
+import { formatMoney } from "../../lib/formatMoney";
+import { GSTIN_EXAMPLE, gstinHint, gstinProblem, isValidGstin, normalizeGstin } from "../../lib/gstin";
 import { logError } from "../../lib/logError";
-import {
-    getAllProducts,
-    getMemoryHomeCache,
-    type Product,
-} from "../../lib/productService";
+import { logSilentFailure } from "../../lib/logSilentFailure";
+import { markOrderPlaced } from "../../lib/orderHistoryFlag";
+import { cancelOrder, createOrder, invalidateOrders, type Order } from "../../lib/orderService";
+import { getPaymentSelection, subscribePaymentSelection } from "../../lib/paymentSelection";
+import { getCachedProduct } from "../../lib/productService";
 import { clearSavedPaymentMethodsCache } from "../../lib/razorpayService";
-import { getNearbyProductFilter } from "../../lib/storeService";
-import { gstinHint, isValidGstin, normalizeGstin } from "../../lib/gstin";
 import { useGstinVerification } from "../../lib/useGstinVerification";
+import { getWalletBalance, payOrderWithWallet, peekWalletBalance } from "../../lib/walletService";
 
-// GSTIN checks (format + check character) live in lib/gstin.ts, shared
-// word-for-word with the backend and the website (GST finding G4).
+// ─── Constants ────────────────────────────────────────────────────────────────
 
-// Off-palette screen ground (no C token equals it — flagged in the UI audit).
-// Kept byte-identical; hoisted so the screen and the pay dock can't drift apart.
-const SCREEN_BG = "#f0f0f5";
+/** Tip ceiling (C36): anything above is clamped on blur with a shake + "Max ₹500". */
+const TIP_CAP = 500;
+const PHONE_LENGTH = 10;
+const GSTIN_LENGTH = 15;
+const OFFLINE_HELPER = "Connect to the internet to place your order";
+/** C35 — the same sentence the support FAQ uses, so the two surfaces no longer contradict each other. */
+const POLICY_COPY = "Orders can be cancelled until the store accepts them. After that, contact support and we'll help.";
+/** A line that vanished within this window of the last USER mutation is a removal the user made (→ Undo toast). */
+const REMOVE_TOAST_WINDOW_MS = 1500;
+/** "Clear cart" toasts itself; the per-line diff stays quiet for this long after it. */
+const CLEAR_SUPPRESS_MS = 600;
+/** Focus the offending field once the scroll-to has settled. */
+const FOCUS_AFTER_SCROLL_MS = 260;
+const LINK_HIT_SLOP = { top: 8, bottom: 8, left: 8, right: 12 } as const;
+const SKELETON_ROWS = [0, 1, 2] as const;
+const SKELETON_BILL_ROWS = [0, 1, 2, 3] as const;
 
-// hitSlop insets for the small controls on this screen (visual sizes unchanged;
-// these only grow the touch target towards the 44px guideline).
-const QTY_HIT_SLOP = { top: 8, bottom: 8, left: 6, right: 6 };
-const ROW_HIT_SLOP = { top: 8, bottom: 8 };
-const TEXT_BTN_HIT_SLOP = { top: 10, bottom: 10, left: 12, right: 12 };
-const LINK_HIT_SLOP = { top: 8, bottom: 8, left: 0, right: 12 };
+type FieldKey = "address" | "receiverName" | "receiverPhone" | "gstin" | "invoiceName";
+type SectionKey = "tip" | "gstin" | "orderFor" | "instructions";
+type Problem = { field: FieldKey; summary: string; alertTitle: string; alertMessage: string };
+
+/** Which scrollable section hosts each validation target (the address strip lives in the dock → no scroll). */
+const SECTION_FOR_FIELD: Record<FieldKey, SectionKey | null> = {
+  address: null,
+  receiverName: "orderFor",
+  receiverPhone: "orderFor",
+  gstin: "gstin",
+  invoiceName: "gstin",
+};
+const ZERO_SHAKES: Record<FieldKey, number> = { address: 0, receiverName: 0, receiverPhone: 0, gstin: 0, invoiceName: 0 };
+const UNTOUCHED: Record<FieldKey, boolean> = { address: false, receiverName: false, receiverPhone: false, gstin: false, invoiceName: false };
 
 /**
  * Every payment path (COD, wallet, Razorpay) lands here once the order is
- * genuinely committed. Replacing checkout with home *before* pushing
- * confirmation — rather than replacing checkout with confirmation directly —
- * means whatever screen sits below confirmation/track in the stack is always
- * home, so backing out of tracking lands on home (with its active-orders
- * banner) instead of wherever checkout happened to be pushed from.
+ * genuinely committed. Unwinding to home *before* pushing confirmation —
+ * rather than replacing checkout with confirmation directly — means whatever
+ * screen sits below confirmation/track in the stack is always home, so backing
+ * out of tracking lands on home (with its active-orders banner) instead of
+ * wherever checkout happened to be pushed from.
+ *
+ * `dismissTo`, not `replace` (W3 R6-RR-1): checkout is pushed above the live
+ * `(tabs)`, and REPLACE swaps only the focused route, so it left
+ * [(tabs), (tabs), confirmation] — two Home navigators mounted, and the
+ * confirmation's own `dismissTo("/(tabs)/home")` stopped at the duplicate.
+ * POP_TO pops checkout back to the live tabs (merging { screen: "home" }); from
+ * a cold deep link straight into checkout it replaces instead, so the end state
+ * is [(tabs), confirmation] either way.
  */
-function goToOrderConfirmation(orderId: string) {
-  router.replace("/(tabs)/home");
-  router.push(`/order/confirmation/${orderId}` as any);
+function goToOrderConfirmation(orderId: string): void {
+  // The "Cart cleared · Undo" toast must not survive into the confirmation (W3 R2-18); per-line toasts are guarded.
+  dismissToast("cart-cleared");
+  router.dismissTo("/(tabs)/home");
+  router.push(`/order/confirmation/${orderId}`);
 }
 
+/**
+ * The two order-placement failures that keep a native Alert (W3 R2-F6 — kept on purpose): "verify your email" is a
+ * confirmation that navigates to the profile, and a generic backend rejection ("Product(s) not available from any
+ * store near you: <item, item, …>") carries a long, item-specific message that a toast would clamp to two lines —
+ * it must stay readable in full so the customer knows which rows to fix.
+ */
+function showOrderFailure(message: string): void {
+  if (message.toLowerCase().includes("verify your email")) {
+    // Sanctioned Alert (W3 F8): unrecoverable error / blocking requirement — not a toast.
+    Alert.alert("Email verification required", message, [
+      { text: "Verify now", onPress: () => router.push("/settings/profile") },
+      { text: "Cancel", style: "cancel" },
+    ]);
+    return;
+  }
+  // Sanctioned Alert (W3 F8): unrecoverable error / blocking requirement — not a toast.
+  Alert.alert("Order failed", `${message}\n\nYour cart is safe — please try again.`);
+}
+
+// ─── Screen ───────────────────────────────────────────────────────────────────
+
 export default function CheckoutScreen() {
-  const { items, isHydrated, appliedCoupon, removeCoupon, discount, isCouponEligible, clearCart, addItem, incrementQty } = useCart();
+  const { items, isHydrated, subtotal, totalQty, itemCount, appliedCoupon, discount, isCouponEligible } = useCart();
   const { user, customer } = useAuth();
+  const { location, locationKey } = useLocation();
+  const eta = useDeliveryEta();
+  const online = useIsOnline();
+  const cobaltOff = useDevFlag("Dev_Cobalt_inhibit_Feature");
+  const dockHeight = useDockHeight();
+  const reduced = useMotionReduced();
+  // The screen deliberately does NOT subscribe to the payment selection: the dock's two leaves do (PayDock), and
+  // placeOrder reads it synchronously — a selection change must never re-render this whole tree.
+  const { phase: paymentPhase, payForOrder, RazorpayUI } = usePaymentFlow();
+
   const [placing, setPlacing] = useState(false);
+  // The order being paid online / by wallet, for the processing overlay's "Need help?" link (null otherwise).
+  const [payingOrderId, setPayingOrderId] = useState<string | null>(null);
   // Synchronous lock, checked/set before any React re-render — `placing` state
   // alone isn't enough to stop a fast double-tap, since the button doesn't
   // actually re-render as disabled until after the first tap's state update
@@ -85,12 +184,13 @@ export default function CheckoutScreen() {
   const placingRef = useRef(false);
   // Set right before any clearCart() that's followed by an intentional
   // away-navigation (confirmation, /orders). clearCart() re-renders this
-  // still-mounted screen with items.length === 0, which would otherwise
-  // trip the "empty cart -> home" guard below and race it against — and
-  // frequently win over — the real navigation issued a line later.
+  // still-mounted screen with items.length === 0, which would otherwise show
+  // the empty state (and used to redirect Home) and race the real navigation.
+  // `navigatingAway` is its state twin for JSX — refs are never read in render.
   const navigatingAwayRef = useRef(false);
-  const { location } = useLocation();
+  const [navigatingAway, setNavigatingAway] = useState(false);
 
+  // ─── GSTIN ───
   const [gstinClaim, setGstinClaim] = useState(false);
   const [gstin, setGstin] = useState("");
   const [invoiceName, setInvoiceName] = useState("");
@@ -101,219 +201,405 @@ export default function CheckoutScreen() {
   useEffect(() => {
     if (gstinCheck.state === "verified" && gstinCheck.legalName) setInvoiceName(gstinCheck.legalName);
   }, [gstinCheck]);
-  const [deliveryInstructions, setDeliveryInstructions] = useState("");
-  const [tipPreset, setTipPreset] = useState<10 | 20 | 30 | 50 | "custom" | null>(null);
-  const [customTip, setCustomTip] = useState("");
 
+  // ─── Tip / instructions / receiver ───
+  const [deliveryInstructions, setDeliveryInstructions] = useState("");
+  const [tipPreset, setTipPreset] = useState<TipPreset | null>(null);
+  const [customTip, setCustomTip] = useState("");
+  const [tipError, setTipError] = useState<string | null>(null);
+  const [thanksNonce, setThanksNonce] = useState(0);
   // Who is this order for? Captured here (not on the saved address) so the
   // same address can serve both self-delivery and "ordering for someone else".
-  const [orderFor, setOrderFor] = useState<"self" | "others">("self");
+  const [orderFor, setOrderFor] = useState<OrderForValue>("self");
   const [receiverName, setReceiverName] = useState("");
   const [receiverPhone, setReceiverPhone] = useState("");
   const [receiverAddress, setReceiverAddress] = useState("");
 
-  // Seed recommended from the already-warm home cache so the "Did you forget?"
-  // strip paints on frame 1 instead of waiting on a network round-trip. Falls
-  // back to an async fetch only if the cache is empty.
-  const [recommended, setRecommended] = useState<Product[]>(() => {
-    const cache = getMemoryHomeCache();
-    if (!cache) return [];
-    const flat: Product[] = [];
-    for (const arr of Object.values(cache.productsByCategory)) flat.push(...arr);
-    return flat.slice(0, 9);
-  });
+  // ─── Validation state (M32) ───
+  const [submitted, setSubmitted] = useState(false);
+  const [touched, setTouched] = useState<Record<FieldKey, boolean>>(UNTOUCHED);
+  const [shakes, setShakes] = useState<Record<FieldKey, number>>(ZERO_SHAKES);
+  const [walletHint, setWalletHint] = useState<string | null>(null);
 
-  // Count of cart items not found among the current location's radius-filtered
-  // catalog (nearbyIds, computed below alongside `recommended`) — a customer
-  // could add items near address A, then switch to a farther saved address B
-  // via /select-location without revisiting Home, and previously got no client-
-  // side signal that some items might not be deliverable there; the backend
-  // still enforces this at order-placement, this is purely an earlier warning.
-  // Found 2026-09-09.
-  const [outOfRangeItemCount, setOutOfRangeItemCount] = useState(0);
+  // ─── Price drift (kepler) ───
+  const [drift, setDrift] = useState<PriceDrift[]>([]);
+  const [driftDismissed, setDriftDismissed] = useState(false);
 
-  // NOTE: we intentionally do NOT hold the payment selection in React state
-  // on this screen. Subscribing here would re-render the entire (large)
-  // checkout tree every time the user picks a payment method, which was
-  // causing a visible hang when returning from the payment-options page.
-  // Instead, the small `<PayMethodSelector>` / `<PayButtonLabel>` components
-  // near the bottom of this file subscribe on their own and re-render in
-  // isolation, and the placeOrder handler reads the latest selection
-  // synchronously via `getPaymentSelection()`.
-  const { phase: paymentPhase, payForOrder, RazorpayUI } = usePaymentFlow();
+  // ─── Refs ───
+  const scrollRef = useRef<ScrollView>(null);
+  const sectionY = useRef<Record<SectionKey, number>>({ tip: 0, gstin: 0, orderFor: 0, instructions: 0 });
+  const focusedSectionRef = useRef<SectionKey | null>(null);
+  const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevItemsRef = useRef<CartItem[]>(items);
+  const suppressRemoveToastUntilRef = useRef(0);
+  const dockWrapRef = useRef<View>(null);
+  const gstinRef = useRef<TextInput>(null);
+  const invoiceNameRef = useRef<TextInput>(null);
+  const receiverNameRef = useRef<TextInput>(null);
+  const receiverPhoneRef = useRef<TextInput>(null);
+  const tipRef = useRef<TextInput>(null);
 
-  // Empty cart → home (e.g. user removed the last item). Gated on
-  // isHydrated so a real, non-empty persisted cart that just hasn't finished
-  // loading from AsyncStorage yet (e.g. this screen reached via deep link or
-  // restored navigation state) doesn't get incorrectly kicked to Home.
-  // Also skipped while navigatingAwayRef is set — placeOrder() clears the
-  // cart on every success/failure path right before navigating to
-  // confirmation or /orders, and without this guard that clearCart() would
-  // itself trigger this effect and redirect Home instead, racing (and often
-  // winning) against the intended navigation.
-  useEffect(() => {
-    if (isHydrated && items.length === 0 && !navigatingAwayRef.current) {
-      router.replace("/(tabs)/home");
-    }
-  }, [isHydrated, items.length]);
+  // ─── Keyboard-safe dock (U32) ───
+  const [kbLift, setKbLift] = useState(0);
+  const dockLift = useSharedValue(0);
+  const dockLiftStyle = useAnimatedStyle(() => ({ transform: [{ translateY: dockLift.get() }] }));
 
-  useEffect(() => {
-    // Kick off scoring immediately. We no longer gate on `location` being
-    // ready — the user already picked items, so we have everything we need to
-    // render a sensible "Did you forget?" strip on frame 1. If the memory
-    // cache from the home screen is warm we skip the network entirely; if
-    // not, we fall back to a single round-trip while the rest of the page
-    // stays interactive.
-    const loadRecommended = async () => {
-      if (items.length === 0) {
-        setRecommended([]);
-        setOutOfRangeItemCount(0);
-        return;
-      }
-      try {
-        if (!location) {
-          // No delivery location set — the 0-4 km radius filter can't run,
-          // so skip suggestions entirely instead of falling back to every
-          // active store's catalog (which could include products from
-          // stores far outside the customer's actual delivery range).
-          setRecommended([]);
-          setOutOfRangeItemCount(0);
-          return;
-        }
-        const nearbyFilter = await getNearbyProductFilter(location.latitude, location.longitude);
-        const nearbyIds = nearbyFilter?.productIds ?? new Set<string>();
-        // A cart item missing from nearbyIds either fell outside the current
-        // location's delivery radius or is no longer active — either way it
-        // may not be deliverable here, worth flagging before the backend's
-        // own checkout-time check does.
-        setOutOfRangeItemCount(items.filter((i) => !nearbyIds.has(i.product_id)).length);
-
-        const cache = getMemoryHomeCache();
-        let allProducts: Product[];
-        if (cache) {
-          // The warm home cache is store-active-only, not radius-filtered —
-          // narrow it to nearby stores' products, same restriction the home
-          // screen itself applies once location hydrates.
-          const flat: Product[] = [];
-          for (const arr of Object.values(cache.productsByCategory)) flat.push(...arr);
-          allProducts = flat.filter((p) => nearbyIds.has(p.id));
-        } else {
-          allProducts = await getAllProducts({ nearbyIds });
-        }
-        const cartIds = new Set(items.map((i) => i.product_id));
-
-        // Get cart products with their details
-        const cartProducts = allProducts.filter((p) => cartIds.has(p.id));
-
-        // Extract categories from cart items, weighted by quantity
-        const categoryWeights = new Map<string, number>();
-        cartProducts.forEach((product) => {
-          const cartItem = items.find((i) => i.product_id === product.id);
-          const weight = cartItem ? cartItem.quantity : 1;
-          if (product.category) {
-            categoryWeights.set(product.category, (categoryWeights.get(product.category) || 0) + weight);
-          }
-        });
-
-        // Sort categories by weight (most frequently purchased)
-        const sortedCategories = Array.from(categoryWeights.entries())
-          .sort((a, b) => b[1] - a[1])
-          .map(([category]) => category);
-
-        // Get products not in cart
-        const availableProducts = allProducts.filter((p) => !cartIds.has(p.id));
-
-        // Score products based on:
-        // 1. Same category as cart items (higher score for categories with more weight)
-        // 2. Similar price range to cart items
-        // 3. In stock
-        // 4. Good ratings
-        const cartAvgPrice = cartProducts.length > 0
-          ? cartProducts.reduce((sum, p) => {
-              const cartItem = items.find((i) => i.product_id === p.id);
-              const quantity = cartItem ? cartItem.quantity : 1;
-              return sum + (p.price * quantity);
-            }, 0) / items.reduce((sum, i) => sum + i.quantity, 0)
-          : 0;
-
-        const scoredProducts = availableProducts
-          .filter((p) => p.in_stock)
-          .map((product) => {
-            let score = 0;
-
-            // Category matching (highest priority)
-            if (product.category && sortedCategories.includes(product.category)) {
-              const categoryIndex = sortedCategories.indexOf(product.category);
-              const categoryWeight = categoryWeights.get(product.category) || 0;
-              score += (sortedCategories.length - categoryIndex) * 10 + categoryWeight * 2;
-            }
-
-            // Price similarity (moderate priority)
-            if (cartAvgPrice > 0) {
-              const priceDiff = Math.abs(product.price - cartAvgPrice);
-              const priceSimilarity = Math.max(0, 1 - priceDiff / cartAvgPrice);
-              score += priceSimilarity * 5;
-            }
-
-            // Rating bonus (low priority)
-            if (product.avgRating) {
-              score += product.avgRating * 2;
-            }
-
-            // Review count bonus
-            if (product.reviewCount) {
-              score += Math.min(product.reviewCount / 10, 3);
-            }
-
-            return { product, score };
-          })
-          .sort((a, b) => b.score - a.score)
-          .slice(0, 9)
-          .map(({ product }) => product);
-
-        setRecommended(scoredProducts);
-      } catch {
-        // Keep whatever we seeded from the cache; better than a jarring empty strip.
-      }
-    };
-    loadRecommended();
-  }, [items, location]);
-
-  const subtotal = useMemo(() => items.reduce((s, i) => s + i.price * i.quantity, 0), [items]);
-  const totalItems = useMemo(() => items.reduce((s, i) => s + i.quantity, 0), [items]);
+  // ─── Money (math unchanged: constants/fees.ts is a backend mirror) ───
   const { platformFee, handlingFee, deliveryFee, projected } = useMemo(
-    // calcOrderTotal's distanceKm param is unused (delivery is a flat ₹0 —
-    // see constants/fees.ts); this screen used to run an extra per-cart-change
-    // Supabase query (getBatchProductStoreDistances) purely to compute a value
-    // that fed into it and was then ignored, plus drove a loading spinner on a
-    // bill row whose value never actually changed. Removed 2026-09-09 — matches
-    // how cart.tsx and payment-options.tsx already call this (no real distance).
-    () => calcOrderTotal(subtotal, totalItems),
-    [subtotal, totalItems],
+    // calcOrderTotal's distanceKm param is unused (delivery is a flat ₹0 — see
+    // constants/fees.ts); this screen used to run an extra per-cart-change
+    // Supabase query (a batch product-to-store distance lookup, since deleted)
+    // purely to compute a value that fed into it and was then ignored. Removed
+    // 2026-09-09 — matches how payment-options.tsx calls this (no real distance).
+    () => calcOrderTotal(subtotal, totalQty),
+    [subtotal, totalQty],
   );
-  const baseFinalPayable = useMemo(() => Math.max(projected - discount, 0), [projected, discount]);
-
+  const baseFinalPayable = Math.max(projected - discount, 0);
   const tipAmount = useMemo(() => {
     if (!tipPreset) return 0;
     if (tipPreset === "custom") {
-      const val = parseFloat(customTip.replace(/[^0-9.]/g, ""));
-      if (Number.isNaN(val) || !Number.isFinite(val)) return 0;
-      return Math.max(val, 0);
+      // Digits only (number-pad), so the tip is already a whole rupee (C36); the cap is applied for the totals
+      // even before the blur clamps the field.
+      const parsed = parseInt(customTip, 10);
+      return Number.isFinite(parsed) ? Math.min(Math.max(parsed, 0), TIP_CAP) : 0;
     }
     return tipPreset;
   }, [tipPreset, customTip]);
+  // The ONE rounding: pay button, order_total and the Razorpay amount all read this integer (C36).
+  const finalPayable = Math.round(baseFinalPayable + tipAmount);
 
-  const finalPayable = useMemo(() => baseFinalPayable + tipAmount, [baseFinalPayable, tipAmount]);
+  const cartSig = useMemo(() => items.map((i) => i.product_id).sort().join(","), [items]);
+  const offlineBlocked = !online && !cobaltOff;
+  const subtitle = [
+    `${itemCount} ${itemCount === 1 ? "item" : "items"}`,
+    eta.state === "open" && eta.minutes != null ? `Delivery in ${eta.minutes} min` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  // ─── Price drift: on mount, on hydration and on every focus (kepler) ───
+  const revalidatePrices = useCallback(() => {
+    if (!getCartSnapshot().isHydrated) return;
+    const drifts = cartActions.revalidatePrices((id) => getCachedProduct(id)?.price);
+    if (drifts.length > 0) {
+      setDrift(drifts);
+      setDriftDismissed(false);
+    }
+  }, []);
+  useFocusEffect(revalidatePrices);
+  // The wallet-shortfall helper is stale the moment the method changes or the user returns (from /wallet with a
+  // top-up, say); it used to stick until the next Pay tap (W3 R2-08).
+  useEffect(() => subscribePaymentSelection((s) => { if (s.mode !== "wallet") setWalletHint(null); }), []);
+  useFocusEffect(useCallback(() => { setWalletHint(null); }, []));
+  useEffect(() => {
+    if (isHydrated) revalidatePrices();
+  }, [isHydrated, revalidatePrices]);
+
+  // ─── Per-line removal → Undo toast (M33). The Stepper removes through CartContext; the screen only watches. ───
+  useEffect(() => {
+    const prev = prevItemsRef.current;
+    prevItemsRef.current = items;
+    if (prev === items || navigatingAwayRef.current) return;
+    if (Date.now() < suppressRemoveToastUntilRef.current) return;
+    const currentIds = new Set(items.map((i) => i.product_id));
+    const removed = prev.filter((line) => !currentIds.has(line.product_id));
+    // Exactly one line gone = a trash tap / "−" at the minimum; batches are Clear cart (toasted there) or logout.
+    if (removed.length !== 1) return;
+    if (Date.now() - getCartSnapshot().lastUserMutationAt > REMOVE_TOAST_WINDOW_MS) return;
+    const line = removed[0];
+    const noUndo = getDevFlag("Dev_Cinder_inhibit_UndoRemove") || getDevFlag("Dev_Cinder_inhibit_Feature");
+    notify({
+      id: `removed-${line.product_id}`,
+      title: `Removed ${line.name}`,
+      action: noUndo
+        ? undefined
+        : {
+            label: "Undo",
+            onPress: () => {
+              // The toast outlives placement: never re-insert into the empty post-order cart (W3 R2-18).
+              if (!navigatingAwayRef.current) cartActions.restoreItem(line, { silent: true });
+            },
+          },
+    });
+  }, [items]);
+
+  // ─── Keyboard: scroll the focused section into view; on Android lift the dock by its real overlap ───
+  // Android's default softwareKeyboardLayoutMode is "resize" (the window already shrinks above the keyboard), so a
+  // blind translateY(keyboardHeight) would double-lift. The lift is therefore the measured overlap between the
+  // dock's bottom and the keyboard's top: 0 in resize mode, the full height in pan mode.
+  useEffect(() => {
+    const scrollFocusedSectionIntoView = () => {
+      const key = focusedSectionRef.current;
+      if (!key) return;
+      scrollRef.current?.scrollTo({ y: Math.max(0, sectionY.current[key] - 8), animated: true });
+    };
+    const timing = { duration: dur(motion.duration.base), easing: ease.standard };
+    const show = Keyboard.addListener("keyboardDidShow", (e: KeyboardEvent) => {
+      if (Platform.OS !== "android") {
+        requestAnimationFrame(scrollFocusedSectionIntoView);
+        return;
+      }
+      const keyboardTop = e.endCoordinates.screenY;
+      const wrap = dockWrapRef.current;
+      if (!wrap) return;
+      wrap.measureInWindow((_x, y, _w, h) => {
+        const overlap = Math.max(0, Math.round(y + h - keyboardTop));
+        dockLift.set(reduced ? -overlap : withTiming(-overlap, timing));
+        setKbLift(overlap);
+        requestAnimationFrame(scrollFocusedSectionIntoView);
+      });
+    });
+    const hide = Keyboard.addListener("keyboardDidHide", () => {
+      if (Platform.OS !== "android") return;
+      dockLift.set(reduced ? 0 : withTiming(0, timing));
+      setKbLift(0);
+    });
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, [dockLift, reduced]);
+
+  useEffect(
+    () => () => {
+      if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
+    },
+    [],
+  );
+
+  // ─── Handlers (stable, for the memoised sections) ───
+  const handleClearCart = useCallback(() => {
+    // One gesture → one haptic (CONTRACTS §8 'Clear cart confirmed → heavy'): the store's own `remove` is silenced
+    // so the tap is not heavy + remove + ui_remove (W3 R2-03 / R4-01).
+    feedback.heavy();
+    suppressRemoveToastUntilRef.current = Date.now() + CLEAR_SUPPRESS_MS;
+    const snap = cartActions.clearCart({ silent: true });
+    const noUndo = getDevFlag("Dev_Cinder_inhibit_UndoRemove") || getDevFlag("Dev_Cinder_inhibit_Feature");
+    notify({
+      id: "cart-cleared",
+      title: "Cart cleared",
+      action: noUndo
+        ? undefined
+        : {
+            label: "Undo",
+            // The toast outlives placement: never re-insert into the empty post-order cart (W3 R2-18).
+            onPress: () => {
+              if (!navigatingAwayRef.current) cartActions.restoreCart(snap.items, snap.coupon);
+            },
+          },
+    });
+  }, []);
+  // dismissTo pops to the live tabs route (merging {screen}) instead of stacking a second tab navigator on every
+  // "Add more → View cart" loop (W3 R6-01 / R6-04 / R2-22).
+  const handleAddMore = useCallback(() => {
+    router.dismissTo("/(tabs)/home");
+  }, []);
+  const browseProducts = useCallback(() => {
+    router.dismissTo("/(tabs)/home");
+  }, []);
+
+  const handleTipPreset = useCallback((next: TipPreset | null) => {
+    setTipPreset(next);
+    if (typeof next === "number") setThanksNonce((n) => n + 1);
+    if (next !== "custom") setTipError(null);
+  }, []);
+  const handleCustomTipChange = useCallback((raw: string) => {
+    setCustomTip(raw.replace(/\D/g, ""));
+    setTipError(null);
+  }, []);
+  const handleCustomTipBlur = useCallback(() => {
+    const parsed = parseInt(customTip, 10);
+    if (!Number.isFinite(parsed)) return;
+    if (parsed > TIP_CAP) {
+      // Clamp + inline hint + ONE error (the Input shakes on the new error message).
+      setCustomTip(String(TIP_CAP));
+      setTipError(`Max ${formatMoney(TIP_CAP)}`);
+      feedback.error();
+      return;
+    }
+    if (parsed > 0) setThanksNonce((n) => n + 1);
+  }, [customTip]);
+
+  const markTouched = useCallback((field: FieldKey) => {
+    setTouched((prev) => (prev[field] ? prev : { ...prev, [field]: true }));
+  }, []);
+  const handleReceiverBlur = useCallback((field: ReceiverField) => markTouched(field), [markTouched]);
+  const focusTip = useCallback(() => {
+    focusedSectionRef.current = "tip";
+  }, []);
+  const focusGstin = useCallback(() => {
+    focusedSectionRef.current = "gstin";
+  }, []);
+  const focusOrderFor = useCallback(() => {
+    focusedSectionRef.current = "orderFor";
+  }, []);
+  const focusInstructions = useCallback(() => {
+    focusedSectionRef.current = "instructions";
+  }, []);
+  const toggleGstin = useCallback(() => setGstinClaim((v) => !v), []);
+  const handleGstinChange = useCallback((t: string) => setGstin(t.toUpperCase()), []);
+  const handleGstinBlur = useCallback((field: "gstin" | "invoiceName") => markTouched(field), [markTouched]);
+  const dismissDrift = useCallback(() => setDriftDismissed(true), []);
+
+  const onSectionLayout = (key: SectionKey) => (e: LayoutChangeEvent) => {
+    sectionY.current[key] = e.nativeEvent.layout.y;
+  };
+
+  // ─── Validation (cinder, M32): first problem in reading order ───
+  const findProblem = (): Problem | null => {
+    if (!location) {
+      return {
+        field: "address",
+        summary: "Add a delivery address to continue",
+        alertTitle: "No location",
+        alertMessage: "Please select a delivery location.",
+      };
+    }
+    if (orderFor === "others") {
+      if (!receiverName.trim()) {
+        return {
+          field: "receiverName",
+          summary: "Add the receiver's name to continue",
+          alertTitle: "Missing details",
+          alertMessage: "Please enter the receiver's name.",
+        };
+      }
+      if (receiverPhone.trim().length !== PHONE_LENGTH) {
+        return {
+          field: "receiverPhone",
+          summary: receiverPhone.trim() ? "Enter a valid 10-digit phone to continue" : "Add the receiver's phone to continue",
+          alertTitle: "Invalid phone",
+          alertMessage: "Please enter a valid 10-digit mobile number for the receiver.",
+        };
+      }
+    }
+    if (gstinClaim && gstin.trim()) {
+      if (!isValidGstin(gstin)) {
+        const hint = gstinHint(gstin) ?? "Check the GSTIN";
+        return {
+          field: "gstin",
+          summary: hint,
+          alertTitle: "Invalid GSTIN",
+          alertMessage: `${hint}\n\nFix it, or remove it to continue without one.`,
+        };
+      }
+      if (gstinCheck.state === "rejected") {
+        return {
+          field: "gstin",
+          summary: gstinCheck.message,
+          alertTitle: "GSTIN not accepted",
+          alertMessage: `${gstinCheck.message}\n\nFix it, or remove it to continue without one.`,
+        };
+      }
+      if (gstinCheck.state === "checking") {
+        return {
+          field: "gstin",
+          summary: "Still checking your GSTIN — one moment",
+          alertTitle: "Checking GSTIN",
+          alertMessage: "Still checking your GSTIN with the GST portal — one moment.",
+        };
+      }
+      // Required with a GSTIN — the website already enforced this, the app
+      // didn't, so an app order could produce a GST invoice with a GSTIN and no
+      // registered business name. (GST finding G5, 2026-10-02.)
+      if (!invoiceName.trim()) {
+        return {
+          field: "invoiceName",
+          summary: "Add your registered business name to continue",
+          alertTitle: "Business name needed",
+          alertMessage: "Enter your registered business name to go with the GSTIN, or remove the GSTIN to continue without one.",
+        };
+      }
+    }
+    return null;
+  };
+
+  const liveProblem = findProblem();
+  const summary = submitted && liveProblem ? liveProblem.summary : null;
+
+  // Inline errors appear after a blur ("touched") or a Pay attempt; GSTIN format problems are live like today, but
+  // an INCOMPLETE GSTIN reads as a helper until the field is blurred, so the first keystroke is not red.
+  const showReceiver = orderFor === "others";
+  const receiverNameError =
+    showReceiver && (submitted || touched.receiverName) && !receiverName.trim() ? "Enter the receiver's name" : null;
+  const receiverPhoneError =
+    showReceiver && (submitted || touched.receiverPhone) && receiverPhone.length !== PHONE_LENGTH
+      ? "Enter a valid 10-digit mobile number"
+      : null;
+  const gstinTrimmed = gstin.trim();
+  const gstinProb = gstinTrimmed ? gstinProblem(gstin) : null;
+  const gstinHintText = gstinTrimmed ? gstinHint(gstin) : null;
+  const gstinIncompleteSoft = gstinProb === "incomplete" && !(submitted || touched.gstin);
+  const gstinError = !gstinTrimmed
+    ? null
+    : gstinProb && !gstinIncompleteSoft
+      ? gstinHintText
+      : gstinCheck.state === "rejected"
+        ? gstinCheck.message
+        : null;
+  const gstinHelper = gstinError
+    ? null
+    : gstinIncompleteSoft
+      ? gstinHintText
+      : gstinCheck.state === "checking"
+        ? "Checking with the GST portal…"
+        : gstinCheck.state === "unavailable"
+          ? "Couldn't check with the GST portal right now — we'll check again when you place the order."
+          : !gstinTrimmed
+            ? `${GSTIN_LENGTH} characters, e.g. ${GSTIN_EXAMPLE}`
+            : null;
+  const gstinVerified = gstinCheck.state === "verified";
+  const invoiceNameLocked = gstinCheck.state === "verified" && !!gstinCheck.legalName;
+  const invoiceNameError =
+    gstinClaim && gstinTrimmed && (submitted || touched.invoiceName) && !invoiceName.trim()
+      ? "Add your registered business name"
+      : null;
+  const addressError = submitted && !location;
+
+  const dockHelper: PayDockHelper | null = summary
+    ? { text: summary, tone: "danger" }
+    : walletHint
+      ? { text: walletHint, tone: "danger" }
+      : offlineBlocked
+        ? { text: OFFLINE_HELPER, tone: "warning" }
+        : null;
+
+  /** Pay tapped with a problem: scroll + shake + focus + ONE error haptic (or the legacy Alert under the flags). */
+  const reportProblem = (problem: Problem) => {
+    feedback.error();
+    const legacy = getDevFlag("Dev_Cinder_inhibit_InlineValidation") || getDevFlag("Dev_Cinder_inhibit_Feature");
+    if (legacy) {
+      Alert.alert(problem.alertTitle, problem.alertMessage);
+      return;
+    }
+    setSubmitted(true);
+    setShakes((prev) => ({ ...prev, [problem.field]: prev[problem.field] + 1 }));
+    const section = SECTION_FOR_FIELD[problem.field];
+    if (!section) return; // the address strip lives in the dock — already on screen, shaken above
+    scrollRef.current?.scrollTo({ y: Math.max(0, sectionY.current[section] - 12), animated: true });
+    const target =
+      problem.field === "receiverName"
+        ? receiverNameRef
+        : problem.field === "receiverPhone"
+          ? receiverPhoneRef
+          : problem.field === "gstin"
+            ? gstinRef
+            : invoiceNameRef;
+    if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
+    focusTimerRef.current = setTimeout(() => target.current?.focus(), FOCUS_AFTER_SCROLL_MS);
+  };
+
+  // ─── Order creation (unchanged shape) ───
 
   /**
    * Creates the internal `customer_orders` row via the backend.
    *
    * Two callers:
-   *   - COD path: uses the optimistic flag so the success UI fires *immediately*
-   *     and the network call runs in the background.
-   *   - Online path: cannot be optimistic (we must show the Razorpay sheet first
-   *     and only show success after `verifyPayment` returns), so it passes
-   *     `optimistic = false` and awaits the real Order back.
+   *   - COD path: uses the optimistic flag so the confirmation navigation fires
+   *     as soon as the row exists.
+   *   - Online / wallet path: cannot be optimistic (we must show the Razorpay
+   *     sheet / debit the wallet first and only celebrate after verification),
+   *     so it passes `optimistic = false` and awaits the real Order back.
    */
   const doCreateOrder = async (
     paymentStatus: "pending" | "paid",
@@ -331,11 +617,16 @@ export default function CheckoutScreen() {
       customer_name: user.name || "Customer",
       customer_phone: user.phone || customer?.phone || "",
       customer_email: user.email || undefined,
+      // The rail only. The backend's placeCheckoutOrder folds this string into the enum customer_orders.payment_method
+      // (razorpay | cod | wallet) by substring — "wallet" → wallet, "upi" / "online" / "split" → razorpay, ANYTHING
+      // ELSE → cod — so the Razorpay sub-method (card / netbanking / upi) must never be sent here: a card order posted
+      // as "card" would be stored as cash on delivery (W3 R2-02). `preferredMethod` further down carries the
+      // sub-method to the Razorpay sheet instead, and order labels come from paymentMethodLabel().
       payment_method: sel.mode,
       payment_status: paymentStatus,
       subtotal,
       delivery_fee: deliveryFee,
-      order_total: Math.round(finalPayable),
+      order_total: finalPayable,
       delivery_address: location.address ?? location.label ?? "",
       delivery_latitude: location.latitude,
       delivery_longitude: location.longitude,
@@ -353,7 +644,8 @@ export default function CheckoutScreen() {
       receiver_name: orderFor === "others" && receiverName.trim() ? receiverName.trim() : undefined,
       receiver_phone: orderFor === "others" && receiverPhone.trim() ? `+91${receiverPhone.trim()}` : undefined,
       receiver_address: orderFor === "others" && receiverAddress.trim() ? receiverAddress.trim() : undefined,
-      tip_amount: tipAmount > 0 ? tipAmount : undefined,
+      // C36: whole rupees only — order_total is rounded, so the tip must be too.
+      tip_amount: tipAmount > 0 ? Math.round(tipAmount) : undefined,
       // Withheld once the coupon's own min_order_value is no longer met
       // (e.g. an item was removed after applying it) — discount is already
       // 0 in that state, and sending a no-longer-eligible coupon_id would
@@ -362,40 +654,31 @@ export default function CheckoutScreen() {
     };
 
     if (options.optimistic) {
-      // COD path — navigate to confirmation page after order is created.
+      // COD path — navigate to confirmation as soon as the order row exists.
       try {
         const created = await createOrder(orderPayload);
         // Flip the "has placed an order" flag so the Preferred Payment card
         // on the payment-options screen unlocks on the NEXT checkout flow.
         // Fire-and-forget; failing to persist this is non-fatal.
         markOrderPlaced().catch((err) => logSilentFailure("Mark order-placed flag", err));
-        // Cart must be cleared now that the order is placed — it previously
-        // stayed populated so the confirmation screen's "add more items"
-        // window had something to show, but that window doesn't actually
-        // attach added items to this order (separately tracked bug), so
-        // leaving the just-ordered items sitting in the cart just looked
-        // like checkout silently failed to empty it.
+        invalidateOrders(user.id);
+        // Cart must be cleared now that the order is placed — the confirmation's
+        // "add more" window does not attach items to this order, so leaving the
+        // just-ordered items in the cart looked like checkout silently failed.
+        // Silent: the confirmation screen owns the one success feedback.
         navigatingAwayRef.current = true;
-        clearCart();
-        // Navigate to order confirmation page with 40-second add-more window
+        setNavigatingAway(true);
+        cartActions.clearCart({ silent: true });
         goToOrderConfirmation(created.id);
         return created;
       } catch (err: unknown) {
-        const message =
-          err instanceof Error ? err.message : "Something went wrong placing your order.";
-        if (message.toLowerCase().includes("verify your email")) {
-          Alert.alert("Email verification required", message, [
-            { text: "Verify Now", onPress: () => router.push("/settings/profile") },
-            { text: "Cancel", style: "cancel" },
-          ]);
-        } else {
-          Alert.alert("Order failed", `${message}\n\nYour cart is safe — please try again.`);
-        }
-        throw err;
+        logError("Place order", err);
+        showOrderFailure(err instanceof Error ? err.message : "Something went wrong placing your order.");
+        return undefined;
       }
     }
 
-    // Online path — caller awaits the real Order so it can pass `id` to Razorpay.
+    // Online / wallet path — caller awaits the real Order so it can pass `id` on.
     return createOrder(orderPayload);
   };
 
@@ -411,74 +694,46 @@ export default function CheckoutScreen() {
   const voidUnpaidOrder = async (orderId: string) => {
     try {
       await cancelOrder(orderId);
+      // The list entry still holds the pre-void status; drop it so Orders / Home refetch (W3 R2-11).
+      if (user?.id) invalidateOrders(user.id);
     } catch (err) {
       // Best-effort — if this fails (e.g. a delivery partner was assigned in
       // the vanishingly unlikely window between order creation and the
-      // payment being cancelled), the order is still real; swallowing this
-      // silently would hide that from the customer, but the Alert shown by
-      // the caller already tells them to check Orders regardless.
+      // payment being cancelled), the order is still real; the toast already
+      // tells the customer to check Orders regardless.
       logSilentFailure("Void unpaid order after payment cancellation", err);
     }
   };
 
   const placeOrder = async () => {
     if (placingRef.current) return;
-    if (!location) {
-      Alert.alert("No location", "Please select a delivery location.");
+    if (offlineBlocked || items.length === 0) return;
+    const problem = findProblem();
+    if (problem) {
+      reportProblem(problem);
       return;
     }
-    if (items.length === 0) {
-      Alert.alert("Empty cart", "Add items to your cart before checking out.");
-      return;
+    if (!location) return; // narrowed by findProblem; keeps TS honest below
+    // Pay without blurring the custom tip: clamp the FIELD too (the totals already use the capped value) so it never
+    // reads '9999' while ₹500 is charged (W3 R2-19). Silent — the Pay gesture owns the feedback.
+    if (tipPreset === "custom") {
+      const parsed = parseInt(customTip, 10);
+      if (Number.isFinite(parsed) && parsed > TIP_CAP) {
+        setCustomTip(String(TIP_CAP));
+        setTipError(`Max ${formatMoney(TIP_CAP)}`);
+      }
     }
     if (!user?.id) {
-      Alert.alert("Session expired", "Please login again.");
+      feedback.error();
+      notify({ id: "session-expired", title: "Session expired", message: "Please log in again.", tone: "error" });
       return;
     }
-    if (orderFor === "others") {
-      if (!receiverName.trim()) {
-        Alert.alert("Missing details", "Please enter the receiver's name.");
-        return;
-      }
-      if (receiverPhone.trim().length !== 10) {
-        Alert.alert(
-          "Invalid phone",
-          "Please enter a valid 10-digit mobile number for the receiver.",
-        );
-        return;
-      }
-    }
-    if (gstinClaim && gstin.trim() && !isValidGstin(gstin)) {
-      Alert.alert(
-        "Invalid GSTIN",
-        `${gstinHint(gstin)}\n\nFix it, or remove it to continue without one.`,
-      );
-      return;
-    }
-    if (gstinClaim && gstin.trim() && gstinCheck.state === "rejected") {
-      Alert.alert("GSTIN not accepted", `${gstinCheck.message}\n\nFix it, or remove it to continue without one.`);
-      return;
-    }
-    if (gstinClaim && gstin.trim() && gstinCheck.state === "checking") {
-      Alert.alert("Checking GSTIN", "Still checking your GSTIN with the GST portal — one moment.");
-      return;
-    }
-    // Required with a GSTIN — the website already enforced this, the app
-    // didn't, so an app order could produce a GST invoice with a GSTIN and no
-    // registered business name. (GST finding G5, 2026-10-02.)
-    if (gstinClaim && gstin.trim() && !invoiceName.trim()) {
-      Alert.alert(
-        "Business name needed",
-        "Enter your registered business name to go with the GSTIN, or remove the GSTIN to continue without one.",
-      );
-      return;
-    }
+    setWalletHint(null);
     placingRef.current = true;
     setPlacing(true);
     try {
       const currentSelection = getPaymentSelection();
       if (currentSelection.mode === "cod") {
-        // Optimistic flow: success modal renders before the API call returns.
         await doCreateOrder("pending", { optimistic: true });
         return;
       }
@@ -488,36 +743,48 @@ export default function CheckoutScreen() {
       // then pay it off) but no Razorpay sheet — payOrderWithWallet debits
       // the balance synchronously. On success it's identical to a completed
       // online payment from here on (confirmation screen, cache-busting);
-      // on failure (most likely insufficient balance) the order is still
-      // saved, same as an abandoned/failed Razorpay attempt — the customer
-      // retries with a different method from Orders.
+      // on failure (most likely insufficient balance) the order is voided and
+      // the customer retries from checkout, cart intact.
       if (currentSelection.mode === "wallet") {
         // Re-check the balance right before creating the order, not just at
         // selection time on the payment-options screen — a customer who
         // picked Wallet there and then changed their cart (pushing the total
         // past their balance) could otherwise still submit with a doomed
-        // selection; the backend would reject it safely either way, but this
-        // avoids creating an order that's already known to fail.
+        // selection. The cached balance paints the check instantly; the
+        // network read is the truth when it answers.
+        let balance = peekWalletBalance();
         try {
-          const currentBalance = await getWalletBalance();
-          if (currentBalance < finalPayable) {
-            Alert.alert("Insufficient wallet balance", "Please choose another payment method or top up your wallet.");
-            return;
-          }
-        } catch {
+          balance = await getWalletBalance({ force: true });
+        } catch (err) {
           // Balance check itself failed (network blip) — fall through and
           // let the actual payOrderWithWallet call be the source of truth.
+          logSilentFailure("Wallet balance before checkout", err);
+        }
+        if (balance !== undefined && balance < finalPayable) {
+          const hint = `Insufficient wallet balance (${formatMoney(balance)}) — add money or pick another method`;
+          setWalletHint(hint);
+          feedback.error();
+          notify({
+            id: "wallet-insufficient",
+            title: "Insufficient wallet balance",
+            message: "Add money or choose another payment method.",
+            tone: "error",
+          });
+          return;
         }
 
         const internalOrder = await doCreateOrder("pending");
         if (!internalOrder?.id) {
           throw new Error("Could not create order");
         }
+        setPayingOrderId(internalOrder.id);
         try {
           await payOrderWithWallet(internalOrder.id);
           markOrderPlaced().catch((err) => logSilentFailure("Mark order-placed flag", err));
+          invalidateOrders(user.id);
           navigatingAwayRef.current = true;
-          clearCart();
+          setNavigatingAway(true);
+          cartActions.clearCart({ silent: true });
           goToOrderConfirmation(internalOrder.id);
         } catch (err: unknown) {
           // Wallet debit is atomic (either fully succeeds or fully fails, no
@@ -525,10 +792,13 @@ export default function CheckoutScreen() {
           // outright and let the customer retry from checkout, cart intact.
           await voidUnpaidOrder(internalOrder.id);
           const message = err instanceof Error ? err.message : "Payment could not be completed.";
-          Alert.alert(
-            "Wallet payment failed",
-            `${message}\n\nYour order was not placed — please try again.`,
-          );
+          feedback.error();
+          notify({
+            id: "wallet-failed",
+            title: "Wallet payment failed — your cart is safe",
+            message: `${message} Your order was not placed.`,
+            tone: "error",
+          });
         }
         return;
       }
@@ -544,14 +814,15 @@ export default function CheckoutScreen() {
       // The processing overlay is driven by `paymentPhase`, so the user always
       // sees clear "Setting up… / Verifying… / Confirming with bank…" states
       // instead of a frozen-looking checkout screen.
-
       const internalOrder = await doCreateOrder("pending");
       if (!internalOrder?.id) {
         throw new Error("Could not create order");
       }
+      setPayingOrderId(internalOrder.id);
 
       const result = await payForOrder({
         internalOrderId: internalOrder.id,
+        userId: user.id,
         amount: finalPayable,
         customer: {
           name: user.name || "Customer",
@@ -562,9 +833,7 @@ export default function CheckoutScreen() {
         // the Razorpay sheet lands on that tab (UPI / Card / Wallet /
         // Netbanking). EMI isn't used by our checkout, so filter it out.
         preferredMethod:
-          currentSelection.method && currentSelection.method !== "emi"
-            ? currentSelection.method
-            : undefined,
+          currentSelection.method && currentSelection.method !== "emi" ? currentSelection.method : undefined,
       });
 
       if (result.status === "paid") {
@@ -575,9 +844,10 @@ export default function CheckoutScreen() {
         // for this payment shows up on the very next visit to the
         // payment-options screen (instead of the stale empty cache).
         clearSavedPaymentMethodsCache();
+        invalidateOrders(user.id);
         navigatingAwayRef.current = true;
-        clearCart();
-        // Navigate to order confirmation page with 40-second add-more window
+        setNavigatingAway(true);
+        cartActions.clearCart({ silent: true });
         goToOrderConfirmation(internalOrder.id);
         return;
       }
@@ -588,7 +858,13 @@ export default function CheckoutScreen() {
       // to Orders for an order that no longer really exists.
       if (result.status === "error") {
         await voidUnpaidOrder(internalOrder.id);
-        Alert.alert("Payment unavailable", `${result.message}\n\nYour order was not placed — please try again.`);
+        feedback.error();
+        notify({
+          id: "payment-unavailable",
+          title: "Payment unavailable — your cart is safe",
+          message: `${result.message} Your order was not placed.`,
+          tone: "error",
+        });
         return;
       }
 
@@ -597,9 +873,14 @@ export default function CheckoutScreen() {
       // void-and-retry treatment.
       if (result.reason === "cancelled" || result.reason === "failed") {
         await voidUnpaidOrder(internalOrder.id);
-        const title = result.reason === "cancelled" ? "Payment cancelled" : "Payment failed";
-        const detail = result.message ?? (result.reason === "cancelled" ? "You cancelled the payment." : "Payment could not be completed.");
-        Alert.alert(title, `${detail}\n\nYour order was not placed — please try again.`);
+        const cancelled = result.reason === "cancelled";
+        feedback.error();
+        notify({
+          id: "payment-cancelled",
+          title: cancelled ? "Payment cancelled — your cart is safe" : "Payment failed — your cart is safe",
+          message: result.message ?? (cancelled ? "You cancelled the payment." : "Payment could not be completed."),
+          tone: "error",
+        });
         return;
       }
 
@@ -607,1207 +888,478 @@ export default function CheckoutScreen() {
       // is genuinely ambiguous (Razorpay's webhook may still land and
       // confirm the charge after we gave up polling), so unlike a clean
       // cancel/fail above, voiding the order here risks cancelling one that
-      // then gets marked paid. Kept exactly as before: order stays, customer
-      // is routed to Orders to follow up.
+      // then gets marked paid. Kept exactly as before: order stays, cart is
+      // cleared, customer is routed to Orders to follow up. This Alert stays
+      // (it explains money and navigates).
+      invalidateOrders(user.id);
       navigatingAwayRef.current = true;
-      clearCart();
+      setNavigatingAway(true);
+      cartActions.clearCart({ silent: true });
 
-      const titleByReason = {
-        verify_failed: "Payment not confirmed",
-        unverified: "Payment not confirmed",
-      } as const;
       const messageByReason = {
         verify_failed:
           (result.message ?? "Payment could not be verified.") +
           "\n\nIf money was debited it will reflect shortly, or auto-refund within 5–7 days.",
-        unverified:
-          result.message ??
-          "We could not confirm your payment yet. Please check Orders in a minute.",
+        unverified: result.message ?? "We could not confirm your payment yet. Please check Orders in a minute.",
       } as const;
 
-      Alert.alert(titleByReason[result.reason], messageByReason[result.reason], [
+      feedback.error();
+      Alert.alert(
+        "Payment not confirmed",
+        messageByReason[result.reason],
+        [{ text: "Go to Orders", onPress: () => router.replace("/orders") }],
         {
-          text: "Go to Orders",
-          onPress: () => router.replace("/orders"),
+          cancelable: true,
+          onDismiss: () => {
+            // Android back on the Alert: the cart is empty now, so show the empty state instead of a frozen frame.
+            navigatingAwayRef.current = false;
+            setNavigatingAway(false);
+          },
         },
-      ]);
+      );
       return;
-    } catch (err: any) {
+    } catch (err: unknown) {
       logError("Place order", err);
-      const message = err?.message || "Something went wrong. Please try again.";
-      if (String(message).toLowerCase().includes("verify your email")) {
-        Alert.alert("Email verification required", message, [
-          { text: "Verify Now", onPress: () => router.push("/settings/profile") },
-          { text: "Cancel", style: "cancel" },
-        ]);
-      } else {
-        Alert.alert("Order failed", message);
-      }
+      showOrderFailure(err instanceof Error ? err.message : "Something went wrong. Please try again.");
     } finally {
       placingRef.current = false;
       setPlacing(false);
+      setPayingOrderId(null);
     }
   };
 
+  // ─── Render ───
+  const addressBlock = useMemo(
+    () => (
+      <AddressBlock
+        label={location?.label ?? null}
+        address={location?.address ?? null}
+        shakeTrigger={shakes.address}
+        error={addressError}
+      />
+    ),
+    [location?.label, location?.address, shakes.address, addressError],
+  );
+
+  const showSkeleton = useForceSkeleton(!isHydrated || navigatingAway);
+  const showEmpty = !showSkeleton && items.length === 0;
+
   return (
-    <SafeAreaView style={styles.safe}>
-      {/* ─── Header: matches the home screen's "DELIVERY TO" address bar so
-          there's no visual jump when navigating between tabs. ─── */}
-      <View style={styles.addressBarBg}>
-        <LinearGradient
-          colors={[C.primaryXLight, C.card]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 0, y: 1 }}
-          style={StyleSheet.absoluteFillObject}
-          pointerEvents="none"
+    <Screen bg={C.card} edges={["top"]}>
+      <ScreenHeader size="md" align="left" title="Cart" subtitle={subtitle} backFallbackHref="/(tabs)/home" />
+
+      {showSkeleton ? (
+        <CheckoutSkeleton />
+      ) : showEmpty ? (
+        <EmptyState
+          fill
+          iconWrap
+          icon="cart-outline"
+          title="Your cart is empty"
+          text="Add fresh picks from nearby stores"
+          action={{ label: "Browse products", onPress: browseProducts }}
         />
-        <View style={styles.appBar}>
-          <BackButton onPress={() => router.back()} />
-
-          <TouchableOpacity
-            style={{ flex: 1 }}
-            activeOpacity={0.7}
-            onPress={() => router.push("/select-location")}
-            accessibilityRole="button"
-            accessibilityLabel="Change delivery address"
+      ) : (
+        <>
+          <KeyboardAvoidingView
+            style={styles.flex}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            keyboardVerticalOffset={Platform.OS === "ios" ? dockHeight : 0}
           >
-            <View style={styles.deliveryLabelRow}>
-              <MaterialCommunityIcons
-                name="map-marker-outline"
-                size={14}
-                color={C.primary}
-              />
-              <Text style={styles.deliveryLabelText}>Delivery to</Text>
-            </View>
-            <View style={styles.locationInlineRow}>
-              <Text style={styles.deliveryAddressText} numberOfLines={1}>
-                {location
-                  ? location.address
-                    ? `${location.label ? location.label + " · " : ""}${location.address}`
-                    : location.label || "Your location"
-                  : "Set delivery address"}
-              </Text>
-              <MaterialCommunityIcons
-                name="chevron-down"
-                size={16}
-                color={C.text}
-              />
-            </View>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-        automaticallyAdjustKeyboardInsets
-      >
-        {outOfRangeItemCount > 0 && (
-          <View style={styles.outOfRangeBanner}>
-            <MaterialCommunityIcons name="alert-circle-outline" size={16} color={C.danger} />
-            <Text style={styles.outOfRangeBannerText}>
-              {outOfRangeItemCount === 1
-                ? "1 item in your cart may not be deliverable to this address."
-                : `${outOfRangeItemCount} items in your cart may not be deliverable to this address.`}{" "}
-              You can still try placing the order, or change your delivery address above.
-            </Text>
-          </View>
-        )}
-
-        {/* ─── Items Card ─── */}
-        <View style={styles.card}>
-          <View style={styles.cardHeaderRow}>
-            <SectionLabel style={styles.sectionLabelInline}>Your items</SectionLabel>
-            <Text style={styles.cardHeaderMeta}>
-              {items.length} {items.length === 1 ? "item" : "items"}
-            </Text>
-          </View>
-          {items.map((item, idx) => (
-            <View key={item.product_id}>
-              <View style={styles.itemRow}>
-                {item.image_url ? (
-                  <Image
-                    source={{ uri: cdnImage(item.image_url, 160) }}
-                    style={styles.itemImage}
-                    contentFit="contain"
-                    cachePolicy="memory-disk"
-                    transition={120}
-                  />
-                ) : (
-                  <View style={styles.imagePlaceholder}>
-                    <MaterialCommunityIcons name="leaf" size={20} color={C.border} />
-                  </View>
-                )}
-                <View style={styles.itemDetails}>
-                  <Text style={styles.itemName} numberOfLines={2}>{item.name}</Text>
-                  <Text style={styles.itemUnit} numberOfLines={1}>{item.unit}</Text>
-                </View>
-                <View style={styles.quantityControls}>
-                  <TouchableOpacity
-                    style={styles.quantityBtn}
-                    onPress={() => incrementQty(item.product_id, -1)}
-                    activeOpacity={0.7}
-                    hitSlop={QTY_HIT_SLOP}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Decrease quantity of ${item.name}`}
-                  >
-                    <MaterialCommunityIcons name="minus" size={14} color={C.primary} />
-                  </TouchableOpacity>
-                  <Text style={styles.quantityText} numberOfLines={1}>{formatQuantityDisplay(item.quantity, item.isLoose)}</Text>
-                  <TouchableOpacity
-                    style={styles.quantityBtn}
-                    onPress={() => incrementQty(item.product_id, 1)}
-                    activeOpacity={0.7}
-                    hitSlop={QTY_HIT_SLOP}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Increase quantity of ${item.name}`}
-                  >
-                    <MaterialCommunityIcons name="plus" size={14} color={C.primary} />
-                  </TouchableOpacity>
-                </View>
-                <View style={styles.itemPriceCol}>
-                  <Text style={styles.itemTotal}>₹{(item.price * item.quantity).toFixed(0)}</Text>
-                </View>
-              </View>
-              {idx < items.length - 1 && <Divider spacing={2} />}
-            </View>
-          ))}
-
-          {/* Add more items row */}
-          <TouchableOpacity
-            style={styles.addMoreRow}
-            onPress={() => router.back()}
-            activeOpacity={0.7}
-            hitSlop={ROW_HIT_SLOP}
-            accessibilityRole="button"
-          >
-            <MaterialCommunityIcons name="plus-circle-outline" size={16} color={C.primary} />
-            <Text style={styles.addMoreText}>Add more items</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* ─── Savings Corner ─── */}
-        <View style={styles.card}>
-          <View style={styles.savingsHeader}>
-            <MaterialCommunityIcons name="tag-outline" size={15} color={C.primary} />
-            <SectionLabel style={styles.sectionLabelInline}>SAVINGS CORNER</SectionLabel>
-          </View>
-          <TouchableOpacity
-            style={styles.savingsRow}
-            activeOpacity={0.8}
-            onPress={() => router.push("../product/coupons")}
-            accessibilityRole="button"
-          >
-            <View style={styles.savingsLeft}>
-              <MaterialCommunityIcons
-                name={appliedCoupon && !isCouponEligible ? "alert-circle-outline" : "shield-check-outline"}
-                size={20}
-                color={appliedCoupon && !isCouponEligible ? C.danger : "#2563eb"}
-              />
-              <View style={{ flex: 1, marginLeft: 10 }}>
-                <Text style={[styles.savingsText, appliedCoupon && !isCouponEligible && { color: C.danger }]}>
-                  {appliedCoupon && !isCouponEligible
-                    ? `${appliedCoupon.code} no longer applies · add ₹${Math.ceil(
-                        (appliedCoupon.min_order_value ?? 0) - subtotal,
-                      )} more to reapply`
-                    : appliedCoupon
-                      ? `${appliedCoupon.code} applied · −₹${discount.toFixed(0)} saved`
-                      : "View all coupons & offers"}
-                </Text>
-              </View>
-            </View>
-            <MaterialCommunityIcons name="chevron-right" size={18} color={C.textSub} />
-          </TouchableOpacity>
-        </View>
-
-        {/* ─── Add GSTIN ─── */}
-        <View style={styles.card}>
-          <View style={styles.gstinRow}>
-            <View style={styles.gstinLeft}>
-              <View style={styles.gstinIconWrap}>
-                <Text style={styles.gstinIconText}>GST</Text>
-              </View>
-              <View style={{ flex: 1, marginLeft: 10 }}>
-                <Text style={styles.gstinTitle}>Add GSTIN</Text>
-                <Text style={styles.gstinSub} numberOfLines={2}>Get a GST-compliant invoice for input tax credit claims</Text>
-              </View>
-            </View>
-            <TouchableOpacity
-              style={styles.gstinToggle}
-              activeOpacity={0.8}
-              hitSlop={TEXT_BTN_HIT_SLOP}
-              accessibilityRole="button"
-              onPress={() => {
-                LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-                setGstinClaim((v) => !v);
-              }}
-            >
-              <Text style={styles.gstinAddBtn}>{gstinClaim ? "Done" : "Add"}</Text>
-            </TouchableOpacity>
-          </View>
-          {gstinClaim && (
-            <View style={styles.gstinExpanded}>
-              <TextInput
-                placeholder="Enter 15-digit GSTIN"
-                placeholderTextColor={C.textLight}
-                value={gstin}
-                onChangeText={(t) => setGstin(t.toUpperCase())}
-                style={[
-                  styles.textInput,
-                  gstin.trim().length > 0 && !isValidGstin(gstin) && styles.textInputError,
-                ]}
-                autoCapitalize="characters"
-                maxLength={15}
-              />
-              {gstin.trim().length > 0 && !isValidGstin(gstin) ? (
-                <Text style={styles.gstinErrorText}>{gstinHint(gstin)}</Text>
-              ) : gstinCheck.state === "checking" ? (
-                <Text style={styles.gstinInfoText}>Checking with the GST portal…</Text>
-              ) : gstinCheck.state === "verified" ? (
-                <Text style={styles.gstinVerifiedText}>✓ Verified on the GST portal · Active</Text>
-              ) : gstinCheck.state === "rejected" ? (
-                <Text style={styles.gstinErrorText}>{gstinCheck.message}</Text>
-              ) : gstinCheck.state === "unavailable" ? (
-                <Text style={styles.gstinInfoText}>
-                  Couldn't check with the GST portal right now — we'll check again when you place the order.
-                </Text>
-              ) : null}
-              <TextInput
-                placeholder="Registered Business Name (required with GSTIN)"
-                placeholderTextColor={C.textLight}
-                value={invoiceName}
-                onChangeText={setInvoiceName}
-                editable={!(gstinCheck.state === "verified" && !!gstinCheck.legalName)}
-                style={[styles.textInput, { marginTop: 8 }]}
-              />
-            </View>
-          )}
-        </View>
-
-        {/* ─── Did you forget? (Recommended) ─── */}
-        {recommended.length > 0 && (
-          <View style={styles.card}>
             <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.recoTabsScroll}
-              contentContainerStyle={styles.recoScrollContent}
+              ref={scrollRef}
+              style={styles.flex}
+              contentContainerStyle={{ paddingBottom: dockHeight + 16 + kbLift }}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
             >
-              {["Did you forget?", "Chips & Muchies", "Hungry? Grab"].map((tab, i) => (
-                <View key={i} style={[styles.recoTab, i === 0 && styles.recoTabActive]}>
-                  <Text style={[styles.recoTabText, i === 0 && styles.recoTabTextActive]}>{tab}</Text>
-                </View>
-              ))}
-            </ScrollView>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.recoScroll}
-              contentContainerStyle={styles.recoScrollContent}
-            >
-              {recommended.map((p) => (
-                <View key={p.id} style={styles.recoCard}>
-                  <TouchableOpacity
-                    style={styles.recoBookmark}
-                    hitSlop={10}
-                    activeOpacity={0.7}
-                    accessibilityRole="button"
-                    accessibilityLabel="Save for later"
-                    onPress={() => Alert.alert("Coming soon", "Saving items for later isn't available yet.")}
-                  >
-                    <MaterialCommunityIcons name="bookmark-outline" size={14} color={C.textSub} />
-                  </TouchableOpacity>
-                  {p.image_url ? (
-                    <Image
-                      source={{ uri: cdnImage(p.image_url, 200) }}
-                      style={styles.recoImage}
-                      contentFit="contain"
-                      cachePolicy="memory-disk"
-                      transition={120}
-                      priority="low"
-                    />
-                  ) : (
-                    <View style={styles.recoPlaceholder}>
-                      <MaterialCommunityIcons name="image-outline" size={22} color={C.border} />
-                    </View>
-                  )}
-                  <Text style={styles.recoDelivery}>6 MINS</Text>
-                  <Text style={styles.recoName} numberOfLines={2}>{p.name}</Text>
-                  <Text style={styles.recoWeight} numberOfLines={1}>{p.unit}</Text>
-                  {p.original_price && p.original_price > p.price && (
-                    <Text style={styles.recoDiscount}>{Math.round(((p.original_price - p.price) / p.original_price) * 100)}% OFF</Text>
-                  )}
-                  <View style={styles.recoPriceRow}>
-                    <Text style={styles.recoPrice}>₹{p.price}</Text>
-                    {p.original_price && p.original_price > p.price && (
-                      <Text style={styles.recoMrp}>₹{p.original_price}</Text>
-                    )}
-                  </View>
-                  <TouchableOpacity
-                    style={styles.recoAddBtn}
-                    activeOpacity={0.8}
-                    hitSlop={6}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Add ${p.name} to cart`}
-                    onPress={() =>
-                      addItem({
-                        product_id: p.id,
-                        name: p.name,
-                        price: p.price,
-                        unit: p.unit,
-                        image_url: p.image_url,
-                        isLoose: p.isLoose,
-                      })
-                    }
-                  >
-                    <MaterialCommunityIcons name="plus" size={18} color={C.primary} />
-                  </TouchableOpacity>
-                </View>
-              ))}
-            </ScrollView>
-          </View>
-        )}
+              <ItemsSection items={items} onClearCart={handleClearCart} onAddMore={handleAddMore} />
+              {drift.length > 0 && !driftDismissed ? <PriceDriftRow drifts={drift} onDismiss={dismissDrift} /> : null}
 
-        {/* ─── Delivery Tip ─── */}
-        <View style={styles.card}>
-          <View style={styles.tipHeaderRow}>
-            <SectionLabel style={styles.sectionLabelInline}>DELIVERY TIP</SectionLabel>
-            <MaterialCommunityIcons
-              name="information-outline"
-              size={14}
-              color={C.textSub}
-              importantForAccessibility="no"
-              accessibilityElementsHidden
-            />
-          </View>
-          <Text style={styles.tipSubtitle}>
-            A small tip, a big gesture! Tip your delivery partner to show your appreciation for their hard work.
-          </Text>
-          <View style={styles.tipChipsRow}>
-            {([10, 20, 30] as const).map((val) => (
-              <TouchableOpacity
-                key={val}
-                style={[styles.tipChip, tipPreset === val && styles.tipChipActive]}
-                activeOpacity={0.8}
-                accessibilityRole="button"
-                accessibilityState={{ selected: tipPreset === val }}
-                onPress={() => {
-                  LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-                  setTipPreset(tipPreset === val ? null : val);
-                }}
-              >
-                {val === 20 && <Text style={styles.tipMostTipped}>Most tipped</Text>}
-                <Text style={[styles.tipChipText, tipPreset === val && styles.tipChipTextActive]}>
-                  ₹{val}
-                </Text>
-              </TouchableOpacity>
-            ))}
-            <TouchableOpacity
-              style={[styles.tipChip, tipPreset === "custom" && styles.tipChipActive]}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityState={{ selected: tipPreset === "custom" }}
-              onPress={() => {
-                LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-                setTipPreset("custom");
-              }}
-            >
-              <Text style={[styles.tipChipText, tipPreset === "custom" && styles.tipChipTextActive]}>
-                Other
-              </Text>
-            </TouchableOpacity>
-          </View>
-          {tipPreset === "custom" && (
-            <TextInput
-              placeholder="Enter tip amount in ₹"
-              placeholderTextColor={C.textLight}
-              keyboardType="numeric"
-              value={customTip}
-              onChangeText={setCustomTip}
-              style={[styles.textInput, { marginTop: 10 }]}
-            />
-          )}
-        </View>
+              {/* Owns its own band + header; renders null when empty / offline / Dev_Checkout_inhibit_RecoNetwork. */}
+              <DidYouForgetStrip cartSig={cartSig} locKey={locationKey} />
 
-        {/* ─── Bill Details ─── */}
-        <View style={styles.card}>
-          <SectionLabel style={styles.sectionLabel}>BILL DETAILS</SectionLabel>
-          <View style={styles.billRows}>
-            <BillRow label="Item Total" value={subtotal} strikeValue={subtotal + (discount > 0 ? discount : 0)} showStrike={false} />
-            {discount > 0 && <BillRow label="Coupon Discount" value={-discount} highlight />}
-            <BillRow
-              label="Platform Fee"
-              value={platformFee}
-              onInfoPress={() =>
-                Alert.alert(
-                  "Platform Fee",
-                  "A small fee that keeps our app running smoothly so we can keep bringing fresh picks to your door. Thank you for supporting us!",
-                )
-              }
-            />
-            <BillRow
-              label="Handling Charges"
-              value={handlingFee}
-              onInfoPress={() =>
-                Alert.alert(
-                  "Handling Charges",
-                  "This goes towards carefully packing and handling your order so it reaches you just right. Thanks for being part of our journey!",
-                )
-              }
-            />
-            <BillRow
-              label="Delivery Fee"
-              value={deliveryFee}
-              strikeValue={deliveryFee === 0 ? DELIVERY_FEE_WAS : undefined}
-              showStrike={deliveryFee === 0}
-              freeLabel={deliveryFee === 0 ? "FREE" : undefined}
-            />
-            {tipAmount > 0 && <BillRow label="Delivery Partner Tip" value={tipAmount} />}
-          </View>
-          <Divider />
-          <View style={styles.totalRow}>
-            <Text style={styles.totalLabel}>To Pay</Text>
-            <Text style={styles.totalValue}>₹{Math.round(finalPayable)}</Text>
-          </View>
-        </View>
+              <View style={styles.band} />
+              <OffersRow subtotal={subtotal} appliedCoupon={appliedCoupon} isCouponEligible={isCouponEligible} discount={discount} />
 
-        {/* ─── Cancellation Note ─── */}
-        <View style={styles.noteCard}>
-          <Text style={styles.noteText}>
-            <Text style={styles.noteBold}>NOTE: </Text>
-            Orders cannot be cancelled and are non-refundable once packed for delivery.{" "}
-          </Text>
-          <TouchableOpacity
-            style={styles.noteLinkBtn}
-            onPress={() => router.push("/settings/support")}
-            activeOpacity={0.7}
-            hitSlop={LINK_HIT_SLOP}
-            accessibilityRole="link"
-          >
-            <Text style={styles.noteLink}>Read cancellation policy</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* ─── Who is this order for? ─── */}
-        <View style={styles.card}>
-          <SectionLabel style={styles.sectionLabel}>WHO IS THIS ORDER FOR?</SectionLabel>
-          <View style={styles.orderForRow}>
-            <TouchableOpacity
-              style={[
-                styles.orderForChip,
-                orderFor === "self" && styles.orderForChipActive,
-              ]}
-              activeOpacity={0.8}
-              onPress={() => setOrderFor("self")}
-              accessibilityRole="radio"
-              accessibilityState={{ checked: orderFor === "self" }}
-            >
-              <MaterialCommunityIcons
-                name={orderFor === "self" ? "radiobox-marked" : "radiobox-blank"}
-                size={18}
-                color={orderFor === "self" ? C.primary : C.textSub}
+              <View style={styles.band} />
+              <BillSection
+                subtotal={subtotal}
+                discount={discount}
+                platformFee={platformFee}
+                handlingFee={handlingFee}
+                deliveryFee={deliveryFee}
+                deliveryFeeWas={DELIVERY_FEE_WAS}
+                tipAmount={tipAmount}
+                finalPayable={finalPayable}
               />
-              <Text
-                style={[
-                  styles.orderForChipText,
-                  orderFor === "self" && styles.orderForChipTextActive,
-                ]}
-              >
-                Myself
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.orderForChip,
-                orderFor === "others" && styles.orderForChipActive,
-              ]}
-              activeOpacity={0.8}
-              onPress={() => setOrderFor("others")}
-              accessibilityRole="radio"
-              accessibilityState={{ checked: orderFor === "others" }}
-            >
-              <MaterialCommunityIcons
-                name={orderFor === "others" ? "radiobox-marked" : "radiobox-blank"}
-                size={18}
-                color={orderFor === "others" ? C.primary : C.textSub}
-              />
-              <Text
-                style={[
-                  styles.orderForChipText,
-                  orderFor === "others" && styles.orderForChipTextActive,
-                ]}
-              >
-                Someone else
-              </Text>
-            </TouchableOpacity>
-          </View>
 
-          {orderFor === "others" && (
-            <View style={{ marginTop: 12, gap: 10 }}>
-              <TextInput
-                placeholder="Receiver's name *"
-                placeholderTextColor={C.textLight}
-                value={receiverName}
-                onChangeText={setReceiverName}
-                style={styles.textInput}
-              />
-              <TextInput
-                placeholder="Receiver's 10-digit phone *"
-                placeholderTextColor={C.textLight}
-                value={receiverPhone}
-                onChangeText={(t) => setReceiverPhone(t.replace(/\D/g, ""))}
-                keyboardType="number-pad"
-                maxLength={10}
-                style={styles.textInput}
-              />
-              <TextInput
-                placeholder="Receiver's address details (Optional)"
-                placeholderTextColor={C.textLight}
-                value={receiverAddress}
-                onChangeText={setReceiverAddress}
-                style={[styles.textInput, styles.multilineInput]}
-                multiline
-                numberOfLines={2}
-              />
-            </View>
-          )}
-        </View>
-
-        {/* ─── Delivery Instructions ─── */}
-        <View style={styles.card}>
-          <SectionLabel style={styles.sectionLabel}>DELIVERY INSTRUCTIONS</SectionLabel>
-          <TextInput
-            placeholder="e.g. Don't ring the bell, call on arrival, gate code…"
-            placeholderTextColor={C.textLight}
-            value={deliveryInstructions}
-            onChangeText={setDeliveryInstructions}
-            style={[styles.textInput, styles.multilineInput]}
-            multiline
-            numberOfLines={3}
-          />
-        </View>
-
-        <View style={{ height: 16 }} />
-      </ScrollView>
-
-      {/* ─── Pay Dock (Blinkit-style: method left, Place Order right) ─── */}
-      <BottomDock bg={SCREEN_BG} style={styles.payDock}>
-        <View style={styles.payDockRow}>
-          <PayMethodSelector tipAmount={tipAmount} />
-
-          <TouchableOpacity
-            style={[styles.payButton, placing && styles.payButtonPlacing]}
-            onPress={placeOrder}
-            disabled={placing}
-            activeOpacity={0.85}
-            accessibilityRole="button"
-            accessibilityState={{ disabled: placing, busy: placing }}
-          >
-            {placing ? (
-              <View style={styles.payButtonPlacingInner}>
-                <ActivityIndicator size="small" color={C.card} />
-                <Text style={styles.payButtonCtaText}>Placing…</Text>
+              <View style={styles.band} />
+              <View onLayout={onSectionLayout("tip")}>
+                <TipSection
+                  preset={tipPreset}
+                  customTip={customTip}
+                  customError={tipError}
+                  thanksNonce={thanksNonce}
+                  onPresetChange={handleTipPreset}
+                  onCustomChange={handleCustomTipChange}
+                  onCustomBlur={handleCustomTipBlur}
+                  onCustomFocus={focusTip}
+                  inputRef={tipRef}
+                />
               </View>
-            ) : (
-              <>
-                <View style={styles.payButtonAmount}>
-                  <Text style={styles.payButtonAmountValue} numberOfLines={1}>
-                    ₹{finalPayable.toFixed(0)}
-                  </Text>
-                  <Text style={styles.payButtonAmountLabel}>TOTAL</Text>
-                </View>
-                <PayButtonLabel />
-              </>
-            )}
-          </TouchableOpacity>
-        </View>
-      </BottomDock>
+
+              <View style={styles.band} />
+              <View onLayout={onSectionLayout("gstin")}>
+                <GstinSection
+                  open={gstinClaim}
+                  onToggle={toggleGstin}
+                  gstin={gstin}
+                  onGstinChange={handleGstinChange}
+                  gstinError={gstinError}
+                  gstinHelper={gstinHelper}
+                  verified={gstinVerified}
+                  invoiceName={invoiceName}
+                  onInvoiceNameChange={setInvoiceName}
+                  invoiceNameLocked={invoiceNameLocked}
+                  invoiceNameError={invoiceNameError}
+                  gstinShake={shakes.gstin}
+                  invoiceNameShake={shakes.invoiceName}
+                  gstinRef={gstinRef}
+                  invoiceNameRef={invoiceNameRef}
+                  onFieldFocus={focusGstin}
+                  onFieldBlur={handleGstinBlur}
+                />
+              </View>
+
+              <View style={styles.band} />
+              <View onLayout={onSectionLayout("orderFor")}>
+                <OrderForSection
+                  value={orderFor}
+                  onChange={setOrderFor}
+                  receiverName={receiverName}
+                  receiverPhone={receiverPhone}
+                  receiverAddress={receiverAddress}
+                  onReceiverNameChange={setReceiverName}
+                  onReceiverPhoneChange={setReceiverPhone}
+                  onReceiverAddressChange={setReceiverAddress}
+                  nameError={receiverNameError}
+                  phoneError={receiverPhoneError}
+                  nameShake={shakes.receiverName}
+                  phoneShake={shakes.receiverPhone}
+                  onFieldBlur={handleReceiverBlur}
+                  onFieldFocus={focusOrderFor}
+                  nameRef={receiverNameRef}
+                  phoneRef={receiverPhoneRef}
+                />
+              </View>
+
+              <View style={styles.band} />
+              <View onLayout={onSectionLayout("instructions")}>
+                <InstructionsSection value={deliveryInstructions} onChange={setDeliveryInstructions} onFocus={focusInstructions} />
+              </View>
+
+              <View style={styles.band} />
+              <PolicyNote />
+            </ScrollView>
+          </KeyboardAvoidingView>
+
+          {/* The dock stack: measured by `dockWrapRef` for the keyboard overlap, lifted by the Animated.View. */}
+          <View ref={dockWrapRef} style={styles.dockWrap} pointerEvents="box-none">
+            <Animated.View style={dockLiftStyle}>
+              <PayDock
+                finalPayable={finalPayable}
+                tipAmount={tipAmount}
+                placing={placing}
+                disabled={offlineBlocked}
+                disabledHint={offlineBlocked ? OFFLINE_HELPER : null}
+                helper={dockHelper}
+                top={addressBlock}
+                onPay={placeOrder}
+              />
+            </Animated.View>
+          </View>
+        </>
+      )}
 
       {RazorpayUI}
-
-      <PaymentProcessingOverlay phase={paymentPhase} />
-    </SafeAreaView>
+      <PaymentProcessingOverlay phase={paymentPhase} orderId={payingOrderId} />
+    </Screen>
   );
 }
 
-// ─── Sub-components ──────────────────────────────────────────────────────────
+// ─── Module-local sections ────────────────────────────────────────────────────
 
-function BillRow({
-  label,
-  value,
-  highlight,
-  strikeValue,
-  showStrike,
-  freeLabel,
-  note,
-  onInfoPress,
-  loading,
-}: {
-  label: string;
-  value: number;
-  highlight?: boolean;
-  strikeValue?: number;
-  showStrike?: boolean;
-  /** Shown instead of "₹0" when value === 0 (e.g. "FREE" for a waived delivery fee). */
-  freeLabel?: string;
-  note?: string;
-  onInfoPress?: () => void;
-  /** Presentational only: swaps the value for a small skeleton while it resolves. */
-  loading?: boolean;
-}) {
-  // Only integer-valued fees collapse cleanly; preserve decimals (9.5, 0.75 …)
-  // so the breakdown stays faithful. The final "To Pay" row is the one place
-  // we round to the nearest rupee.
-  const formatAmount = (n: number) => {
-    const abs = Math.abs(n);
-    const hasDecimals = Math.abs(abs - Math.round(abs)) > 0.0001;
-    return hasDecimals ? abs.toFixed(2) : String(Math.round(abs));
-  };
+function PriceDriftRow({ drifts, onDismiss }: { drifts: PriceDrift[]; onDismiss: () => void }): React.JSX.Element {
+  const n = drifts.length;
   return (
-    <View>
-      <View style={styles.billRow}>
-        <View style={{ flexDirection: "row", alignItems: "center", flexShrink: 1, gap: 4 }}>
-          <Text style={[styles.billLabel, highlight && { color: C.success }]}>{label}</Text>
-          {onInfoPress && (
-            <TouchableOpacity
-              onPress={onInfoPress}
-              hitSlop={14}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel={`More info about ${label}`}
-            >
-              <MaterialCommunityIcons
-                name="information-outline"
-                size={14}
-                color={C.textSub}
-              />
-            </TouchableOpacity>
-          )}
-        </View>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          {showStrike && strikeValue !== undefined && (
-            <Text style={styles.billStrike}>₹{formatAmount(strikeValue)}</Text>
-          )}
-          {loading ? (
-            <Skeleton width={40} height={12} radius={6} />
-          ) : freeLabel && value === 0 ? (
-            <Text style={[styles.billValue, { color: C.success, fontFamily: "PlusJakartaSans_700Bold" }]}>
-              {freeLabel}
-            </Text>
-          ) : (
-            <Text style={[styles.billValue, highlight && { color: C.success, fontFamily: "PlusJakartaSans_700Bold" }]}>
-              {value < 0 ? `−₹${formatAmount(value)}` : `₹${formatAmount(value)}`}
-            </Text>
-          )}
-        </View>
-      </View>
-      {note && <Text style={styles.billNote}>{note}</Text>}
-    </View>
-  );
-}
-
-// ─── Isolated pay-dock subscribers ───────────────────────────────────────────
-//
-// These components subscribe to the payment-selection store *in isolation* so
-// that picking a new method on the payment-options screen only re-renders the
-// tiny pay-dock UI, not the entire checkout tree (which has a ScrollView with
-// products, recommendations, bill details, etc.). Before extraction, that
-// whole-tree re-render coincided with the pop animation and made returning to
-// checkout feel like the app was hanging.
-
-function usePaymentSelectionSubscription(): PaymentSelection {
-  const [sel, setSel] = useState<PaymentSelection>(() => getPaymentSelection());
-  useEffect(() => {
-    const unsub = subscribePaymentSelection(setSel);
-    setSel(getPaymentSelection());
-    return unsub;
-  }, []);
-  return sel;
-}
-
-function PayMethodSelector({ tipAmount }: { tipAmount: number }) {
-  const sel = usePaymentSelectionSubscription();
-  const logo = sel.logoKey ? PAYMENT_LOGOS[sel.logoKey] : null;
-  return (
-    <TouchableOpacity
-      style={styles.payMethodSelector}
-      activeOpacity={0.8}
-      accessibilityRole="button"
-      accessibilityLabel={`Pay using ${sel.label}. Change payment method`}
-      onPress={() =>
-        router.push({
-          pathname: "/support/payment-options",
-          params: { tip: String(tipAmount) },
-        })
-      }
-    >
-      <View style={styles.payMethodIconWrap}>
-        {logo ? (
-          <Image source={logo} style={styles.payMethodLogo} contentFit="contain" />
-        ) : (
-          <MaterialCommunityIcons
-            name={(sel.icon as any) || "cellphone-wireless"}
-            size={22}
-            color={C.text}
+    <View style={styles.driftWrap}>
+      <View style={styles.drift} accessibilityLiveRegion="polite">
+        <View style={styles.driftHeader}>
+          <MaterialCommunityIcons name="tag-outline" size={16} color={C.warningText} />
+          <Text style={styles.driftTitle} maxFontSizeMultiplier={1.3}>
+            {`Prices updated for ${n} ${n === 1 ? "item" : "items"}`}
+          </Text>
+          <IconButton
+            icon="close"
+            size={28}
+            iconSize={16}
+            bg="transparent"
+            color={C.warningText}
+            accessibilityLabel="Dismiss price update notice"
+            onPress={onDismiss}
           />
-        )}
-      </View>
-      <View style={styles.payMethodTextCol}>
-        <View style={styles.payMethodLabelRow}>
-          <Text style={styles.payMethodLabel}>PAY USING</Text>
-          <MaterialCommunityIcons name="menu-up" size={16} color={C.text} />
         </View>
-        <Text style={styles.payMethodValue} numberOfLines={1}>
-          {sel.label}
-        </Text>
+        {drifts.map((d) => (
+          <Text key={d.product_id} style={styles.driftLine} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+            {`${d.name}: ${formatMoney(d.oldPrice)} → ${formatMoney(d.newPrice)}`}
+          </Text>
+        ))}
       </View>
-    </TouchableOpacity>
+    </View>
   );
 }
 
-function PayButtonLabel() {
-  const sel = usePaymentSelectionSubscription();
-  const cta = sel.mode === "cod" ? "Place Order" : "Pay";
+type GstinSectionProps = {
+  open: boolean;
+  onToggle: () => void;
+  gstin: string;
+  onGstinChange: (t: string) => void;
+  gstinError: string | null;
+  gstinHelper: string | null;
+  verified: boolean;
+  invoiceName: string;
+  onInvoiceNameChange: (t: string) => void;
+  invoiceNameLocked: boolean;
+  invoiceNameError: string | null;
+  gstinShake: number;
+  invoiceNameShake: number;
+  gstinRef: React.Ref<TextInput>;
+  invoiceNameRef: React.Ref<TextInput>;
+  onFieldFocus: () => void;
+  onFieldBlur: (field: "gstin" | "invoiceName") => void;
+};
+
+/** "Add GSTIN" row (ListRow + Collapsible; the GST chip is brand green, no blue) with the two fields on Inputs. */
+const GstinSection = React.memo(function GstinSection({
+  open,
+  onToggle,
+  gstin,
+  onGstinChange,
+  gstinError,
+  gstinHelper,
+  verified,
+  invoiceName,
+  onInvoiceNameChange,
+  invoiceNameLocked,
+  invoiceNameError,
+  gstinShake,
+  invoiceNameShake,
+  gstinRef,
+  invoiceNameRef,
+  onFieldFocus,
+  onFieldBlur,
+}: GstinSectionProps): React.JSX.Element {
+  const added = open && isValidGstin(gstin);
+  const title = added ? "GSTIN added" : "Add GSTIN";
   return (
-    <View style={styles.payButtonCta}>
-      <Text style={styles.payButtonCtaText}>{cta}</Text>
-      <MaterialCommunityIcons name="arrow-right" size={16} color={C.card} />
+    <View style={styles.section}>
+      <ListRow
+        title={title}
+        subtitle="Get a GST invoice for input tax credit"
+        left={
+          <IconWrap size={34} bg={C.primaryXLight}>
+            <Text style={styles.gstChip} maxFontSizeMultiplier={1.3}>
+              GST
+            </Text>
+          </IconWrap>
+        }
+        right={<ChevronRotate open={open} />}
+        onPress={onToggle}
+        style={styles.gstRow}
+        accessibilityLabel={title}
+        accessibilityState={{ expanded: open }}
+      />
+      <Collapsible open={open}>
+        <View style={styles.gstFields}>
+          <Input
+            label="GSTIN"
+            variant="underline"
+            value={gstin}
+            onChangeText={onGstinChange}
+            onFocus={onFieldFocus}
+            onBlur={() => onFieldBlur("gstin")}
+            error={gstinError}
+            helper={gstinHelper ?? undefined}
+            shakeTrigger={gstinShake}
+            inputRef={gstinRef}
+            placeholder={`Enter your ${GSTIN_LENGTH}-character GSTIN`}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            maxLength={GSTIN_LENGTH}
+            returnKeyType="next"
+          />
+          {verified ? (
+            <View style={styles.verifiedRow} accessibilityLiveRegion="polite">
+              <MaterialCommunityIcons name="check-circle" size={14} color={C.successText} />
+              <Text style={styles.verifiedText} maxFontSizeMultiplier={1.3}>
+                Verified on the GST portal · Active
+              </Text>
+            </View>
+          ) : null}
+          <Input
+            label="Registered business name"
+            variant="underline"
+            value={invoiceName}
+            onChangeText={onInvoiceNameChange}
+            onFocus={onFieldFocus}
+            onBlur={() => onFieldBlur("invoiceName")}
+            editable={!invoiceNameLocked}
+            error={invoiceNameError}
+            helper={invoiceNameLocked ? "Filled from the GST registry" : "Required with a GSTIN"}
+            shakeTrigger={invoiceNameShake}
+            inputRef={invoiceNameRef}
+            placeholder="As registered on the GST portal"
+            autoCapitalize="words"
+            returnKeyType="done"
+          />
+        </View>
+      </Collapsible>
     </View>
+  );
+});
+
+const InstructionsSection = React.memo(function InstructionsSection({
+  value,
+  onChange,
+  onFocus,
+}: {
+  value: string;
+  onChange: (t: string) => void;
+  onFocus: () => void;
+}): React.JSX.Element {
+  return (
+    <View style={styles.section}>
+      <Input
+        label="Delivery instructions"
+        variant="underline"
+        value={value}
+        onChangeText={onChange}
+        onFocus={onFocus}
+        placeholder="e.g. call on arrival, gate code, leave at the door"
+        multiline
+        maxLength={200}
+        showCounter
+        textAlignVertical="top"
+        returnKeyType="default"
+      />
+    </View>
+  );
+});
+
+function PolicyNote(): React.JSX.Element {
+  return (
+    <View style={styles.policy}>
+      <Text style={styles.policyText} maxFontSizeMultiplier={1.3}>
+        {POLICY_COPY}
+      </Text>
+      <PressableScale
+        scale={motion.scale.chip}
+        onPress={() => router.push("/settings/support")}
+        hitSlop={LINK_HIT_SLOP}
+        innerStyle={styles.policyLink}
+        accessibilityRole="link"
+        accessibilityLabel="Cancellation policy"
+      >
+        <Text style={styles.policyLinkText} maxFontSizeMultiplier={1.3}>
+          Cancellation policy
+        </Text>
+      </PressableScale>
+    </View>
+  );
+}
+
+/** Cold-deep-link frame while the cart hydrates: three item-row twins + a bill block, one shared skeleton clock. */
+function CheckoutSkeleton(): React.JSX.Element {
+  return (
+    <SkeletonScreen style={styles.flex}>
+      <View style={styles.section}>
+        {SKELETON_ROWS.map((k) => (
+          <View key={k} style={styles.skelRow}>
+            <Skeleton width={56} height={56} radius={radius.lg} />
+            <View style={styles.skelText}>
+              <Skeleton width="70%" height={14} />
+              <Skeleton width="40%" height={12} />
+            </View>
+            <Skeleton width={84} height={32} radius={radius.md} />
+          </View>
+        ))}
+      </View>
+      <View style={styles.band} />
+      <View style={styles.section}>
+        <Skeleton width={120} height={17} />
+        {SKELETON_BILL_ROWS.map((k) => (
+          <View key={k} style={styles.skelBillRow}>
+            <Skeleton width="45%" height={12} />
+            <Skeleton width={56} height={12} />
+          </View>
+        ))}
+        <View style={styles.skelBillRow}>
+          <Skeleton width={64} height={16} />
+          <Skeleton width={80} height={22} />
+        </View>
+      </View>
+    </SkeletonScreen>
   );
 }
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: SCREEN_BG },
-  scrollContent: { paddingBottom: 120 },
+  flex: { flex: 1 },
+  // The owner's 8 px separator between flat sections (wallet pattern, retinted to the token).
+  band: { height: 8, backgroundColor: C.surfaceBand },
+  section: { backgroundColor: C.card, paddingHorizontal: 16, paddingVertical: 14 },
+  dockWrap: { position: "absolute", left: 0, right: 0, bottom: 0 },
 
-  // "Delivery to" address bar — kept visually in sync with the one on the
-  // home screen so navigating checkout ↔ home never feels like two apps.
-  addressBarBg: {
-    backgroundColor: C.card,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
+  // Price drift (kepler)
+  driftWrap: { backgroundColor: C.card, paddingHorizontal: 16, paddingBottom: 12 },
+  drift: {
+    backgroundColor: C.warningLight,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: C.warningBorder,
+    paddingHorizontal: 12,
+    paddingTop: 4,
+    paddingBottom: 10,
   },
-  appBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 12,
-    gap: 12,
-  },
-  deliveryLabelRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 2,
-  },
-  deliveryLabelText: {
-    fontSize: 11,
-    color: C.primary,
-    fontFamily: "PlusJakartaSans_800ExtraBold",
-    letterSpacing: 0.5,
-    textTransform: "uppercase",
-  },
-  deliveryAddressText: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    fontSize: 15,
-    color: C.text,
-    letterSpacing: -0.2,
-    flex: 1,
-  },
-  locationInlineRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    maxWidth: "95%",
-  },
-
-  // Card (Blinkit uses white cards separated by gray gaps)
-  card: {
-    backgroundColor: C.card,
-    marginTop: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-  },
-  // Eyebrow overrides on top of SectionLabel (defaults: marginBottom 8, paddingHorizontal 2)
-  sectionLabel: { marginBottom: 12, paddingHorizontal: 0 },
-  sectionLabelInline: { marginBottom: 0, paddingHorizontal: 0 },
-  cardHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 4,
-  },
-  cardHeaderMeta: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.textSub, fontSize: 12 },
-
-  // Items
-  itemRow: { flexDirection: "row", alignItems: "center", paddingVertical: 10, gap: 10 },
-  itemImage: { width: 52, height: 52, borderRadius: 8, backgroundColor: C.bgSoft },
-  imagePlaceholder: {
-    width: 52,
-    height: 52,
-    borderRadius: 8,
-    backgroundColor: C.bgSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  itemDetails: { flex: 1 },
-  itemName: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.text, fontSize: 13, lineHeight: 18 },
-  itemUnit: { fontFamily: "PlusJakartaSans_700Bold", color: C.textSub, fontSize: 11, marginTop: 2 },
-  itemPriceCol: { alignItems: "flex-end", minWidth: 48 },
-  itemTotal: { fontFamily: "PlusJakartaSans_700Bold", color: C.text, fontSize: 13 },
-
-  // Quantity Controls
-  quantityControls: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderWidth: 1.5,
-    borderColor: C.primary,
-    borderRadius: 8,
-    overflow: "hidden",
-  },
-  quantityBtn: {
-    width: 28,
-    height: 28,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: C.primaryXLight,
-  },
-  quantityText: { fontFamily: "PlusJakartaSans_700Bold",
-    fontSize: 13,
-    color: C.primary,
-    minWidth: 24,
-    textAlign: "center",
-  },
-
-  // Add more items
-  addMoreRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingTop: 12,
-    marginTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: C.border,
-  },
-  addMoreText: { fontFamily: "PlusJakartaSans_700Bold", color: C.primary, fontSize: 13 },
-
-  // Savings corner
-  savingsHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 12,
-  },
-  savingsRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  savingsLeft: { flexDirection: "row", alignItems: "center", flex: 1 },
-  savingsText: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.text, fontSize: 13 },
+  driftHeader: { flexDirection: "row", alignItems: "center", gap: 6 },
+  driftTitle: { flex: 1, fontFamily: fontFamily.semibold, fontSize: 13, color: C.warningText },
+  driftLine: { fontFamily: fontFamily.medium, fontSize: 12, lineHeight: 16, color: C.warningText, marginTop: 2 },
 
   // GSTIN
-  gstinRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  gstinLeft: { flexDirection: "row", alignItems: "center", flex: 1 },
-  gstinIconWrap: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    backgroundColor: "#e8f0fe",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  gstinIconText: { fontFamily: "PlusJakartaSans_800ExtraBold", color: "#2563eb", fontSize: 10, letterSpacing: 0.3 },
-  gstinTitle: { fontFamily: "PlusJakartaSans_700Bold", color: C.text, fontSize: 13 },
-  gstinSub: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.textSub, fontSize: 11, marginTop: 1 },
-  gstinToggle: { paddingVertical: 8, paddingHorizontal: 4, minHeight: 36, justifyContent: "center" },
-  gstinAddBtn: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.primary, fontSize: 14 },
-  gstinExpanded: { marginTop: 12 },
-  gstinErrorText: { fontFamily: "PlusJakartaSans_300Light", color: C.danger, fontSize: 11, marginTop: 4, marginLeft: 2 },
-  gstinInfoText: { fontFamily: "PlusJakartaSans_300Light", color: C.textLight, fontSize: 11, marginTop: 4, marginLeft: 2 },
-  gstinVerifiedText: { fontFamily: "PlusJakartaSans_700Bold", color: C.success, fontSize: 11, marginTop: 4, marginLeft: 2 },
+  gstRow: { paddingHorizontal: 0, paddingVertical: 2 },
+  // 11 px, not the spec's 10: DECISIONS D10 floors every text at 11 px.
+  gstChip: { fontFamily: fontFamily.bold, fontSize: 11, letterSpacing: 0.3, color: C.primary },
+  gstFields: { gap: 12, paddingTop: 12 },
+  verifiedRow: { flexDirection: "row", alignItems: "center", gap: 4 },
+  verifiedText: { fontFamily: fontFamily.semibold, fontSize: 11, color: C.successText },
 
-  outOfRangeBanner: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 8,
-    backgroundColor: "#fdecea",
-    borderRadius: 12,
-    padding: 12,
-    marginHorizontal: 16,
-    marginTop: 12,
-  },
-  outOfRangeBannerText: {
-    flex: 1,
-    fontFamily: "PlusJakartaSans_400Regular",
-    color: C.danger,
-    fontSize: 12,
-    lineHeight: 17,
-  },
-
-  // Reco tabs — the -16 bleed is coupled to card paddingHorizontal 16; the
-  // trailing 16px lives in contentContainerStyle so the last chip/card can
-  // scroll fully into view.
-  recoTabsScroll: { marginBottom: 12, marginHorizontal: -16 },
-  recoScrollContent: { paddingHorizontal: 16 },
-  recoTab: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: C.border,
-    marginRight: 8,
-    backgroundColor: C.card,
-  },
-  recoTabActive: { borderColor: C.primary, backgroundColor: C.primaryXLight },
-  recoTabText: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.textSub, fontSize: 12 },
-  recoTabTextActive: { color: C.primary },
-
-  // Reco cards
-  recoScroll: { marginHorizontal: -16 },
-  recoCard: {
-    width: 110,
-    backgroundColor: C.card,
-    borderRadius: 10,
-    padding: 8,
-    marginRight: 10,
-    borderWidth: 1,
-    borderColor: C.border,
-    position: "relative",
-  },
-  recoBookmark: { position: "absolute", top: 6, left: 6, zIndex: 1 },
-  recoImage: { width: "100%", height: 70, borderRadius: 8, marginBottom: 6, backgroundColor: C.bgSoft },
-  recoPlaceholder: {
-    width: "100%",
-    height: 70,
-    borderRadius: 8,
-    backgroundColor: C.bgSoft,
-    marginBottom: 6,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  recoDelivery: { fontFamily: "PlusJakartaSans_700Bold", color: C.textLight, fontSize: 10, letterSpacing: 0.3 },
-  recoName: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.text, fontSize: 11, lineHeight: 15, minHeight: 30, marginTop: 2 },
-  recoWeight: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.textSub, fontSize: 10, marginTop: 1 },
-  recoDiscount: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.success, fontSize: 10, marginTop: 2 },
-  recoPriceRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 },
-  recoPrice: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 12 },
-  recoMrp: { fontFamily: "PlusJakartaSans_300Light", color: C.textLight, fontSize: 10, textDecorationLine: "line-through" },
-  recoAddBtn: {
-    marginTop: 8,
-    borderWidth: 1.5,
-    borderColor: C.primary,
-    borderRadius: 8,
-    paddingVertical: 6,
-    minHeight: 32,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  // Tip
-  tipHeaderRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 8 },
-  tipSubtitle: { fontFamily: "PlusJakartaSans_500Medium", color: C.textSub, fontSize: 12, lineHeight: 17, marginBottom: 16 },
-  tipChipsRow: { flexDirection: "row", gap: 8 },
-  tipChip: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    borderColor: C.border,
-    backgroundColor: C.card,
-    alignItems: "center",
-    justifyContent: "center",
-    position: "relative",
-    paddingTop: 14,
-  },
-  tipChipActive: { borderColor: C.primary, backgroundColor: C.primaryXLight },
-  tipChipText: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 13, color: C.text },
-  tipChipTextActive: { color: C.primary },
-  tipMostTipped: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    position: "absolute",
-    top: -10,
-    alignSelf: "center",
-    backgroundColor: C.primary,
-    color: C.card,
-    fontSize: 9,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-
-  // Bill Details
-  billRows: { gap: 10 },
-  billRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  billLabel: { fontFamily: "PlusJakartaSans_500Medium", color: C.text, fontSize: 13 },
-  billValue: { fontFamily: "PlusJakartaSans_500Medium", color: C.text, fontSize: 13 },
-  billStrike: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.textLight, fontSize: 12, textDecorationLine: "line-through" },
-  billNote: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.textSub, fontSize: 11, marginTop: 4 },
-  totalRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  totalLabel: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 16 },
-  totalValue: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 18 },
-
-  // Note card
-  noteCard: {
-    backgroundColor: "#fff8e1",
-    marginTop: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+  // Policy note (C35)
+  policy: {
+    backgroundColor: C.warningLight,
     borderTopWidth: 1,
     borderBottomWidth: 1,
-    borderColor: "#ffe082",
+    borderColor: C.warningBorder,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
   },
-  noteText: { fontFamily: "PlusJakartaSans_800ExtraBold", color: C.text, fontSize: 12, lineHeight: 18 },
-  noteBold: { fontFamily: "PlusJakartaSans_800ExtraBold" },
-  noteLinkBtn: { alignSelf: "flex-start", paddingVertical: 4 },
-  noteLink: { fontFamily: "PlusJakartaSans_700Bold", color: C.primary, fontSize: 12 },
+  policyText: { fontFamily: fontFamily.regular, fontSize: 12, lineHeight: 17, color: C.textSub },
+  policyLink: { alignSelf: "flex-start", minHeight: 32, justifyContent: "center", paddingVertical: 4 },
+  policyLinkText: { fontFamily: fontFamily.bold, fontSize: 12, color: C.primaryDark },
 
-  // Inputs
-  textInput: { fontFamily: "PlusJakartaSans_400Regular",
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: C.border,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    backgroundColor: C.card,
-    color: C.text,
-    fontSize: 14,
-    height: 44,
-  },
-  multilineInput: { minHeight: 76, height: undefined, textAlignVertical: "top" },
-  textInputError: { borderColor: C.danger },
-
-  // "Who is this order for?" section
-  orderForRow: {
-    flexDirection: "row",
-    gap: 10,
-  },
-  orderForChip: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 12,
-    paddingHorizontal: 10,
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: C.border,
-    backgroundColor: C.card,
-  },
-  orderForChipActive: {
-    borderColor: C.primary,
-    backgroundColor: C.primaryXLight,
-  },
-  orderForChipText: { fontFamily: "PlusJakartaSans_700Bold",
-    fontSize: 13,
-    color: C.text,
-  },
-  orderForChipTextActive: {
-    color: C.primary,
-  },
-  // Pay dock — Blinkit-style horizontal bar. Overrides on top of BottomDock
-  // (which supplies position absolute bottom 0, paddingBottom 28, the top
-  // border and the base dock shadow). elevation 16 keeps it above siblings.
-  payDock: {
-    paddingHorizontal: 12,
-    paddingTop: 10,
-    shadowOffset: { width: 0, height: -4 },
-    shadowRadius: 10,
-    elevation: 16,
-  },
-  payDockRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  payMethodSelector: {
-    flexDirection: "row",
-    alignItems: "center",
-    flexShrink: 1,
-    maxWidth: "38%",
-    gap: 8,
-    paddingVertical: 4,
-    minHeight: 44,
-  },
-  payMethodIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: C.card,
-    borderWidth: 1,
-    borderColor: C.border,
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
-  },
-  payMethodLogo: {
-    width: 34,
-    height: 34,
-  },
-  payMethodTextCol: { flexShrink: 1 },
-  payMethodLabelRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 2,
-  },
-  payMethodLabel: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: C.text,
-    fontSize: 10,
-    letterSpacing: 0.4,
-  },
-  payMethodValue: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: C.text,
-    fontSize: 13,
-    marginTop: 1,
-  },
-  payButton: {
-    flex: 1,
-    backgroundColor: C.primary,
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    minHeight: 56,
-  },
-  payButtonPlacing: { opacity: 0.65, justifyContent: "center" },
-  payButtonPlacingInner: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-  },
-  payButtonAmount: {
-    justifyContent: "center",
-  },
-  payButtonAmountValue: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: C.card,
-    fontSize: 16,
-    letterSpacing: 0.2,
-  },
-  payButtonAmountLabel: { fontFamily: "PlusJakartaSans_700Bold",
-    color: "rgba(255,255,255,0.85)",
-    fontSize: 10,
-    letterSpacing: 0.6,
-    marginTop: 1,
-  },
-  payButtonCta: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  payButtonCtaText: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: C.card,
-    fontSize: 15,
-    letterSpacing: 0.2,
-  },
+  // Skeleton
+  skelRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10 },
+  skelText: { flex: 1, gap: 8 },
+  skelBillRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 14 },
 });

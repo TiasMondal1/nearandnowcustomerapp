@@ -1,430 +1,362 @@
+// Categories tab — the shared TabHeader (atlas) over flat tile groups (design/blinkit-parity §2.3 / §3.2 ·
+// BP-05 / BP-09 · speed-and-ease #32). ONE mount effect: the category list comes from the cached service, the
+// per-category counts from the memory catalog (no inline Supabase query, no 5000-id IN list — MAP C4/C6, P15).
+// Tiles are 4-up, r14, flat, on the cream ground; no wash panels or doodle layers. Tile presses are navigation and
+// therefore silent; pull-to-refresh plays the tap tick (CONTRACTS §8). No codename header: the tab itself has
+// none in CONTRACTS §10 — the TabHeader it mounts carries atlas.
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import {
-    Pressable,
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Text,
-    View,
-} from "react-native";
-
-import { LinearGradient } from "expo-linear-gradient";
+import { RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import {
-    DoodleBackdrop,
-    GRID_PANEL_DOODLES,
-    PAGE_WALLPAPER_DOODLES,
-    Screen,
-    Skeleton,
-    SoftPanel,
-    TAB_HEADER_DOODLES,
+  EmptyState,
+  PressableScale,
+  Screen,
+  Skeleton,
+  SkeletonScreen,
+  TabHeader,
+  useCartBarFootprint,
 } from "../../components/ui";
 import {
-    CATEGORY_GROUPS,
-    DEFAULT_GROUP,
-    getGroupForCategoryName,
-    type CategoryGroupDef,
+  CATEGORY_GROUPS,
+  DEFAULT_GROUP,
+  getGroupForCategoryName,
+  type CategoryGroupDef,
 } from "../../constants/categoryGroups";
-import { opacity } from "../../constants/ui";
-import { useLocation } from "../../context/LocationContext";
-import { getAllCategories, type Category } from "../../lib/categoryService";
+import { categoryFallbackIcon, categoryTint } from "../../constants/categoryTints";
+import { C } from "../../constants/colors";
+import { fontFamily, layout, motion, radius, text } from "../../constants/ui";
+import { useAuth } from "../../context/AuthContext";
+import { useLocation, type ActiveLocation } from "../../context/LocationContext";
+import { useProfileMenu } from "../../context/ProfileMenuContext";
+import { useForceSkeleton } from "../../hooks/useSlowLoad";
+import { getAllCategories, peekCategories, type Category } from "../../lib/categoryService";
+import { useDevFlag } from "../../lib/devFlags";
+import { feedback } from "../../lib/feedback";
 import { cdnImage } from "../../lib/imageUrl";
 import { logSilentFailure } from "../../lib/logSilentFailure";
 import {
-    getCountForCategoryName,
-    readHomeCatalogCache,
+  getCountForCategoryName,
+  getMemoryHomeCache,
+  groupProductsByCategory,
+  type HomeCatalogCache,
 } from "../../lib/productService";
-import { getAllActiveProductIds } from "../../lib/storeService";
+import { peekNearbyProductFilter } from "../../lib/storeService";
 
-const T = {
-  green: "#2D7A4F",
-  greenXLight: "#EAF6EE",
-  // Header-band gradient top stop — same as home's T.greenWash.
-  greenWash: "#D6EDE0",
-  greenBorder: "rgba(45,122,79,0.15)",
-  cream: "#FAFAF7",
-  bark: "#3C2F1E",
-  barkLight: "#A89282",
-  white: "#FFFFFF",
-  cardBorder: "rgba(60,47,30,0.08)",
-  shadow: "rgba(0,0,0,0.08)",
-};
+// ─── Constants ────────────────────────────────────────────────────────────────
 
-const SKELETON_TILES = [0, 1, 2, 3, 4, 5, 6, 7];
+/** Skeleton: two groups × eight tiles, mirroring the real 4-column grid. */
+const SKELETON_GROUPS = [0, 1] as const;
+const SKELETON_TILES = [0, 1, 2, 3, 4, 5, 6, 7] as const;
+/** Fallback glyph size inside a tinted tile. */
+const TILE_GLYPH = 28;
+/** `cdnImage` width hint: a 25 % column on a 360 pt device is ~82 pt wide (≈ 2×). */
+const TILE_IMAGE_WIDTH_HINT = 160;
 
-const CAT_TINTS = [
-  "#E8F5E9", "#FFF8E1", "#E3F2FD", "#FCE4EC",
-  "#EDE7F6", "#E0F7FA", "#FBE9E7", "#F9FBE7",
-];
+type Counts = Record<string, number>;
+type Tile = { category: Category; tintIndex: number };
+type Section = { group: CategoryGroupDef; tiles: Tile[] };
 
-const FALLBACK_ICONS = [
-  "apple", "leaf", "cow", "cookie",
-  "cup", "sack", "face-woman-shimmer", "home-outline",
-];
+// ─── Pure helpers ─────────────────────────────────────────────────────────────
 
-type CategoryWithTint = Category & { tint: string; iconName: string };
-type Section = { group: CategoryGroupDef; items: CategoryWithTint[] };
+/**
+ * Lower-cased category name → product count. With a location AND the nearby filter in memory the counts come from
+ * the NEARBY view (the same derive Home uses), so a category stocked only by out-of-radius stores is hidden here
+ * exactly as Home hides it and category/[slug] empties it (W3 R1-10, MAP §2.11 #39). No location / no nearby
+ * filter yet → the global catalog; `null` when no catalog is in memory at all.
+ */
+function countsFromCache(cache: HomeCatalogCache | null, location: ActiveLocation | null): Counts | null {
+  if (!cache?.productsByCategory) return null;
+  let byCategory = cache.productsByCategory;
+  if (location) {
+    const nearby = peekNearbyProductFilter(location.latitude, location.longitude);
+    if (nearby) {
+      const ids = nearby.productIds;
+      byCategory = groupProductsByCategory(cache.products.filter((p) => ids.has(p.id)));
+    }
+  }
+  const counts: Counts = {};
+  for (const [name, list] of Object.entries(byCategory)) {
+    counts[name.toLowerCase().trim()] = list.length;
+  }
+  return counts;
+}
 
-const CategoryTile = React.memo(function CategoryTile({
-  item,
-  onPress,
-}: {
-  item: CategoryWithTint;
-  onPress: (slug: string) => void;
-}) {
-  const handlePress = useCallback(() => onPress(item.slug), [onPress, item.slug]);
+/**
+ * Groups by `CATEGORY_GROUPS` / `getGroupForCategoryName` (constants/categoryGroups.ts is frozen in wave 2; W3
+ * applies the X9 word-boundary change). With a catalog in memory, categories with no products are hidden — as
+ * today; without one, every category shows (tiles without counts). The tint index runs across all groups so two
+ * neighbouring groups never restart on the same pastel.
+ */
+function buildSections(categories: Category[], counts: Counts | null): Section[] {
+  const byGroupId = new Map<string, Tile[]>();
+  let tintIndex = 0;
+  for (const category of categories) {
+    if (counts && getCountForCategoryName(category.name, counts) <= 0) continue;
+    const group = getGroupForCategoryName(category.name);
+    const tile: Tile = { category, tintIndex: tintIndex++ };
+    const list = byGroupId.get(group.id);
+    if (list) list.push(tile);
+    else byGroupId.set(group.id, [tile]);
+  }
+  const out: Section[] = [];
+  for (const group of CATEGORY_GROUPS) {
+    const tiles = byGroupId.get(group.id);
+    if (tiles?.length) out.push({ group, tiles });
+  }
+  const rest = byGroupId.get(DEFAULT_GROUP.id);
+  if (rest?.length) out.push({ group: DEFAULT_GROUP, tiles: rest });
+  return out;
+}
 
-  return (
-    <Pressable
-      onPress={handlePress}
-      accessibilityRole="button"
-      style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
-    >
-      <View style={[styles.tileImageWrap, { backgroundColor: item.tint }]}>
-        {item.image_url ? (
-          <Image
-            source={{ uri: cdnImage(item.image_url, 240) }}
-            style={styles.tileImage}
-            contentFit="cover"
-            cachePolicy="memory-disk"
-            transition={120}
-            recyclingKey={item.id}
-            priority="low"
-          />
-        ) : (
-          <MaterialCommunityIcons
-            name={item.iconName as any}
-            size={28}
-            color={T.green}
-          />
-        )}
-      </View>
-      <Text style={styles.tileLabel} numberOfLines={2}>
-        {item.name}
-      </Text>
-    </Pressable>
-  );
-});
+function openCategory(slug: string): void {
+  router.push(`/category/${slug}`);
+}
 
-const Header = React.memo(function Header() {
-  return (
-    <View style={styles.header}>
-      {/* Same decorated band as home's address bar: green wash + grocery
-          line-art, both non-interactive. */}
-      <LinearGradient
-        colors={[T.greenWash, T.white]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 0, y: 1 }}
-        style={StyleSheet.absoluteFillObject}
-        pointerEvents="none"
-      />
-      <DoodleBackdrop doodles={TAB_HEADER_DOODLES} />
-      <Text style={styles.title} accessibilityRole="header">Categories</Text>
-      <Text style={styles.subtitle}>Browse everything we carry</Text>
-    </View>
-  );
-});
+function openLocation(): void {
+  router.push({ pathname: "/select-location", params: { returnTo: "/(tabs)/categories" } });
+}
+
+// ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function CategoriesScreen() {
-  const { isHydrated } = useLocation();
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({});
-  const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
+  const { location } = useLocation();
+  const { open, unreadCount } = useProfileMenu();
+  const inhibitAvatar = useDevFlag("Dev_Atlas_inhibit_Feature");
+  const cartBarFootprint = useCartBarFootprint();
+
+  // SWR seed (MAP §2.6 #27): the cached category list and the memory catalog paint on the first frame.
+  const [categories, setCategories] = useState<Category[]>(() => peekCategories() ?? []);
+  const [counts, setCounts] = useState<Counts | null>(() => countsFromCache(getMemoryHomeCache(), location));
+  const [loading, setLoading] = useState(() => (peekCategories()?.length ?? 0) === 0);
   const [refreshing, setRefreshing] = useState(false);
+  // 0 = the mount load (cache hit); every bump is a user-driven reload that forces the network.
+  const [reloadNonce, setReloadNonce] = useState(0);
 
-  const buildCountsFromProductsByCategory = useCallback(
-    (productsByCategory: Record<string, unknown[]>) => {
-      const counts: Record<string, number> = {};
-      for (const [cat, prods] of Object.entries(productsByCategory)) {
-        counts[cat.toLowerCase().trim()] = prods.length;
-      }
-      return counts;
-    },
-    [],
-  );
-
-  const fetchData = useCallback(async (_isRefresh = false) => {
-    try {
-      // Try home catalog cache first — it's already filtered to active store products
-      const [cached, categoriesData] = await Promise.all([
-        readHomeCatalogCache(),
-        getAllCategories(),
-      ]);
-
-      setCategories(categoriesData);
-
-      if (cached?.productsByCategory) {
-        setCategoryCounts(buildCountsFromProductsByCategory(cached.productsByCategory as Record<string, unknown[]>));
-      } else {
-        // No cache yet — build counts from active product IDs
-        const activeIds = await getAllActiveProductIds();
-        // Use active IDs to count per category via a lightweight query
-        const { data } = await import("../../lib/supabase").then(async ({ supabase }) =>
-          supabase
-            .from("master_products")
-            .select("category")
-            .eq("is_active", true)
-            .in("id", [...activeIds].slice(0, 5000)),
-        );
-        if (data) {
-          const counts: Record<string, number> = {};
-          for (const row of data as { category: string | null }[]) {
-            const key = (row.category || "Uncategorized").toLowerCase().trim();
-            counts[key] = (counts[key] || 0) + 1;
-          }
-          setCategoryCounts(counts);
-        }
-      }
-    } catch (error) {
-      logSilentFailure("Fetch categories", error);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [buildCountsFromProductsByCategory]);
-
-  // Paint from home catalog cache immediately
+  // The ONE data effect (speed-and-ease #32): categories through the 60-min query cache (forced on retry /
+  // pull-to-refresh), counts re-read from whatever catalog Home has put in memory by now.
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      const [cached, categoriesData] = await Promise.all([
-        readHomeCatalogCache(),
-        getAllCategories(),
-      ]);
-      if (cancelled) return;
-      if (cached?.productsByCategory) {
-        setCategories(categoriesData);
-        setCategoryCounts(buildCountsFromProductsByCategory(cached.productsByCategory as Record<string, unknown[]>));
+    getAllCategories({ force: reloadNonce > 0 })
+      .then((list) => {
+        if (cancelled) return;
+        setCategories(list);
+        setCounts(countsFromCache(getMemoryHomeCache(), location));
+      })
+      .catch((err) => {
+        if (!cancelled) logSilentFailure("Load categories", err);
+      })
+      .finally(() => {
+        if (cancelled) return;
         setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [buildCountsFromProductsByCategory]);
+        setRefreshing(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // `location` is read on focus below; the mount load keys on the reload nonce only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadNonce]);
 
-  useEffect(() => {
-    if (!isHydrated) return;
-    fetchData();
-  }, [isHydrated, fetchData]);
+  // Re-read the counts on every focus: Home may have resolved the nearby filter (or the location changed) meanwhile.
+  useFocusEffect(
+    useCallback(() => {
+      setCounts(countsFromCache(getMemoryHomeCache(), location));
+    }, [location]),
+  );
 
-  const sections = useMemo<Section[]>(() => {
-    const byGroupId = new Map<string, CategoryWithTint[]>();
-    let tintIdx = 0;
-
-    for (const cat of categories) {
-      if (getCountForCategoryName(categoryCounts, cat.name) <= 0) continue;
-
-      const group = getGroupForCategoryName(cat.name);
-      const enriched: CategoryWithTint = {
-        ...cat,
-        tint: cat.color || CAT_TINTS[tintIdx++ % CAT_TINTS.length],
-        iconName: cat.icon || FALLBACK_ICONS[Math.abs(cat.name.length) % FALLBACK_ICONS.length],
-      };
-
-      const list = byGroupId.get(group.id);
-      if (list) list.push(enriched);
-      else byGroupId.set(group.id, [enriched]);
-    }
-
-    const out: Section[] = [];
-    for (const g of CATEGORY_GROUPS) {
-      const items = byGroupId.get(g.id);
-      if (items?.length) out.push({ group: g, items });
-    }
-    const rest = byGroupId.get(DEFAULT_GROUP.id);
-    if (rest?.length) out.push({ group: DEFAULT_GROUP, items: rest });
-    return out;
-  }, [categories, categoryCounts]);
+  const sections = useMemo(() => buildSections(categories, counts), [categories, counts]);
+  const showSkeleton = useForceSkeleton(loading);
 
   const onRefresh = useCallback(() => {
+    feedback.tapSound();
     setRefreshing(true);
-    fetchData(true);
-  }, [fetchData]);
-
-  const handleTilePress = useCallback((slug: string) => {
-    router.push(`/category/${slug}` as any);
+    setReloadNonce((n) => n + 1);
   }, []);
 
-  if (loading) {
-    return (
-      <Screen bg={T.cream} edges={["top"]}>
-        <DoodleBackdrop doodles={PAGE_WALLPAPER_DOODLES} baseOpacity={0.05} />
-        <Header />
-        <View
-          style={styles.skeletonWrap}
-          accessible
-          accessibilityRole="progressbar"
-          accessibilityLabel="Loading categories…"
-        >
-          {[0, 1].map((s) => (
-            <View key={s} style={styles.sectionWrap}>
-              <View style={styles.sectionTitleRow}>
-                <Skeleton width={s === 0 ? 150 : 120} height={16} color={T.cardBorder} />
-              </View>
-              <View style={styles.grid}>
-                {SKELETON_TILES.map((i) => (
-                  <View key={i} style={styles.tile}>
-                    <View style={styles.skeletonSquare}>
-                      <Skeleton width="100%" height="100%" radius={14} color={T.cardBorder} />
-                    </View>
-                    <Skeleton width="60%" height={10} color={T.cardBorder} />
-                  </View>
-                ))}
-              </View>
-            </View>
-          ))}
-        </View>
-      </Screen>
-    );
-  }
+  const retry = useCallback(() => {
+    setLoading(true);
+    setReloadNonce((n) => n + 1);
+  }, []);
+
+  const avatarInitial = user?.name?.trim().charAt(0) || undefined;
+  const scrollPadding = useMemo(
+    () => [styles.scrollContent, { paddingBottom: layout.scrollBottomTab + cartBarFootprint }],
+    [cartBarFootprint],
+  );
 
   return (
-    <Screen bg={T.cream} edges={["top"]}>
-      {/* Fixed wallpaper: the tiles sit straight on the cream ground, so the
-          faint glyphs show in the margins between them. */}
-      <DoodleBackdrop doodles={PAGE_WALLPAPER_DOODLES} baseOpacity={0.05} />
-      <Header />
+    <Screen bg={C.bg} edges={["top"]}>
+      <TabHeader
+        variant="tab"
+        title="Categories"
+        addressLabel={location?.label ?? null}
+        addressLine={location?.address ?? null}
+        onAddressPress={openLocation}
+        avatarInitial={avatarInitial}
+        onAvatarPress={open}
+        showAvatar={!inhibitAvatar}
+        unread={unreadCount > 0}
+        testID="categories-header"
+      />
 
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-        removeClippedSubviews
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={T.green}
-            colors={[T.green]}
-          />
-        }
-      >
-        {sections.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <View style={styles.emptyIconWrap}>
-              <MaterialCommunityIcons name="view-grid-outline" size={40} color={T.green} />
-            </View>
-            <Text style={styles.emptyTitle}>No categories yet</Text>
-            <Text style={styles.emptyText}>Check back soon for new categories</Text>
-          </View>
-        ) : (
-          sections.map(({ group, items }) => (
-            <View key={group.id} style={styles.sectionWrap}>
-              <View style={styles.sectionTitleRow}>
-                <Text style={styles.sectionTitle} accessibilityRole="header">{group.title}</Text>
+      {showSkeleton ? (
+        <CategoriesSkeleton />
+      ) : (
+        <ScrollView
+          contentContainerStyle={scrollPadding}
+          showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} colors={[C.primary]} />}
+          testID="categories-scroll"
+        >
+          {sections.length === 0 ? (
+            <EmptyState
+              fill
+              iconWrap
+              icon="view-grid-outline"
+              title="No categories yet"
+              text="Check back soon for new categories"
+              action={{ label: "Retry", onPress: retry }}
+            />
+          ) : (
+            sections.map(({ group, tiles }) => (
+              <View key={group.id} style={styles.section}>
+                <Text style={styles.sectionTitle} accessibilityRole="header" maxFontSizeMultiplier={1.3}>
+                  {group.title}
+                </Text>
+                <View style={styles.grid}>
+                  {tiles.map(({ category, tintIndex }) => (
+                    <CategoryTile
+                      key={category.id}
+                      category={category}
+                      tintIndex={tintIndex}
+                      count={counts ? getCountForCategoryName(category.name, counts) : undefined}
+                    />
+                  ))}
+                </View>
               </View>
-              <View style={styles.grid}>
-                {/* Rounded green wash grounds each group's tile field as a
-                    container box — same treatment as home's shop-by-category. */}
-                <SoftPanel style={styles.gridPanel} />
-                <DoodleBackdrop doodles={GRID_PANEL_DOODLES} baseOpacity={0.07} />
-                {items.map((it) => (
-                  <CategoryTile key={it.id} item={it} onPress={handleTilePress} />
-                ))}
-              </View>
-            </View>
-          ))
-        )}
-      </ScrollView>
+            ))
+          )}
+        </ScrollView>
+      )}
     </Screen>
   );
 }
 
+// ─── Tile ─────────────────────────────────────────────────────────────────────
+
+/**
+ * 25 % column: square tinted image wrap (`aspectRatio 1`, r14, no shadow — the clip is safe on Android because the
+ * tile is flat) with the category art or the index-based fallback glyph, then a 12/600 two-line label. Press scale
+ * 0.94 (`motion.scale.tile`), pressed face C.border, silent (navigation). No press-in warm-up (rev. 2): the category
+ * screen seeds itself from the memory catalog instead.
+ */
+const CategoryTile = React.memo(function CategoryTile({
+  category,
+  tintIndex,
+  count,
+}: {
+  category: Category;
+  tintIndex: number;
+  count?: number;
+}) {
+  const uri = cdnImage(category.image_url, TILE_IMAGE_WIDTH_HINT);
+  const label = count != null ? `${category.name}, ${count} ${count === 1 ? "product" : "products"}` : category.name;
+
+  return (
+    <PressableScale
+      scale={motion.scale.tile}
+      onPress={() => openCategory(category.slug)}
+      pressedStyle={styles.tilePressed}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityHint="Opens the category"
+      style={styles.tile}
+      innerStyle={styles.tileInner}
+      testID={`categories-tile-${category.id}`}
+    >
+      <View style={[styles.tileImageWrap, { backgroundColor: categoryTint(tintIndex) }]}>
+        {uri ? (
+          <Image
+            source={{ uri }}
+            style={styles.tileImage}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+            transition={motion.imageFade}
+            recyclingKey={category.id}
+            priority="low"
+            accessibilityIgnoresInvertColors
+          />
+        ) : (
+          <MaterialCommunityIcons name={categoryFallbackIcon(tintIndex)} size={TILE_GLYPH} color={C.primary} />
+        )}
+      </View>
+      <Text style={styles.tileLabel} numberOfLines={2} maxFontSizeMultiplier={1.3}>
+        {category.name}
+      </Text>
+    </PressableScale>
+  );
+});
+
+// ─── Skeleton ─────────────────────────────────────────────────────────────────
+
+/** Two groups of eight square tiles inside one `SkeletonScreen` ("Loading categories…"), same geometry as the grid. */
+function CategoriesSkeleton() {
+  return (
+    <SkeletonScreen label="Loading categories…" style={styles.skeletonWrap}>
+      {SKELETON_GROUPS.map((g) => (
+        <View key={g} style={styles.section}>
+          <Skeleton width={g === 0 ? 150 : 120} height={17} style={styles.skeletonTitle} />
+          <View style={styles.grid}>
+            {SKELETON_TILES.map((i) => (
+              <View key={i} style={[styles.tile, styles.tileInner]}>
+                <View style={styles.tileImageWrap}>
+                  <Skeleton width="100%" height="100%" radius={radius.xxl} />
+                </View>
+                <Skeleton width="60%" height={12} />
+              </View>
+            ))}
+          </View>
+        </View>
+      ))}
+    </SkeletonScreen>
+  );
+}
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  // Header (shared tab-header spec with order-again.tsx)
-  header: {
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 12,
-    backgroundColor: T.white,
-    borderBottomWidth: 1,
-    borderBottomColor: T.cardBorder,
-  },
-  title: {
-    fontSize: 22,
-    fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: T.bark,
-    letterSpacing: -0.4,
-  },
-  subtitle: { fontFamily: "PlusJakartaSans_500Medium",
-    fontSize: 12,
-    color: T.barkLight,
-    marginTop: 2,
-  },
-
-  // Loading skeleton — mirrors the 4-column tile grid below
+  scrollContent: { flexGrow: 1 },
   skeletonWrap: { flex: 1, overflow: "hidden" },
-  skeletonSquare: { width: "100%", aspectRatio: 1 },
+  skeletonTitle: { marginBottom: 10 },
 
-  scrollContent: { paddingBottom: 130 },
+  section: { paddingTop: 20 },
+  sectionTitle: { ...text.h3, paddingHorizontal: layout.gutter, marginBottom: 10 },
+  // Tiles carry 4 px of their own horizontal padding, so the row pads 12 to land on the 16 px gutter.
+  grid: { flexDirection: "row", flexWrap: "wrap", paddingHorizontal: layout.gutter - 4 },
 
-  emptyContainer: {
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: 360,
-    gap: 12,
-  },
-  emptyIconWrap: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: T.greenXLight,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1.5,
-    borderColor: T.greenBorder,
-  },
-  emptyTitle: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 17, color: T.bark },
-  emptyText: { fontFamily: "PlusJakartaSans_500Medium", fontSize: 14, color: T.barkLight },
-
-  sectionWrap: {
-    paddingHorizontal: 10,
-    paddingTop: 24,
-    paddingBottom: 8,
-  },
-  sectionTitleRow: {
-    marginBottom: 12,
-    paddingHorizontal: 6,
-  },
-  sectionTitle: { fontFamily: "PlusJakartaSans_800ExtraBold",
-    fontSize: 17,
-    color: T.bark,
-    letterSpacing: -0.3,
-  },
-
-  grid: { flexDirection: "row", flexWrap: "wrap" },
-  // Slight negative insets pull the panel border outside the tiles' own
-  // padding so the box wraps the whole field (sectionWrap's padding gives room).
-  gridPanel: { top: -6, bottom: 0, left: -2, right: -2 },
-
-  tile: {
-    width: "25%",
-    paddingHorizontal: 6,
-    paddingVertical: 8,
-    alignItems: "center",
-    gap: 8,
-  },
-  tilePressed: { transform: [{ scale: 0.97 }], opacity: opacity.pressCard },
+  tile: { width: "25%" },
+  tileInner: { alignItems: "center", paddingHorizontal: 4, paddingVertical: 8, gap: 8, borderRadius: radius.xxl },
+  tilePressed: { backgroundColor: C.border },
+  // Clips the cover image to r14; flat (no shadow), so the clip is safe on Android (MAP §7.4).
   tileImageWrap: {
     width: "100%",
     aspectRatio: 1,
-    borderRadius: 14,
+    borderRadius: radius.xxl,
+    overflow: "hidden",
     alignItems: "center",
     justifyContent: "center",
-    overflow: "hidden",
-    shadowColor: T.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 1,
-    shadowRadius: 4,
-    elevation: 2,
   },
-  tileImage: { width: "100%", height: "100%" },
-  tileLabel: { fontFamily: "PlusJakartaSans_700Bold",
+  tileImage: { ...StyleSheet.absoluteFillObject },
+  tileLabel: {
+    fontFamily: fontFamily.semibold,
     fontSize: 12,
-    color: T.bark,
-    textAlign: "center",
     lineHeight: 16,
+    color: C.text,
+    textAlign: "center",
     minHeight: 32,
   },
 });

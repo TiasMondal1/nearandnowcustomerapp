@@ -1,26 +1,48 @@
+// OTP entry (BP-37 / M20). Six 48×56 boxes on C.bgSoft that auto-submit on the sixth digit (typed, pasted or
+// SMS-autofilled), `Shake` + C.danger borders + `feedback.error()` on a wrong code, `feedback.tap()` (quiet confirm, W3 F7) on
+// verify, then /onboarding (new user) or /welcome — `Dev_Zephyr_inhibit_WelcomeInterstitial` goes straight to
+// Home. Continue / back / resend presses are silent; the result plays.
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
-    Alert,
-    Image,
-    KeyboardAvoidingView,
-    Platform,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  AccessibilityInfo,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+  type NativeSyntheticEvent,
+  type TextInputKeyPressEventData,
 } from "react-native";
 
-import { PrimaryButton, Screen } from "../components/ui";
+import { dur, notify, PressableScale, PrimaryButton, Screen, Shake } from "../components/ui";
 import { C } from "../constants/colors";
+import { border, fontFamily, motion, radius, space, text } from "../constants/ui";
 import { useAuth } from "../context/AuthContext";
 import { sendOTP } from "../lib/authService";
+import { getDevFlag } from "../lib/devFlags";
+import { feedback } from "../lib/feedback";
+
+const CODE_LENGTH = 6;
+/** Seconds before "Resend code" becomes available (first send and every resend). */
+const RESEND_SECONDS = 60;
+/** How long the boxes stay C.danger after a wrong code (ms; × the dev speed factor). */
+const ERROR_FLASH_MS = 600;
 
 // Text-link hit areas. Top slop is kept smaller than the gap to the element
 // above so the extended target never sits over the OTP boxes / Verify button
 // (a later sibling's hitSlop wins over an earlier sibling's frame).
 const LINK_HIT_SLOP = { top: 8, bottom: 12, left: 16, right: 16 };
+
+const emptyCode = (): string[] => Array.from({ length: CODE_LENGTH }, () => "");
+
+const formatTimer = (s: number) => {
+  const mm = Math.floor(s / 60).toString().padStart(2, "0");
+  const ss = (s % 60).toString().padStart(2, "0");
+  return `${mm}:${ss}`;
+};
 
 export default function OtpScreen() {
   const params = useLocalSearchParams();
@@ -29,39 +51,124 @@ export default function OtpScreen() {
 
   const { verifyOTPCode } = useAuth();
 
-  const [digits, setDigits] = useState(["", "", "", "", "", ""]);
-  const [secondsLeft, setSecondsLeft] = useState(60);
+  const [digits, setDigits] = useState<string[]>(emptyCode);
+  const [secondsLeft, setSecondsLeft] = useState(RESEND_SECONDS);
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
+  // Wrong-code state: `errorNonce` drives the Shake (one increment = one shake) and restarts the border flash;
+  // `errorFlash` paints the boxes C.danger for ERROR_FLASH_MS; `errorMessage` is the inline line under the
+  // boxes, cleared by the next keystroke.
+  const [errorNonce, setErrorNonce] = useState(0);
+  const [errorFlash, setErrorFlash] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const inputsRef = useRef<Array<TextInput | null>>([]);
+  const inputsRef = useRef<(TextInput | null)[]>([]);
   // Synchronous double-submit lock — `loading` is React state, so a fast
-  // double-tap (or a tap racing the auto-submit effect below) could invoke
+  // double-tap (or a tap racing the auto-submit below) could invoke
   // verifyOTPCode twice concurrently before a re-render ever disabled the
   // button. Mirrors app/support/checkout.tsx's identical `placingRef` fix
   // for the same race.
   const verifyingRef = useRef(false);
 
+  // Resend countdown. Ticks only while there is something to count down, so no idle interval sits around
+  // once it reaches zero (the W3 setInterval audit: a visible countdown, not an animation loop).
+  const counting = secondsLeft > 0;
   useEffect(() => {
-    const interval = setInterval(() => {
-      setSecondsLeft((prev) => (prev <= 1 ? 0 : prev - 1));
-    }, 1000);
-    return () => clearInterval(interval);
-  }, []);
+    if (!counting) return;
+    const id = setInterval(() => setSecondsLeft((prev) => (prev <= 1 ? 0 : prev - 1)), 1000);
+    return () => clearInterval(id);
+  }, [counting]);
 
+  // Border flash: every new wrong code restarts the ERROR_FLASH_MS timer; unmount clears it.
   useEffect(() => {
-    const code = digits.join("");
-    if (code.length === 6 && !loading) {
-      handleVerify(code);
+    if (errorNonce === 0) return;
+    const id = setTimeout(() => setErrorFlash(false), dur(ERROR_FLASH_MS));
+    return () => clearTimeout(id);
+  }, [errorNonce]);
+
+  const resetCode = () => {
+    setDigits(emptyCode());
+    inputsRef.current[0]?.focus();
+  };
+
+  const showWrongCode = (message: string) => {
+    setErrorMessage(message);
+    setErrorFlash(true);
+    setErrorNonce((n) => n + 1);
+    // iOS has no live regions; announce explicitly so VoiceOver users hear why the boxes just emptied.
+    AccessibilityInfo.announceForAccessibility(message);
+  };
+
+  const handleVerify = async (code: string) => {
+    if (code.length !== CODE_LENGTH || verifyingRef.current) return;
+    if (!phone) {
+      showWrongCode("Missing phone number. Go back and enter it again.");
+      return;
     }
-  }, [digits]);
+    verifyingRef.current = true;
+    setLoading(true);
+    try {
+      const { isNewUser } = await verifyOTPCode(phone, code, "Customer", email || undefined);
+      // Email verification step disabled for now — email is captured (mandatory) during
+      // signup but not verified. Re-enable by routing new users to "/verify-email" instead.
+      // if (isNewUser) {
+      //   router.replace({ pathname: "/verify-email", params: { email } });
+      // } else {
+      //   router.replace("/welcome");
+      // }
+      feedback.tap(); // quiet confirm (W3 F7 / R2-24): light haptic + toast only — `success` is reserved for order placement
+      // /phone is the stack root under this screen; replace swaps only the top, so unwind first or Home keeps
+      // /phone (and a second /phone after logout) underneath it (W3 R6-05).
+      if (router.canDismiss()) router.dismissAll();
+      if (isNewUser) {
+        router.replace("/onboarding");
+      } else if (getDevFlag("Dev_Zephyr_inhibit_WelcomeInterstitial")) {
+        router.replace("/(tabs)/home");
+      } else {
+        router.replace("/welcome");
+      }
+    } catch (err) {
+      const message = err instanceof Error && err.message ? err.message : "Verification failed";
+      feedback.error();
+      resetCode();
+      if (message.toLowerCase().includes("email")) {
+        // Backend rejects brand-new signups without an email (auth.controller.ts). Send the user straight back to
+        // add one, with a toast instead of the old "OK to continue" Alert (W3 R2-F6): the toast lives in the root
+        // ToastHost so it survives the navigation, and its haptic is already covered by the feedback.error() above.
+        // dismissTo pops back to the live /phone (the typed number is still there) instead of stacking a second
+        // /phone under this one (W3 R6-05); from a cold start on /otp it replaces instead.
+        notify({
+          id: "email-required",
+          tone: "error",
+          title: "Email required",
+          message: "Add your email to finish creating your account.",
+        });
+        router.dismissTo({ pathname: "/phone", params: { phone: phone.replace("+91", "") } });
+      } else {
+        showWrongCode(message);
+      }
+    } finally {
+      verifyingRef.current = false;
+      setLoading(false);
+    }
+  };
+
+  // Every digit change funnels through here, and the auto-submit happens HERE rather than in an effect on
+  // `digits` (C44): the handler already holds the next code, so there is no stale closure to disable lint for.
+  const applyDigits = (next: string[], focusIndex: number | null) => {
+    setDigits(next);
+    if (errorMessage) setErrorMessage(null);
+    if (focusIndex !== null) inputsRef.current[focusIndex]?.focus();
+    const code = next.join("");
+    if (code.length === CODE_LENGTH) void handleVerify(code);
+  };
 
   const handleChangeDigit = (value: string, index: number) => {
     const clean = value.replace(/[^0-9]/g, "");
     if (!clean) {
       const updated = [...digits];
       updated[index] = "";
-      setDigits(updated);
+      applyDigits(updated, null);
       return;
     }
     // The OS can deliver more than one character to a single box — an
@@ -72,87 +179,48 @@ export default function OtpScreen() {
     // mirroring the shopkeeper/rider apps' identical `handleDigitChange` fix.
     if (clean.length > 1) {
       const updated = [...digits];
-      for (let i = 0; i < clean.length && index + i < 6; i++) {
+      for (let i = 0; i < clean.length && index + i < CODE_LENGTH; i++) {
         updated[index + i] = clean[i];
       }
-      setDigits(updated);
-      inputsRef.current[Math.min(index + clean.length, 5)]?.focus();
+      applyDigits(updated, Math.min(index + clean.length, CODE_LENGTH - 1));
       return;
     }
     const updated = [...digits];
     updated[index] = clean;
-    setDigits(updated);
-    if (index < 5) inputsRef.current[index + 1]?.focus();
+    applyDigits(updated, index < CODE_LENGTH - 1 ? index + 1 : null);
   };
 
-  const handleKeyPress = (e: any, index: number) => {
-    if (e.nativeEvent.key === "Backspace") {
-      if (digits[index] === "" && index > 0) {
-        inputsRef.current[index - 1]?.focus();
-      }
-    }
-  };
-
-  const formatTimer = (s: number) => {
-    const mm = Math.floor(s / 60).toString().padStart(2, "0");
-    const ss = (s % 60).toString().padStart(2, "0");
-    return `${mm}:${ss}`;
-  };
-
-  const handleVerify = async (code: string) => {
-    if (code.length !== 6 || verifyingRef.current) return;
-    if (!phone) {
-      Alert.alert("Error", "Missing phone number.");
-      return;
-    }
-    verifyingRef.current = true;
-    try {
-      setLoading(true);
-      const { isNewUser } = await verifyOTPCode(phone, code, "Customer", email || undefined);
-      // Email verification step disabled for now — email is captured (mandatory) during
-      // signup but not verified. Re-enable by routing new users to "/verify-email" instead.
-      // if (isNewUser) {
-      //   router.replace({ pathname: "/verify-email", params: { email } });
-      // } else {
-      //   router.replace("/welcome");
-      // }
-      if (isNewUser) {
-        router.replace("/onboarding");
-      } else {
-        router.replace("/welcome");
-      }
-    } catch (err: any) {
-      const message = err?.message || "Verification failed";
-      if (message.toLowerCase().includes("email")) {
-        // Backend rejects brand-new signups without an email (auth.controller.ts).
-        // Send the user back to add one rather than showing a raw error.
-        Alert.alert("Email required", "Please enter your email address to finish creating your account.", [
-          { text: "OK", onPress: () => router.replace({ pathname: "/phone", params: { phone: phone.replace("+91", "") } }) },
-        ]);
-      } else {
-        Alert.alert("Error", message);
-      }
-      setDigits(["", "", "", "", "", ""]);
-      inputsRef.current[0]?.focus();
-    } finally {
-      verifyingRef.current = false;
-      setLoading(false);
+  const handleKeyPress = (e: NativeSyntheticEvent<TextInputKeyPressEventData>, index: number) => {
+    if (e.nativeEvent.key === "Backspace" && digits[index] === "" && index > 0) {
+      inputsRef.current[index - 1]?.focus();
     }
   };
 
   const handleResend = async () => {
     if (secondsLeft > 0 || resending || !phone) return;
+    setResending(true);
     try {
-      setResending(true);
       await sendOTP(phone);
-      setDigits(["", "", "", "", "", ""]);
-      inputsRef.current[0]?.focus();
-      setSecondsLeft(60);
-    } catch (err: any) {
-      Alert.alert("Error", err?.message || "Could not resend code");
+      feedback.select();
+      notify({ id: "otp-resent", tone: "success", title: "Code sent", message: `A new code is on its way to ${phone}` });
+      setErrorMessage(null);
+      resetCode();
+      setSecondsLeft(RESEND_SECONDS);
+    } catch (err) {
+      notify({
+        id: "otp-resend-error",
+        tone: "error",
+        title: "Couldn't resend the code",
+        message: err instanceof Error && err.message ? err.message : "Please try again",
+      });
     } finally {
       setResending(false);
     }
+  };
+
+  const handleBack = () => {
+    if (router.canGoBack()) router.back();
+    else router.replace("/phone");
   };
 
   const code = digits.join("");
@@ -171,89 +239,110 @@ export default function OtpScreen() {
               source={require("../assets/near_now_image.png")}
               style={styles.logo}
               resizeMode="contain"
+              accessible={false}
+              accessibilityIgnoresInvertColors
             />
           </View>
 
           <View style={styles.header}>
-            <Text style={styles.pageName}>OTP Verification</Text>
-            <Text style={styles.title} accessibilityRole="header">Enter the code</Text>
-            <Text style={styles.subtitle}>
+            <Text style={styles.pageName} maxFontSizeMultiplier={1.3}>
+              OTP verification
+            </Text>
+            <Text style={styles.title} accessibilityRole="header" maxFontSizeMultiplier={1.3}>
+              Enter the code
+            </Text>
+            <Text style={styles.subtitle} maxFontSizeMultiplier={1.3}>
               We sent a 6-digit code to {phone || "your number"}.
             </Text>
           </View>
 
           <View style={styles.otpSection}>
-            <View style={styles.otpBoxesWrapper}>
-              {digits.map((d, idx) => {
-                const isFilled = d !== "";
-                const isFocused = code.length === idx;
-                return (
-                  <TextInput
-                    key={idx}
-                    ref={(el) => { inputsRef.current[idx] = el; }}
-                    style={[
-                      styles.otpBox,
-                      isFocused && styles.otpBoxFocused,
-                      isFilled && styles.otpBoxFilled,
-                    ]}
-                    value={d}
-                    onChangeText={(val) => handleChangeDigit(val, idx)}
-                    onKeyPress={(e) => handleKeyPress(e, idx)}
-                    keyboardType="number-pad"
-                    returnKeyType="next"
-                    autoFocus={idx === 0}
-                    textContentType="oneTimeCode"
-                    autoComplete={idx === 0 ? "sms-otp" : "off"}
-                    importantForAutofill={idx === 0 ? "yes" : "no"}
-                    accessibilityLabel={`Digit ${idx + 1} of 6`}
-                  />
-                );
-              })}
-            </View>
+            <Shake trigger={errorNonce} style={styles.shakeWrap}>
+              <View style={styles.otpRow} accessibilityLiveRegion={errorFlash ? "polite" : "none"}>
+                {digits.map((d, idx) => {
+                  const isFocused = !errorFlash && code.length === idx;
+                  return (
+                    <TextInput
+                      key={idx}
+                      ref={(el) => {
+                        inputsRef.current[idx] = el;
+                      }}
+                      style={[styles.otpBox, isFocused && styles.otpBoxFocused, errorFlash && styles.otpBoxError]}
+                      value={d}
+                      onChangeText={(val) => handleChangeDigit(val, idx)}
+                      onKeyPress={(e) => handleKeyPress(e, idx)}
+                      keyboardType="number-pad"
+                      returnKeyType="next"
+                      autoFocus={idx === 0}
+                      textContentType="oneTimeCode"
+                      autoComplete={idx === 0 ? "sms-otp" : "off"}
+                      importantForAutofill={idx === 0 ? "yes" : "no"}
+                      maxFontSizeMultiplier={1.3}
+                      accessibilityLabel={`Digit ${idx + 1} of 6`}
+                    />
+                  );
+                })}
+              </View>
+            </Shake>
 
             <View style={styles.infoRow}>
+              {errorMessage ? (
+                <Text
+                  style={styles.errorText}
+                  accessibilityRole="alert"
+                  accessibilityLiveRegion="polite"
+                  maxFontSizeMultiplier={1.3}
+                >
+                  {errorMessage}
+                </Text>
+              ) : null}
               {secondsLeft > 0 ? (
-                <Text style={styles.timerText} accessibilityLiveRegion="polite">
+                <Text style={styles.timerText} maxFontSizeMultiplier={1.3}>
                   Didn&apos;t receive it? Resend in {formatTimer(secondsLeft)}
                 </Text>
               ) : (
-                <TouchableOpacity
-                  onPress={handleResend}
-                  activeOpacity={0.7}
+                <PressableScale
+                  scale={motion.scale.row}
+                  onPress={() => void handleResend()}
                   disabled={resending}
                   hitSlop={LINK_HIT_SLOP}
-                  style={styles.linkBtn}
-                  accessibilityRole="button"
+                  innerStyle={styles.linkBtn}
+                  accessibilityLabel="Resend code"
                   accessibilityState={{ disabled: resending, busy: resending }}
                 >
-                  <Text style={styles.resendText}>
-                    {resending ? "Resending…" : "Resend code"}
-                  </Text>
-                </TouchableOpacity>
+                  {({ pressed }) => (
+                    <Text style={[styles.resendText, pressed && styles.linkPressed]} maxFontSizeMultiplier={1.3}>
+                      {resending ? "Resending…" : "Resend code"}
+                    </Text>
+                  )}
+                </PressableScale>
               )}
             </View>
           </View>
 
           <View style={styles.bottomSection}>
             <PrimaryButton
+              size="lg"
               label="Verify"
-              onPress={() => handleVerify(code)}
-              disabled={code.length !== 6 || loading}
+              onPress={() => void handleVerify(code)}
+              disabled={code.length !== CODE_LENGTH}
               loading={loading}
-              shadow
-              style={(code.length !== 6 || loading) && styles.ctaDisabled}
-              textStyle={styles.ctaText}
             />
 
-            <TouchableOpacity
-              style={styles.backRow}
-              onPress={() => router.back()}
-              activeOpacity={0.7}
+            <PressableScale
+              scale={motion.scale.row}
+              onPress={handleBack}
               hitSlop={LINK_HIT_SLOP}
-              accessibilityRole="button"
+              style={styles.backWrap}
+              innerStyle={styles.backRow}
+              accessibilityLabel="Use a different number"
             >
-              <Text style={styles.backText}>Use a different number</Text>
-            </TouchableOpacity>
+              {({ pressed }) => (
+                <Text style={[styles.backText, pressed && styles.linkPressed]} maxFontSizeMultiplier={1.3}>
+                  Use a different number
+                </Text>
+              )}
+            </PressableScale>
           </View>
         </View>
       </KeyboardAvoidingView>
@@ -265,60 +354,52 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   container: {
     flex: 1,
-    paddingHorizontal: 24,
-    paddingTop: 16,
-    paddingBottom: 32,
+    paddingHorizontal: space[24],
+    paddingTop: space[16],
+    paddingBottom: space[32],
     justifyContent: "space-between",
   },
-  logoSection: { alignItems: "center", paddingTop: 4 },
+  logoSection: { alignItems: "center", paddingTop: space[4] },
   logo: { width: 160, height: 145 },
-  header: { gap: 8 },
-  pageName: {
-    fontSize: 11,
-    color: C.textSub,
-    textTransform: "uppercase",
-    letterSpacing: 1.4,
-    fontFamily: "PlusJakartaSans_600SemiBold",
-  },
-  title: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 28, color: C.text, letterSpacing: -0.3 },
-  subtitle: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 14, color: C.textSub },
+  header: { gap: space[8] },
+  pageName: { ...text.eyebrow },
+  title: { ...text.h1 },
+  subtitle: { ...text.bodySm },
   otpSection: { alignItems: "center" },
-  otpBoxesWrapper: {
+  shakeWrap: { alignSelf: "stretch" },
+  otpRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 8,
-    width: "100%",
-    marginTop: 32,
-    marginBottom: 16,
+    justifyContent: "center",
+    gap: space[8],
+    marginTop: space[32],
+    marginBottom: space[16],
   },
-  otpBox: { fontFamily: "PlusJakartaSans_600SemiBold",
+  // 48×56 r12 on C.bgSoft; the 1.5 px border is the focus / error signal (idle it matches the fill).
+  // `flex: 1, maxWidth: 48` lets the six boxes shrink a little on 360 pt screens instead of overflowing.
+  otpBox: {
     flex: 1,
-    maxWidth: 52,
-    height: 56,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: C.border,
-    backgroundColor: C.card,
+    maxWidth: 48,
+    minHeight: 56,
+    borderRadius: radius.xl,
+    borderWidth: border.input,
+    borderColor: C.bgSoft,
+    backgroundColor: C.bgSoft,
     textAlign: "center",
+    fontFamily: fontFamily.semibold,
     fontSize: 20,
     color: C.text,
+    paddingVertical: 0,
   },
-  otpBoxFocused: {
-    borderColor: C.primary,
-    shadowColor: C.primary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.18,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  otpBoxFilled: { borderColor: C.primary, backgroundColor: C.primaryXLight },
-  infoRow: { marginTop: 8, minHeight: 24, alignItems: "center", justifyContent: "center" },
-  timerText: { fontFamily: "PlusJakartaSans_600SemiBold", fontSize: 13, color: C.textSub },
-  linkBtn: { paddingVertical: 4 },
-  resendText: { fontFamily: "PlusJakartaSans_600SemiBold", fontSize: 13, color: C.primary },
-  bottomSection: { gap: 12 },
-  ctaDisabled: { shadowOpacity: 0, elevation: 0 },
-  ctaText: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 16 },
-  backRow: { alignItems: "center", marginTop: 4, paddingVertical: 8 },
-  backText: { fontFamily: "PlusJakartaSans_600SemiBold", fontSize: 13, color: C.textSub },
+  otpBoxFocused: { borderColor: C.primary },
+  otpBoxError: { borderColor: C.danger },
+  infoRow: { marginTop: space[8], minHeight: 24, alignItems: "center", justifyContent: "center", gap: space[6] },
+  errorText: { fontFamily: fontFamily.medium, fontSize: 12, lineHeight: 16, color: C.danger, textAlign: "center" },
+  timerText: { fontFamily: fontFamily.semibold, fontSize: 13, color: C.textSub },
+  linkBtn: { paddingVertical: space[4] },
+  resendText: { ...text.link },
+  linkPressed: { color: C.primary },
+  bottomSection: { gap: space[12] },
+  backWrap: { alignSelf: "center" },
+  backRow: { alignItems: "center", marginTop: space[4], paddingVertical: space[8] },
+  backText: { fontFamily: fontFamily.semibold, fontSize: 13, color: C.textSub },
 });

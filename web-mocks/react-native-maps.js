@@ -10,7 +10,16 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 
-function MapView({ children, style, ...props }) {
+// React 19 forwards `ref` to function components as a prop. Spreading it onto the View handed screens a DOM node with
+// no `animateToRegion`, so the tracking map threw on its first fix (W3 R6-11). The mock now exposes a no-op
+// imperative handle with the methods the app calls.
+function MapView({ children, style, ref, ...props }) {
+  React.useImperativeHandle(ref, () => ({
+    animateToRegion() {},
+    animateCamera() {},
+    fitToCoordinates() {},
+    getCamera: async () => null,
+  }));
   return (
     <View style={[styles.map, style]} {...props}>
       <Text style={styles.label}>Map view (not available on web)</Text>

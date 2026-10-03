@@ -3,59 +3,72 @@ import { router } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Animated,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TextInputProps,
-  TouchableOpacity,
   View,
 } from "react-native";
+import Animated from "react-native-reanimated";
 
-import { Badge, Card, PrimaryButton, Screen, ScreenHeader } from "../../components/ui";
+import {
+  Badge,
+  enter,
+  exit,
+  Input,
+  notify,
+  PressableScale,
+  PrimaryButton,
+  Screen,
+  ScreenHeader,
+  Shake,
+  useMotionReduced,
+} from "../../components/ui";
 import { C } from "../../constants/colors";
-import { border, layout, opacity, radius, text } from "../../constants/ui";
+import { fontFamily, layout, motion, opacity, text } from "../../constants/ui";
 import { useAuth } from "../../context/AuthContext";
+import { useDevFlag } from "../../lib/devFlags";
+import { feedback } from "../../lib/feedback";
+import { logError } from "../../lib/logError";
+
+// Edit profile — the owner's flat redesign (72 px avatar + live name, underline fields, hairline email block,
+// Badges, xs button trio, block Save) migrated forward with an identical look: the underline `Field` is now
+// rendered by the shared `Input` (same 1.5 underline, 16 px Medium, ph2, UI-thread focus colour), the Save
+// press is `PressableScale` (0.97 + C.primaryDark face), and `Shake` replaces the RN Animated shake.
+// Behaviour fixes only: C19 (empty name disables Save and is never sent), C20 (a saved-but-unverified email
+// can be verified), success toast + `success` feedback, inline errors + `error` feedback — no Alerts.
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // ─── Avatar ──────────────────────────────────────────────────────────────────
+// Static — no looping pulse. The identity block reads like a document header,
+// not an animation showcase. The initial follows the typed name and crossfades
+// when its first letter changes (M30).
 
-function Avatar({ initial }: { initial: string }) {
-  const pulse = useRef(new Animated.Value(1)).current;
-  const ringOpacity = useRef(new Animated.Value(0.4)).current;
-
-  useEffect(() => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.parallel([
-          Animated.timing(pulse, { toValue: 1.06, duration: 1600, useNativeDriver: true }),
-          Animated.timing(ringOpacity, { toValue: 0.15, duration: 1600, useNativeDriver: true }),
-        ]),
-        Animated.parallel([
-          Animated.timing(pulse, { toValue: 1, duration: 1600, useNativeDriver: true }),
-          Animated.timing(ringOpacity, { toValue: 0.4, duration: 1600, useNativeDriver: true }),
-        ]),
-      ])
-    ).start();
-  }, []);
-
+function Avatar({ initial, name, reduced }: { initial: string; name: string; reduced: boolean }) {
   return (
     <View style={styles.avatarWrap}>
-      <Animated.View
-        style={[
-          styles.avatarRing,
-          { transform: [{ scale: pulse }], opacity: ringOpacity },
-        ]}
-      />
-      <View style={styles.avatarFallback}>
-        <Text style={styles.avatarText}>{initial}</Text>
+      <View style={styles.avatarFallback} accessible accessibilityLabel={`Avatar, ${initial}`}>
+        <Animated.Text
+          key={initial}
+          style={styles.avatarText}
+          entering={reduced ? undefined : enter.fade()}
+          exiting={reduced ? undefined : exit.fade()}
+        >
+          {initial}
+        </Animated.Text>
       </View>
+      <Text style={styles.avatarName} numberOfLines={1}>{name}</Text>
     </View>
   );
 }
 
 // ─── Field ───────────────────────────────────────────────────────────────────
+// Thin wrapper that keeps the owner's eyebrow label, counter and helper row around the shared `Input`
+// (the primitive's own label preset is 12/600 — not the eyebrow — so the label stays here for parity).
 
 interface FieldProps {
   label: string;
@@ -89,59 +102,38 @@ function Field({
   isLast,
 }: FieldProps) {
   const [focused, setFocused] = useState(false);
-  const borderAnim = useRef(new Animated.Value(0)).current;
-
-  const handleFocus = useCallback(() => {
-    setFocused(true);
-    Animated.timing(borderAnim, { toValue: 1, duration: 180, useNativeDriver: false }).start();
-  }, []);
-
-  const handleBlur = useCallback(() => {
-    setFocused(false);
-    Animated.timing(borderAnim, { toValue: 0, duration: 180, useNativeDriver: false }).start();
-  }, []);
-
-  const animatedBorderColor = borderAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [C.border, C.primary],
-  });
+  const handleFocus = useCallback(() => setFocused(true), []);
+  const handleBlur = useCallback(() => setFocused(false), []);
 
   return (
     <View style={[styles.fieldWrap, !isLast && styles.fieldBorder]}>
       <Text style={styles.label}>{label}</Text>
-      <Animated.View
-        style={[
-          styles.inputWrapper,
-          { borderColor: animatedBorderColor },
-          !editable && styles.inputWrapperDisabled,
-        ]}
-      >
-        <TextInput
-          ref={inputRef}
-          value={value}
-          onChangeText={onChangeText}
-          placeholder={placeholder}
-          placeholderTextColor={C.textLight}
-          editable={editable}
-          keyboardType={keyboardType}
-          autoCapitalize={autoCapitalize}
-          autoCorrect={false}
-          returnKeyType={returnKeyType}
-          onSubmitEditing={onSubmitEditing}
-          onFocus={handleFocus}
-          onBlur={handleBlur}
-          maxLength={maxLength}
-          style={styles.input}
-        />
-        {maxLength !== undefined && editable && (
-          <Text style={[styles.charCount, focused && styles.charCountFocused]}>
-            {value.length}/{maxLength}
-          </Text>
-        )}
-      </Animated.View>
+      <Input
+        inputRef={inputRef}
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        editable={editable}
+        keyboardType={keyboardType}
+        autoCapitalize={autoCapitalize}
+        autoCorrect={false}
+        returnKeyType={returnKeyType}
+        onSubmitEditing={onSubmitEditing}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
+        maxLength={maxLength}
+        accessibilityLabel={label}
+        right={
+          maxLength !== undefined && editable ? (
+            <Text style={[styles.charCount, focused && styles.charCountFocused]} maxFontSizeMultiplier={1.3}>
+              {value.length}/{maxLength}
+            </Text>
+          ) : undefined
+        }
+      />
       {helper && (
         <View style={styles.helperRow}>
-          <MaterialCommunityIcons name="information-outline" size={11} color={C.textLight} />
+          <MaterialCommunityIcons name="information-outline" size={11} color={C.textSub} />
           <Text style={styles.helper}>{helper}</Text>
         </View>
       )}
@@ -153,10 +145,12 @@ function Field({
 
 export default function ProfileScreen() {
   const { user, updateUserProfile, changeEmail, verifyEmailCode, resendEmailCode } = useAuth();
+  const hideEmailVerify = useDevFlag("Dev_Auth_inhibit_EmailVerify");
+  const reduced = useMotionReduced();
 
   const [name, setName] = useState(user?.name ?? "");
   const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Email is verified separately — changing it stages a code, it doesn't
   // take effect until confirmed.
@@ -165,19 +159,10 @@ export default function ProfileScreen() {
   const [showEmailCodeStep, setShowEmailCodeStep] = useState(false);
   const [emailCode, setEmailCode] = useState("");
   const [isEmailSubmitting, setIsEmailSubmitting] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [shakeCount, setShakeCount] = useState(0);
 
   const emailRef = useRef<TextInput>(null);
-  const shakeAnim = useRef(new Animated.Value(0)).current;
-  const contentAnim = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    Animated.timing(contentAnim, {
-      toValue: 1,
-      duration: 400,
-      delay: 80,
-      useNativeDriver: true,
-    }).start();
-  }, []);
 
   useEffect(() => {
     setName(user?.name ?? "");
@@ -186,109 +171,145 @@ export default function ProfileScreen() {
     setShowEmailCodeStep(false);
   }, [user?.id, user?.name, user?.email, user?.email_verified_at]);
 
-  const hasChanges = useMemo(
-    () => name.trim() !== (user?.name ?? ""),
-    [name, user]
-  );
+  const trimmedName = name.trim();
+  const nameEmpty = trimmedName === "";
+  const hasChanges = useMemo(() => trimmedName !== (user?.name ?? ""), [trimmedName, user]);
+  // C19: an empty name never counts as a saveable change.
+  const canSave = hasChanges && !nameEmpty && !saving;
 
-  const triggerShake = useCallback(() => {
-    shakeAnim.setValue(0);
-    Animated.sequence([
-      Animated.timing(shakeAnim, { toValue: 8, duration: 60, useNativeDriver: true }),
-      Animated.timing(shakeAnim, { toValue: -8, duration: 60, useNativeDriver: true }),
-      Animated.timing(shakeAnim, { toValue: 6, duration: 60, useNativeDriver: true }),
-      Animated.timing(shakeAnim, { toValue: -6, duration: 60, useNativeDriver: true }),
-      Animated.timing(shakeAnim, { toValue: 0, duration: 60, useNativeDriver: true }),
-    ]).start();
+  // One shake + one `error` per failed action (the fields block shakes, as the owner's version did).
+  const fail = useCallback(() => {
+    setShakeCount((c) => c + 1);
+    feedback.error();
+  }, []);
+
+  const goBack = useCallback(() => {
+    if (router.canGoBack()) router.back();
+    else router.replace("/(tabs)/home");
   }, []);
 
   const handleSave = useCallback(async () => {
-    if (!user?.id || !hasChanges || saving) return;
+    // C19: never send `{ name: undefined }` — an empty name is refused here, not stringified away.
+    if (!user?.id || !hasChanges || saving || !trimmedName) return;
     setSaving(true);
-    setSaveError(false);
+    setSaveError(null);
     try {
-      await updateUserProfile({ name: name.trim() || undefined });
-      router.back();
-    } catch {
+      await updateUserProfile({ name: trimmedName });
+      feedback.tap(); // quiet confirm (W3 F7 / R2-24): light haptic + toast only — `success` is reserved for order placement
+      notify({ title: "Profile updated", tone: "success" });
+      goBack();
+    } catch (err) {
+      logError("Save profile", err);
       setSaving(false);
-      setSaveError(true);
-      triggerShake();
+      setSaveError(err instanceof Error && err.message ? err.message : "Could not save changes. Please try again.");
+      fail();
     }
-  }, [user?.id, hasChanges, saving, name, updateUserProfile, triggerShake]);
+  }, [user?.id, hasChanges, saving, trimmedName, updateUserProfile, goBack, fail]);
 
-  const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const savedEmail = user?.email ?? "";
+  const trimmedEmail = email.trim();
+  const emailDirty = trimmedEmail !== savedEmail;
+  const emailValid = EMAIL_REGEX.test(trimmedEmail);
+  // C20: a saved-but-unverified email gets "Verify now" — the code step is reachable even when the input
+  // equals user.email (the old "Send Code" was disabled exactly then, so the address could never be verified).
+  const needsVerifyNow = !emailDirty && !isEmailVerified && trimmedEmail !== "";
+  const sendDisabled = isEmailSubmitting || showEmailCodeStep || !emailValid || (!emailDirty && isEmailVerified);
+  const sendLabel = needsVerifyNow ? "Verify now" : "Send code";
 
   const handleSendEmailCode = useCallback(async () => {
-    if (!EMAIL_REGEX.test(email.trim())) return;
+    if (!emailValid) return;
+    setEmailError(null);
     try {
       setIsEmailSubmitting(true);
-      await changeEmail(email.trim());
+      if (needsVerifyNow) {
+        // The address is already staged as unverified on the backend: resend its code; if nothing is pending
+        // any more (expired), stage it again through the change endpoint.
+        try {
+          await resendEmailCode();
+        } catch {
+          await changeEmail(trimmedEmail);
+        }
+      } else {
+        await changeEmail(trimmedEmail);
+      }
       setShowEmailCodeStep(true);
-    } catch {
-      triggerShake();
+      notify({ title: `Code sent to ${trimmedEmail}` });
+    } catch (err) {
+      logError("Send email code", err);
+      setEmailError(err instanceof Error && err.message ? err.message : "Couldn't send the code. Please try again.");
+      fail();
     } finally {
       setIsEmailSubmitting(false);
     }
-  }, [email, changeEmail, triggerShake]);
+  }, [emailValid, needsVerifyNow, trimmedEmail, changeEmail, resendEmailCode, fail]);
 
   const handleVerifyEmail = useCallback(async () => {
     if (emailCode.length !== 4) return;
+    setEmailError(null);
     try {
       setIsEmailSubmitting(true);
       await verifyEmailCode(emailCode.trim());
       setIsEmailVerified(true);
       setShowEmailCodeStep(false);
       setEmailCode("");
-    } catch {
-      triggerShake();
+      feedback.tap(); // quiet confirm (W3 F7 / R2-24): light haptic + toast only — `success` is reserved for order placement
+      notify({ title: "Email verified", tone: "success" });
+    } catch (err) {
+      logError("Verify email code", err);
+      setEmailError(err instanceof Error && err.message ? err.message : "That code didn't work. Please try again.");
+      fail();
     } finally {
       setIsEmailSubmitting(false);
     }
-  }, [emailCode, verifyEmailCode, triggerShake]);
+  }, [emailCode, verifyEmailCode, fail]);
 
   const handleResendEmailCode = useCallback(async () => {
+    setEmailError(null);
     try {
       setIsEmailSubmitting(true);
       await resendEmailCode();
-    } catch {
-      triggerShake();
+      notify({ title: "Code sent again" });
+    } catch (err) {
+      logError("Resend email code", err);
+      setEmailError(err instanceof Error && err.message ? err.message : "Couldn't resend the code. Please try again.");
+      fail();
     } finally {
       setIsEmailSubmitting(false);
     }
-  }, [resendEmailCode, triggerShake]);
+  }, [resendEmailCode, fail]);
 
-  const initial = (user?.name ?? "?").charAt(0).toUpperCase();
+  const liveName = trimmedName || user?.name || "";
+  const initial = (liveName || "?").charAt(0).toUpperCase();
 
   return (
-    <Screen>
+    <Screen bg={C.card}>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={{ flex: 1 }}
+        style={styles.flex}
       >
-        {/* Header */}
-        <ScreenHeader title="Edit Profile" onBack={() => router.back()} />
+        {/* Header — no onBack: BackButton's deep-link-safe fallback applies (MAP U27). */}
+        <ScreenHeader title="Edit Profile" backFallbackHref="/(tabs)/home" />
 
         {/* Content */}
-        <Animated.ScrollView
-          style={{ opacity: contentAnim, transform: [{ translateY: contentAnim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }] }}
+        <ScrollView
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
         >
-          <Avatar initial={initial} />
+          <Animated.View entering={reduced ? undefined : enter.rise()}>
+            <Avatar initial={initial} name={trimmedName || "Your name"} reduced={reduced} />
 
-          {/* Error Banner */}
-          {saveError && (
-            <View style={styles.errorBanner}>
-              <MaterialCommunityIcons name="alert-circle-outline" size={15} color="#c0392b" />
-              <Text style={styles.errorText}>Could not save changes. Please try again.</Text>
-            </View>
-          )}
+            {/* Error line — inline, never an Alert */}
+            {saveError && (
+              <View style={styles.errorBanner} accessibilityLiveRegion="polite">
+                <MaterialCommunityIcons name="alert-circle-outline" size={15} color={C.danger} />
+                <Text style={styles.errorText}>{saveError}</Text>
+              </View>
+            )}
 
-          {/* Card */}
-          <Animated.View style={{ transform: [{ translateX: shakeAnim }] }}>
-            <Card padded={false}>
+            {/* Fields — flat stack, no card chrome */}
+            <Shake trigger={shakeCount}>
               <Field
                 label="Full name"
                 value={name}
@@ -298,6 +319,7 @@ export default function ProfileScreen() {
                 returnKeyType="done"
                 onSubmitEditing={handleSave}
                 maxLength={60}
+                helper={nameEmpty ? "Enter your name" : undefined}
               />
               <Field
                 label="Phone"
@@ -306,92 +328,102 @@ export default function ProfileScreen() {
                 helper="Phone number cannot be changed"
                 isLast
               />
-            </Card>
-          </Animated.View>
+            </Shake>
 
-          {/* Email — verified separately; changing it requires confirming a code */}
-          <Card padded={false} style={styles.emailCard}>
-            <View style={styles.emailLabelRow}>
-              <Text style={styles.emailLabel}>Email</Text>
-              {isEmailVerified && !showEmailCodeStep ? (
-                <Badge size="sm" pill tone="primary" label="Verified" />
-              ) : !showEmailCodeStep ? (
-                <Badge size="sm" pill tone="warning" label="Unverified" />
-              ) : null}
-            </View>
-            <View style={styles.inlineRow}>
-              <TextInput
-                ref={emailRef}
-                style={[styles.input, styles.inlineInput]}
-                value={email}
-                onChangeText={setEmail}
-                placeholder="you@email.com"
-                placeholderTextColor={C.textLight}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                editable={!showEmailCodeStep}
-              />
-              <PrimaryButton
-                size="xs"
-                shadow={false}
-                label="Send Code"
-                disabled={isEmailSubmitting || showEmailCodeStep || email.trim() === (user?.email ?? "")}
-                onPress={handleSendEmailCode}
-              />
-            </View>
+            {/* Email — verified separately; changing it requires confirming a code */}
+            {!hideEmailVerify && (
+              <View style={styles.emailCard}>
+                <View style={styles.emailLabelRow}>
+                  <Text style={styles.emailLabel}>Email</Text>
+                  {isEmailVerified && !showEmailCodeStep ? (
+                    <Badge size="sm" pill tone="primary" label="Verified" />
+                  ) : !showEmailCodeStep ? (
+                    <Badge size="sm" pill tone="warning" label="Unverified" />
+                  ) : null}
+                </View>
+                <View style={styles.inlineRow}>
+                  <Input
+                    inputRef={emailRef}
+                    containerStyle={styles.flex}
+                    value={email}
+                    onChangeText={(v) => {
+                      setEmail(v);
+                      setEmailError(null);
+                    }}
+                    placeholder="you@email.com"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    editable={!showEmailCodeStep}
+                    accessibilityLabel="Email"
+                  />
+                  <PrimaryButton
+                    size="xs"
+                    label={sendLabel}
+                    disabled={sendDisabled}
+                    loading={isEmailSubmitting && !showEmailCodeStep}
+                    onPress={() => void handleSendEmailCode()}
+                  />
+                </View>
 
-            {showEmailCodeStep && (
-              <View style={[styles.inlineRow, styles.inlineRowSpaced]}>
-                <TextInput
-                  style={[styles.input, styles.inlineInput]}
-                  value={emailCode}
-                  onChangeText={(v) => setEmailCode(v.replace(/\D/g, ""))}
-                  placeholder="4-digit code"
-                  placeholderTextColor={C.textLight}
-                  keyboardType="number-pad"
-                  maxLength={4}
-                />
-                <PrimaryButton
-                  size="xs"
-                  shadow={false}
-                  label="Verify"
-                  disabled={isEmailSubmitting}
-                  onPress={handleVerifyEmail}
-                />
-                <PrimaryButton
-                  size="xs"
-                  shadow={false}
-                  variant="secondary"
-                  label="Resend"
-                  disabled={isEmailSubmitting}
-                  onPress={handleResendEmailCode}
-                />
+                {showEmailCodeStep && (
+                  <View style={[styles.inlineRow, styles.inlineRowSpaced]}>
+                    <Input
+                      containerStyle={styles.flex}
+                      value={emailCode}
+                      onChangeText={(v) => {
+                        setEmailCode(v.replace(/\D/g, ""));
+                        setEmailError(null);
+                      }}
+                      placeholder="4-digit code"
+                      keyboardType="number-pad"
+                      maxLength={4}
+                      accessibilityLabel="Verification code"
+                    />
+                    <PrimaryButton
+                      size="xs"
+                      label="Verify"
+                      disabled={isEmailSubmitting || emailCode.length !== 4}
+                      onPress={() => void handleVerifyEmail()}
+                    />
+                    <PrimaryButton
+                      size="xs"
+                      variant="secondary"
+                      label="Resend"
+                      disabled={isEmailSubmitting}
+                      onPress={() => void handleResendEmailCode()}
+                    />
+                  </View>
+                )}
+                {emailError ? (
+                  <Text style={styles.emailError} accessibilityLiveRegion="polite">{emailError}</Text>
+                ) : !isEmailVerified && !showEmailCodeStep ? (
+                  <Text style={[styles.helper, styles.emailHelper]}>
+                    Verify your email before you can place an order.
+                  </Text>
+                ) : null}
               </View>
             )}
-            {!isEmailVerified && !showEmailCodeStep && (
-              <Text style={[styles.helper, styles.emailHelper]}>
-                Verify your email before you can place an order.
-              </Text>
-            )}
-          </Card>
 
-          {/* Save Button */}
-          <TouchableOpacity
-            style={[styles.saveBtn, (!hasChanges || saving) && styles.saveBtnDisabled]}
-            disabled={!hasChanges || saving}
-            onPress={handleSave}
-            activeOpacity={opacity.pressCta}
-            accessibilityRole="button"
-            accessibilityState={{ disabled: !hasChanges || saving, busy: saving }}
-          >
-            {saving ? (
-              <ActivityIndicator size="small" color={C.card} />
-            ) : (
-              <MaterialCommunityIcons name="content-save-outline" size={18} color={C.card} />
-            )}
-            <Text style={styles.saveText}>{saving ? "Saving…" : "Save Changes"}</Text>
-          </TouchableOpacity>
-        </Animated.ScrollView>
+            {/* Save Button — presses down like a physical key (silent; the result plays success/error) */}
+            <PressableScale
+              scale={motion.scale.cta}
+              pressedStyle={styles.saveBtnPressed}
+              style={styles.saveWrap}
+              innerStyle={[styles.saveBtn, !canSave && styles.saveBtnDisabled]}
+              disabled={!canSave}
+              onPress={() => void handleSave()}
+              accessibilityRole="button"
+              accessibilityLabel="Save"
+              accessibilityState={{ disabled: !canSave, busy: saving }}
+            >
+              {saving ? (
+                <ActivityIndicator size="small" color={C.onPrimary} />
+              ) : null}
+              <Text style={styles.saveText}>{saving ? "Saving…" : "Save"}</Text>
+            </PressableScale>
+          </Animated.View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </Screen>
   );
@@ -400,81 +432,52 @@ export default function ProfileScreen() {
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
+  flex: { flex: 1 },
   content: { paddingHorizontal: layout.gutter, paddingTop: 8, paddingBottom: layout.scrollBottom },
 
   // Avatar
-  avatarWrap: { alignItems: "center", marginTop: 24, marginBottom: 28 },
-  avatarRing: {
-    position: "absolute",
-    top: -8,
-    width: 104,
-    height: 104,
-    borderRadius: 30,
-    borderWidth: 2.5,
-    borderColor: C.primary,
-  },
+  avatarWrap: { alignItems: "center", marginTop: 20, marginBottom: 24, gap: 10 },
   avatarFallback: {
-    width: 88,
-    height: 88,
-    borderRadius: 24,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     backgroundColor: C.primary,
     justifyContent: "center",
     alignItems: "center",
   },
-  avatarText: { color: C.card, fontSize: 34, fontFamily: "PlusJakartaSans_800ExtraBold" },
-  // Error banner
+  avatarText: { color: C.onPrimary, fontSize: 28, fontFamily: fontFamily.extrabold },
+  avatarName: { color: C.text, fontSize: 20, fontFamily: fontFamily.extrabold, letterSpacing: -0.3, maxWidth: "80%" },
+  // Error line
   errorBanner: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: "#fdecea",
+    backgroundColor: C.dangerLight,
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: "#f5c6c2",
+    borderColor: C.dangerBorder,
   },
-  errorText: { fontFamily: "PlusJakartaSans_600SemiBold", color: "#c0392b", fontSize: 13, flex: 1 },
+  errorText: { fontFamily: fontFamily.semibold, color: C.danger, fontSize: 13, flex: 1 },
 
-  // Cards
-  emailCard: { marginTop: 16, padding: layout.cardPaddingLg },
-  fieldWrap: { paddingHorizontal: 16, paddingVertical: 14 },
-  fieldBorder: { borderBottomWidth: 1, borderBottomColor: C.border },
+  // Sections — flat field stacks separated by a hairline, no card chrome
+  emailCard: { marginTop: 24, paddingTop: 20, borderTopWidth: 1, borderTopColor: C.border },
+  fieldWrap: { paddingVertical: 10 },
+  fieldBorder: { marginBottom: 4 },
 
-  label: { ...text.eyebrow, marginBottom: 8 },
-  emailLabelRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
+  label: { ...text.eyebrow, marginBottom: 4 },
+  emailLabelRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 },
   emailLabel: { ...text.eyebrow },
 
-  // Animated input wrapper
-  inputWrapper: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: C.bgSoft,
-    borderRadius: radius.lg,
-    borderWidth: border.input,
-    overflow: "hidden",
-  },
-  inputWrapperDisabled: { opacity: 0.65 },
-  input: { fontFamily: "PlusJakartaSans_500Medium",
-    flex: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-    color: C.text,
-    fontSize: 15,
-  },
-  inlineInput: {
-    backgroundColor: C.bgSoft,
-    borderRadius: radius.lg,
-    borderWidth: border.input,
-    borderColor: C.border,
-  },
-  inlineRow: { flexDirection: "row", gap: 8, marginTop: 4 },
+  inlineRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 },
   inlineRowSpaced: { marginTop: 12 },
-  charCount: { fontFamily: "PlusJakartaSans_600SemiBold",
+  charCount: {
+    fontFamily: fontFamily.semibold,
     paddingRight: 10,
     fontSize: 11,
-    color: C.textLight,
+    color: C.textSub,
     minWidth: 36,
     textAlign: "right",
   },
@@ -483,18 +486,20 @@ const styles = StyleSheet.create({
   helperRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 },
   helper: { ...text.caption },
   emailHelper: { marginTop: 8 },
+  emailError: { fontFamily: fontFamily.medium, fontSize: 11, lineHeight: 14, color: C.danger, marginTop: 8 },
 
-  // Save button
+  // Save button — squared-off, Uber-style block
+  saveWrap: { marginTop: 28 },
   saveBtn: {
-    marginTop: 24,
     backgroundColor: C.primary,
-    paddingVertical: 15,
-    borderRadius: radius.xxl,
+    paddingVertical: 16,
+    borderRadius: 12,
     flexDirection: "row",
     gap: 10,
     justifyContent: "center",
     alignItems: "center",
   },
+  saveBtnPressed: { backgroundColor: C.primaryDark },
   saveBtnDisabled: { opacity: opacity.disabled },
   saveText: { ...text.button },
 });

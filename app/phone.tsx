@@ -1,21 +1,20 @@
+// Phone login (BP-37 / U36). White, logo 160, one underline `Input` with a +91 prefix that autofocuses, an
+// optional email `Input` (captured, not verified — see the comment on `validate`), inline validation and
+// request errors instead of Alerts, and a silent lg "Continue" (the OTP screen plays the result).
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useState } from "react";
-import {
-    Alert,
-    Image,
-    KeyboardAvoidingView,
-    Platform,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
-} from "react-native";
+import React, { useRef, useState } from "react";
+import { Image, KeyboardAvoidingView, Platform, StyleSheet, Text, View } from "react-native";
 
-import { PrimaryButton, Screen } from "../components/ui";
+import { Input, PrimaryButton, Screen } from "../components/ui";
 import { C } from "../constants/colors";
+import { fontFamily, space, text } from "../constants/ui";
 import { sendOTP } from "../lib/authService";
+import { feedback } from "../lib/feedback";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PHONE_LENGTH = 10;
+
+const onlyDigits = (value: string) => value.replace(/[^0-9]/g, "");
 
 export default function PhoneScreen() {
   const params = useLocalSearchParams();
@@ -24,41 +23,76 @@ export default function PhoneScreen() {
   const [phone, setPhone] = useState(prefillPhone);
   const [email, setEmail] = useState("");
   const [loadingOtp, setLoadingOtp] = useState(false);
-  // Visual only — drives the focused border on whichever field is active.
-  const [focus, setFocus] = useState<"phone" | "email" | null>(null);
+  // Field-level validation (rendered by each Input at 11/500 C.danger; the Input shakes on a new error) plus
+  // per-field nonces so pressing Continue again with the same invalid value still shakes that field.
+  const [phoneError, setPhoneError] = useState<string | null>(null);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [phoneShake, setPhoneShake] = useState(0);
+  const [emailShake, setEmailShake] = useState(0);
+  // Send failure (offline / timeout / server / backend message) — one inline line above the CTA.
+  const [requestError, setRequestError] = useState<string | null>(null);
+  // Synchronous double-submit lock (state alone cannot stop a double tap — same as otp.tsx's verifyingRef).
+  const sendingRef = useRef(false);
 
-  const onlyDigits = (value: string) => value.replace(/[^0-9]/g, "");
-
-  const handleChange = (value: string) => {
-    const digits = onlyDigits(value).slice(0, 10);
-    setPhone(digits);
+  const handlePhoneChange = (value: string) => {
+    setPhone(onlyDigits(value).slice(0, PHONE_LENGTH));
+    if (phoneError) setPhoneError(null);
+    if (requestError) setRequestError(null);
   };
 
-  const emailValid = EMAIL_REGEX.test(email.trim());
+  const handleEmailChange = (value: string) => {
+    setEmail(value);
+    if (emailError) setEmailError(null);
+    if (requestError) setRequestError(null);
+  };
+
   // This screen serves both login and signup, and we don't know which one
   // this phone number is until after OTP verification — so email can't be
   // force-required here without also nagging returning users on every login.
   // The backend enforces email as mandatory for brand-new signups (see
   // auth.controller.ts); otp.tsx sends the user back here to fill it in if
   // that happens. No verification is required at this point — only capture.
-  const isValid = phone.length === 10 && (email.trim().length === 0 || emailValid);
+  const validate = (): boolean => {
+    const trimmedEmail = email.trim();
+    const nextPhoneError = phone.length === PHONE_LENGTH ? null : "Enter your 10-digit mobile number";
+    const nextEmailError =
+      trimmedEmail.length === 0 || EMAIL_REGEX.test(trimmedEmail) ? null : "Enter a valid email address";
+    setPhoneError(nextPhoneError);
+    setEmailError(nextEmailError);
+    if (nextPhoneError) setPhoneShake((n) => n + 1);
+    if (nextEmailError) setEmailShake((n) => n + 1);
+    return !nextPhoneError && !nextEmailError;
+  };
 
-  const handleContinueWithOtp = async () => {
-    if (!isValid || loadingOtp) return;
+  const handleContinue = async () => {
+    if (sendingRef.current) return;
+    if (!validate()) {
+      // One `error` for the validation summary (CONTRACTS §8) — the offending Input shakes itself.
+      feedback.error();
+      return;
+    }
     const fullPhone = `+91${phone}`;
+    sendingRef.current = true;
+    setLoadingOtp(true);
+    setRequestError(null);
     try {
-      setLoadingOtp(true);
       await sendOTP(fullPhone);
       router.push({
         pathname: "/otp",
         params: { phone: fullPhone, email: email.trim() },
       });
-    } catch (err: any) {
-      Alert.alert("Error", err?.message || "Failed to send OTP. Try again.");
+    } catch (err) {
+      // apiFetch's copy is already user-readable (offline / timeout / server) and the backend's own message
+      // comes through for 4xx bodies — shown as-is, never re-mapped.
+      setRequestError(err instanceof Error && err.message ? err.message : "Failed to send OTP. Try again.");
+      feedback.error();
     } finally {
+      sendingRef.current = false;
       setLoadingOtp(false);
     }
   };
+
+  const openTerms = () => router.push("/settings/terms");
 
   return (
     <Screen bg={C.card}>
@@ -74,80 +108,84 @@ export default function PhoneScreen() {
               source={require("../assets/near_now_image.png")}
               style={styles.logo}
               resizeMode="contain"
+              accessible={false}
+              accessibilityIgnoresInvertColors
             />
           </View>
 
-          {/* Input */}
-          <View style={styles.inputBlock}>
-            <Text style={styles.title} accessibilityRole="header">Let&apos;s get you in</Text>
-            <Text style={styles.subtitle}>Enter your phone number to continue</Text>
-
-            <View style={[styles.phoneRow, focus === "phone" && styles.inputFocused]}>
-              <View style={styles.countryCodeContainer}>
-                <Text style={styles.countryCodeText}>+91</Text>
-              </View>
-              <TextInput
-                style={styles.phoneInput}
-                value={phone}
-                onChangeText={handleChange}
-                placeholder="XXXXXXXXXX"
-                placeholderTextColor={C.textLight}
-                keyboardType="number-pad"
-                maxLength={10}
-                accessibilityLabel="Phone number"
-                onFocus={() => setFocus("phone")}
-                onBlur={() => setFocus(null)}
-              />
-            </View>
-            <Text style={styles.helperText}>
-              We&apos;ll send you a one-time code to verify your number.
+          {/* Form */}
+          <View style={styles.form}>
+            <Text style={styles.title} accessibilityRole="header" maxFontSizeMultiplier={1.3}>
+              Let&apos;s get you in
+            </Text>
+            <Text style={styles.subtitle} maxFontSizeMultiplier={1.3}>
+              Enter your phone number to continue
             </Text>
 
-            <TextInput
-              style={[styles.emailInput, focus === "email" && styles.inputFocused]}
+            <Input
+              variant="underline"
+              value={phone}
+              onChangeText={handlePhoneChange}
+              placeholder="10-digit mobile number"
+              keyboardType="phone-pad"
+              autoFocus
+              maxLength={PHONE_LENGTH}
+              left={
+                <Text style={styles.prefix} maxFontSizeMultiplier={1.3}>
+                  +91
+                </Text>
+              }
+              helper="We'll send you a one-time code to verify your number."
+              error={phoneError}
+              shakeTrigger={phoneShake}
+              textContentType="telephoneNumber"
+              autoComplete="tel"
+              accessibilityLabel="Phone number"
+              containerStyle={styles.field}
+            />
+
+            <Input
+              variant="underline"
               value={email}
-              onChangeText={setEmail}
-              placeholder="Email address"
-              placeholderTextColor={C.textLight}
+              onChangeText={handleEmailChange}
+              placeholder="Email address (optional)"
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
               returnKeyType="done"
+              onSubmitEditing={() => void handleContinue()}
+              helper="Used for order receipts. You can verify it after logging in."
+              error={emailError}
+              shakeTrigger={emailShake}
+              textContentType="emailAddress"
+              autoComplete="email"
               accessibilityLabel="Email address"
-              onFocus={() => setFocus("email")}
-              onBlur={() => setFocus(null)}
+              containerStyle={styles.field}
             />
-            <Text style={styles.helperText}>
-              Used for order receipts. You can verify it after logging in.
-            </Text>
           </View>
 
           {/* Bottom */}
           <View style={styles.bottomSection}>
-            <PrimaryButton
-              label={loadingOtp ? "Sending…" : "Continue with OTP"}
-              onPress={handleContinueWithOtp}
-              disabled={!isValid || loadingOtp}
-              shadow
-              style={(!isValid || loadingOtp) && styles.ctaDisabled}
-              textStyle={styles.ctaText}
-            />
-
-            <Text style={styles.termsText}>
-              By continuing, you agree to our{" "}
+            {requestError ? (
               <Text
-                style={styles.termsLink}
-                accessibilityRole="link"
-                onPress={() => router.push("/settings/terms")}
+                style={styles.requestError}
+                accessibilityRole="alert"
+                accessibilityLiveRegion="polite"
+                maxFontSizeMultiplier={1.3}
               >
+                {requestError}
+              </Text>
+            ) : null}
+
+            <PrimaryButton size="lg" label="Continue" onPress={() => void handleContinue()} loading={loadingOtp} />
+
+            <Text style={styles.termsText} maxFontSizeMultiplier={1.3}>
+              By continuing, you agree to our{" "}
+              <Text style={styles.termsLink} accessibilityRole="link" onPress={openTerms}>
                 Terms
               </Text>{" "}
               &amp;{" "}
-              <Text
-                style={styles.termsLink}
-                accessibilityRole="link"
-                onPress={() => router.push("/settings/terms")}
-              >
+              <Text style={styles.termsLink} accessibilityRole="link" onPress={openTerms}>
                 Privacy Policy
               </Text>
               .
@@ -163,83 +201,28 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   container: {
     flex: 1,
-    paddingHorizontal: 24,
-    paddingTop: 16,
-    paddingBottom: 32,
+    paddingHorizontal: space[24],
+    paddingTop: space[16],
+    paddingBottom: space[32],
     justifyContent: "space-between",
   },
-
-  logoSection: {
-    alignItems: "center",
-    paddingTop: 4,
-  },
-  logo: {
-    width: 160,
-    height: 145,
-  },
-
-  inputBlock: { gap: 8 },
-  title: {
-    fontSize: 28,
-    fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: C.text,
-    letterSpacing: -0.3,
-    marginBottom: 4,
-  },
-  subtitle: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 14, color: C.textSub },
-  phoneRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderRadius: 14,
-    backgroundColor: C.card,
-    borderWidth: 2,
-    borderColor: C.border,
-    paddingHorizontal: 16,
-    paddingVertical: 4,
-    minHeight: 52,
-    marginTop: 8,
-  },
-  inputFocused: { borderColor: C.primary },
-  countryCodeContainer: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 8,
-    backgroundColor: C.bgSoft,
-    borderWidth: 1,
-    borderColor: "#d1d5db",
-    marginRight: 8,
-  },
-  countryCodeText: { fontFamily: "PlusJakartaSans_600SemiBold", color: C.text, fontSize: 16 },
-  phoneInput: { fontFamily: "PlusJakartaSans_500Medium",
-    flex: 1,
-    paddingVertical: 10,
-    fontSize: 16,
-    color: C.text,
-    letterSpacing: 1,
-  },
-  helperText: { fontFamily: "PlusJakartaSans_400Regular", fontSize: 12, color: C.textSub },
-  emailInput: { fontFamily: "PlusJakartaSans_400Regular",
-    borderRadius: 14,
-    backgroundColor: C.card,
-    borderWidth: 2,
-    borderColor: C.border,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    minHeight: 52,
-    fontSize: 15,
-    color: C.text,
-    marginTop: 12,
-  },
-
-  bottomSection: { gap: 16 },
-  ctaDisabled: { shadowOpacity: 0, elevation: 0 },
-  ctaText: { fontFamily: "PlusJakartaSans_700Bold", fontSize: 16 },
-  termsText: { fontFamily: "PlusJakartaSans_600SemiBold",
+  logoSection: { alignItems: "center", paddingTop: space[4] },
+  logo: { width: 160, height: 145 },
+  form: { gap: space[4] },
+  title: { ...text.h1 },
+  subtitle: { ...text.bodySm, marginBottom: space[8] },
+  field: { marginTop: space[12] },
+  // "+91" prefix — 18/700 (design §3.21), sits in the Input's `left` slot.
+  prefix: { fontFamily: fontFamily.bold, fontSize: 18, color: C.text, marginRight: space[8] },
+  bottomSection: { gap: space[16] },
+  requestError: { fontFamily: fontFamily.medium, fontSize: 12, lineHeight: 16, color: C.danger, textAlign: "center" },
+  termsText: {
+    fontFamily: fontFamily.medium,
     fontSize: 12,
-    color: C.textLight,
-    textAlign: "center",
     lineHeight: 18,
-    paddingVertical: 4,
+    color: C.textSub,
+    textAlign: "center",
+    paddingVertical: space[4],
   },
-  termsLink: { color: C.primary },
+  termsLink: { fontFamily: fontFamily.bold, color: C.link },
 });
