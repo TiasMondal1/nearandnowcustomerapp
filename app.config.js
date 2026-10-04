@@ -77,7 +77,7 @@ module.exports = {
   expo: {
     name: "Near & Now",
     slug: "near-and-now-customer",
-    version: "1.0.1",
+    version: "1.1.0",
     // Portrait only — every layout is portrait and commit 4753e5c already fixed a
     // rotation bug (MAP C33). Tablet support added by scripts/patch-android.js is unaffected.
     orientation: "portrait",
@@ -114,7 +114,7 @@ module.exports = {
       // when it comes from EAS's GOOGLE_SERVICES_JSON file env var it's an
       // absolute path elsewhere on the build machine, not relative to this file.
       ...(hasGoogleServicesFile ? { googleServicesFile: googleServicesFilePath } : {}),
-      versionCode: 5,
+      versionCode: 6,
       permissions: [
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
