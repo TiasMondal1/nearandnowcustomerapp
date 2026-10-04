@@ -210,7 +210,7 @@ export default function OnboardingScreen(): React.JSX.Element {
       >
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <View style={styles.logoWrap}>
-            <Image source={require("../assets/near_now_image.png")} style={styles.logo} resizeMode="contain" accessibilityIgnoresInvertColors />
+            <Image source={require("../assets/near_now_image_640.png")} style={styles.logo} resizeMode="contain" accessibilityIgnoresInvertColors />
           </View>
 
           <View style={styles.stepRow} accessible accessibilityRole="progressbar" accessibilityLabel={`Step ${stepIndex} of 2`}>

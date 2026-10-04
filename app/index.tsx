@@ -59,7 +59,7 @@ export default function BootRedirectScreen() {
       <View style={styles.container}>
         {/* Same mark as the native splash so the hand-off is invisible if this frame is ever seen. */}
         <Image
-          source={require("../assets/near_now_image.png")}
+          source={require("../assets/near_now_image_640.png")}
           style={styles.logo}
           resizeMode="contain"
           accessibilityIgnoresInvertColors

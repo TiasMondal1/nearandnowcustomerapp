@@ -127,7 +127,7 @@ export default function VerifyEmailScreen() {
         <View style={styles.container}>
           <View style={styles.logoSection}>
             <Image
-              source={require("../assets/near_now_image.png")}
+              source={require("../assets/near_now_image_640.png")}
               style={styles.logo}
               resizeMode="contain"
               accessible={false}
