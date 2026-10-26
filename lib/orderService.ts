@@ -395,7 +395,10 @@ export async function createOrder(input: CreateOrderInput): Promise<Order> {
         name: it.name,
         price: it.price,
         quantity: it.quantity,
-        image: it.image,
+        // An inline data: image (a custom product approved before those moved
+        // to Storage, still in a saved cart) can be MBs — enough to push this
+        // request past the API's 1 MB cap. The server drops it anyway.
+        image: it.image?.startsWith('data:') ? undefined : it.image,
         unit: it.unit,
       })),
       shipping_address: {
