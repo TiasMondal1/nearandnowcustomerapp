@@ -51,6 +51,7 @@ import { getOrderById, peekOrder, type Order, type OrderItem } from "../../../li
 import { getMemoryHomeCache, getPopularProducts, type Product } from "../../../lib/productService";
 import { formatQuantityDisplay } from "../../../lib/quantityFormat";
 import { peekNearbyProductFilter } from "../../../lib/storeService";
+import { paymentConfirmedAt } from "../../../lib/paymentConfirmedAt";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -177,7 +178,11 @@ export default function OrderConfirmationScreen() {
   // Sync re-entrancy lock (state alone cannot stop a double tap — MAP §7.16).
   const payBusyRef = useRef(false);
 
-  const placedAtMs = order ? Date.parse(order.created_at) : Number.NaN;
+  // The window opens when the order was placed — for an online / wallet order,
+  // when checkout saw the payment succeed (lib/paymentConfirmedAt.ts).
+  const createdAtMs = order ? Date.parse(order.created_at) : Number.NaN;
+  const paidAtMs = id ? paymentConfirmedAt(id) : undefined;
+  const placedAtMs = Number.isFinite(createdAtMs) && paidAtMs != null ? Math.max(createdAtMs, paidAtMs) : createdAtMs;
   // null = not known yet (no order on screen); seeded for the first frame, settled in the effect below, closed by the
   // window's own tick. Never computed during a re-render (MAP C46: no clock reads in render).
   const [windowOpen, setWindowOpen] = useState<boolean | null>(() =>

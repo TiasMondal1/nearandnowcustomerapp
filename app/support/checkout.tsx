@@ -78,6 +78,7 @@ import { logSilentFailure } from "../../lib/logSilentFailure";
 import { markOrderPlaced } from "../../lib/orderHistoryFlag";
 import { cancelOrder, createOrder, invalidateOrders, type Order } from "../../lib/orderService";
 import { getPaymentSelection, subscribePaymentSelection } from "../../lib/paymentSelection";
+import { notePaymentConfirmed } from "../../lib/paymentConfirmedAt";
 import { getCachedProduct } from "../../lib/productService";
 import { clearSavedPaymentMethodsCache } from "../../lib/razorpayService";
 import { useGstinVerification } from "../../lib/useGstinVerification";
@@ -780,6 +781,7 @@ export default function CheckoutScreen() {
         setPayingOrderId(internalOrder.id);
         try {
           await payOrderWithWallet(internalOrder.id);
+          notePaymentConfirmed(internalOrder.id);
           markOrderPlaced().catch((err) => logSilentFailure("Mark order-placed flag", err));
           invalidateOrders(user.id);
           navigatingAwayRef.current = true;
@@ -837,6 +839,8 @@ export default function CheckoutScreen() {
       });
 
       if (result.status === "paid") {
+        // The add-more window opens now, not at order creation (lib/paymentConfirmedAt.ts).
+        notePaymentConfirmed(internalOrder.id);
         // Flip the "has placed an order" flag so the Preferred Payment card
         // on the payment-options screen unlocks on the NEXT checkout flow.
         markOrderPlaced().catch((err) => logSilentFailure("Mark order-placed flag", err));
