@@ -5,7 +5,7 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { AppState, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, AppState, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { PaymentProcessingOverlay } from "../../components/PaymentProcessingOverlay";
 import { formatClockTime, isOrderRated, orderDateLabel, reorderOrder } from "../../components/orders/OrderRow";
@@ -44,7 +44,7 @@ import { isInvoiceAvailable } from "../../lib/invoiceEligibility";
 import { logError } from "../../lib/logError";
 import { logSilentFailure } from "../../lib/logSilentFailure";
 import { markOrderPlaced } from "../../lib/orderHistoryFlag";
-import { getOrderById, getOrderPaymentStatus, invalidateOrders, peekOrder, type Order } from "../../lib/orderService";
+import { cancelOrder, getOrderById, getOrderPaymentStatus, invalidateOrders, peekOrder, type Order } from "../../lib/orderService";
 import { formatQuantityDisplay } from "../../lib/quantityFormat";
 import { clearSavedPaymentMethodsCache } from "../../lib/razorpayService";
 import { fetchOrderTrackingFull } from "../../lib/trackingService";
@@ -107,6 +107,9 @@ export default function OrderDetailScreen() {
   // guard, used only to drive the button's loading/disabled UI — the ref is the real synchronous guard.
   const walletPaymentInFlight = useRef(false);
   const [walletPaying, setWalletPaying] = useState(false);
+  // Same sync-ref + state-twin pair for "Cancel order" (2026-10-27).
+  const cancelInFlight = useRef(false);
+  const [cancelling, setCancelling] = useState(false);
 
   const seqRef = useRef(0);
 
@@ -158,6 +161,43 @@ export default function OrderDetailScreen() {
   }, []);
 
   const status = order?.order_status ?? "";
+
+  // ─── Cancel (2026-10-27) ────────────────────────────────────────────────────
+  // Checkout tells customers "Orders can be cancelled until the store accepts
+  // them", but no screen offered it. Shown only while the order still waits
+  // for its store (pending_at_store); the backend refunds whatever was paid.
+  const runCancel = useCallback(async () => {
+    if (!orderId || cancelInFlight.current) return;
+    cancelInFlight.current = true;
+    setCancelling(true);
+    try {
+      await cancelOrder(orderId);
+      invalidateOrders(userId ?? null);
+      feedback.tap();
+      notify({ id: "order-cancel", tone: "success", title: "Order cancelled", message: "Anything you paid will be refunded." });
+      await loadOrder(true);
+    } catch (err) {
+      logError("Cancel order", err);
+      feedback.error();
+      notify({
+        id: "order-cancel",
+        tone: "error",
+        title: "Couldn't cancel this order",
+        message: err instanceof Error ? err.message : "Please try again or contact support.",
+      });
+    } finally {
+      cancelInFlight.current = false;
+      setCancelling(false);
+    }
+  }, [orderId, userId, loadOrder]);
+
+  const handleCancel = useCallback(() => {
+    if (cancelInFlight.current) return;
+    Alert.alert("Cancel this order?", "The store hasn't accepted it yet. Anything you paid will be refunded.", [
+      { text: "Keep order", style: "cancel" },
+      { text: "Cancel order", style: "destructive", onPress: () => void runCancel() },
+    ]);
+  }, [runCancel]);
 
   // 8 s status poll — stops on terminal statuses, pauses while backgrounded OR unfocused (tracking / rate / support
   // on top run their own polls — W3 R1-06), re-arms on a status change. Each request times out at the cadence.
@@ -460,6 +500,20 @@ export default function OrderDetailScreen() {
               <MaterialCommunityIcons name="chevron-right" size={20} color={C.onPrimary} />
             </PressableScale>
           ) : null}
+
+          {status === "pending_at_store" ? (
+            <PrimaryButton
+              size="sm"
+              variant="danger"
+              label="Cancel order"
+              icon="close-circle-outline"
+              loading={cancelling}
+              disabled={cancelling || payDisabled}
+              onPress={handleCancel}
+              style={styles.cancelButton}
+              accessibilityLabel="Cancel order. Available until the store accepts it"
+            />
+          ) : null}
         </View>
 
         <View style={styles.band} />
@@ -724,6 +778,7 @@ const styles = StyleSheet.create({
   pendingText: { color: C.warning },
 
   liveWrap: { marginTop: 4 },
+  cancelButton: { marginTop: 12 },
   liveRow: {
     flexDirection: "row",
     alignItems: "center",
