@@ -62,7 +62,7 @@ const renderItem = ({ item }: ListRenderItemInfo<Product>) => (
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
 
-/** Pure client sort. "popular" keeps the server order (rating → rating_count → newest); the others are stable sorts over it. */
+/** Pure client sort. "popular" keeps the popularity order `getProductsByCategory` returns (productService `popularityScore`); the others are stable sorts over it. */
 function sortProducts(list: Product[], key: SortKey): Product[] {
   if (key === "popular") return list;
   const sorted = list.slice();

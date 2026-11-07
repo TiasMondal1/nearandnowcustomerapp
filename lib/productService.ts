@@ -8,7 +8,7 @@ import { getAllActiveProductIds } from './storeService';
 import { supabase } from './supabase';
 
 // Real schema columns for popularity sorting are `rating` and `rating_count`
-// (NOT `avg_rating` / `review_count`).
+// (NOT `avg_rating` / `review_count`); see `popularityScore` for how they combine.
 const MASTER_PRODUCT_FIELDS =
   'id,name,category,base_price,discounted_price,gst_rate,unit,image_url,description,is_loose,is_active,created_at,rating,rating_count';
 
@@ -131,16 +131,55 @@ function parseNum(v: number | string | null | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-/** Mirrors the server order used below: rating desc (nulls last), rating_count desc (nulls last), created_at desc. */
-function compareCatalogRows(a: MasterProductRow, b: MasterProductRow): number {
-  const ar = a.rating == null ? -Infinity : parseNum(a.rating);
-  const br = b.rating == null ? -Infinity : parseNum(b.rating);
-  if (br !== ar) return br - ar;
-  const ac = a.rating_count == null ? -Infinity : parseNum(a.rating_count);
-  const bc = b.rating_count == null ? -Infinity : parseNum(b.rating_count);
-  if (bc !== ac) return bc - ac;
-  return (b.created_at ?? '').localeCompare(a.created_at ?? '');
+/* ───────────── Popularity ("Popular" sort, home rails) ───────────── */
+
+/** Rating a product is assumed to have before any reviews. */
+const POPULARITY_PRIOR_RATING = 3.5;
+/** How many reviews' worth of weight that assumption carries. */
+const POPULARITY_PRIOR_WEIGHT = 5;
+
+/**
+ * Popularity score: the average review rating pulled toward a neutral 3.5 until the product has a few reviews
+ * (a Bayesian average, `(count × rating + 5 × 3.5) / (count + 5)`). One 5★ review scores 3.75 and ten 4.5★ reviews
+ * score 4.17, so a single good review can't jump a product above well-reviewed ones; three 3★ reviews score 3.31,
+ * just below a product with no reviews. With no reviews the score is the prior whatever `rating` holds: most
+ * catalogue rows still carry a seeded rating with `rating_count = 0`, and that seed must not decide the order.
+ */
+export function popularityScore(rating: number | undefined, reviewCount: number | undefined): number {
+  const count = reviewCount != null && Number.isFinite(reviewCount) && reviewCount > 0 ? reviewCount : 0;
+  const avg = count > 0 && rating != null && Number.isFinite(rating) ? rating : 0;
+  return (count * avg + POPULARITY_PRIOR_WEIGHT * POPULARITY_PRIOR_RATING) / (count + POPULARITY_PRIOR_WEIGHT);
 }
+
+/** Popularity order: score desc, then more reviews, then newest. */
+function comparePopularityFields(
+  aRating: number | undefined,
+  aCount: number | undefined,
+  aCreated: string | undefined,
+  bRating: number | undefined,
+  bCount: number | undefined,
+  bCreated: string | undefined,
+): number {
+  const as = popularityScore(aRating, aCount);
+  const bs = popularityScore(bRating, bCount);
+  if (bs !== as) return bs - as;
+  const ac = aCount ?? 0;
+  const bc = bCount ?? 0;
+  if (bc !== ac) return bc - ac;
+  return (bCreated ?? '').localeCompare(aCreated ?? '');
+}
+
+/** Popularity order over raw `master_products` rows (see `popularityScore`). */
+function compareCatalogRows(a: MasterProductRow, b: MasterProductRow): number {
+  return comparePopularityFields(
+    parseNum(a.rating), parseNum(a.rating_count), a.created_at ?? undefined,
+    parseNum(b.rating), parseNum(b.rating_count), b.created_at ?? undefined,
+  );
+}
+
+// Server-side order for the queries below that are cut off by a `limit`: `rating_count desc, created_at desc` —
+// most-reviewed first, then newest. PostgREST cannot order by the popularity score, and ordering by `rating` would let
+// the seeded ratings pick which rows make the cut. Every caller re-sorts what it gets with `compareCatalogRows`.
 
 /** Runs `build(chunk)` once per ≤ 150-id chunk in parallel and returns the merged, re-sorted, limited rows. */
 async function selectInChunks(
@@ -206,15 +245,9 @@ function masterRowToProduct(data: MasterProductRow): Product {
 const UNCATEGORISED = 'Uncategorized';
 const EMPTY_PRODUCTS: Product[] = [];
 
-/** Best-rated first, then most-reviewed, then newest — the home "Top picks" order. */
-function comparePopularity(a: Product, b: Product): number {
-  const ar = a.avgRating ?? 0;
-  const br = b.avgRating ?? 0;
-  if (br !== ar) return br - ar;
-  const ac = a.reviewCount ?? 0;
-  const bc = b.reviewCount ?? 0;
-  if (bc !== ac) return bc - ac;
-  return (b.created_at ?? '').localeCompare(a.created_at ?? '');
+/** Popularity order (see `popularityScore`) — the home "Top picks", category "Popular" and popular-rail order. */
+export function comparePopularity(a: Product, b: Product): number {
+  return comparePopularityFields(a.avgRating, a.reviewCount, a.created_at, b.avgRating, b.reviewCount, b.created_at);
 }
 
 /**
@@ -298,7 +331,6 @@ export async function loadMasterCatalogFast(
       .eq('is_active', true);
     if (ids) q = q.in('id', ids);
     return q
-      .order('rating', { ascending: false, nullsFirst: false })
       .order('rating_count', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
       .limit(limit);
@@ -308,7 +340,7 @@ export async function loadMasterCatalogFast(
       ? selectInChunks(nearbyIds, limit, (chunk) => popular(chunk), 'Database error')
       : popular().then(({ data, error }) => {
           if (error) throw new Error(`Database error: ${error.message}`);
-          return (data || []) as unknown as MasterProductRow[];
+          return ((data || []) as unknown as MasterProductRow[]).sort(compareCatalogRows);
         }),
     getAllCategories(),
   ]);
@@ -319,7 +351,7 @@ export async function loadMasterCatalogFast(
 /**
  * All in-stock products in a single category (index lookup on
  * `master_products.category`, exact match then `ilike` fallback for casing).
- * Order: best-rated first, falling back to most-recently-added.
+ * Order: popularity (`compareCatalogRows`) — the category screen's "Popular" sort.
  * `.limit(1000)` makes PostgREST's silent cap explicit (rev. 2).
  */
 export async function getProductsByCategory(
@@ -341,7 +373,6 @@ export async function getProductsByCategory(
     if (ids) q = q.in('id', ids);
     q = useIlike ? q.ilike('category', trimmed) : q.eq('category', trimmed);
     return q
-      .order('rating', { ascending: false, nullsFirst: false })
       .order('rating_count', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
       .limit(CATEGORY_LIMIT);
@@ -353,7 +384,7 @@ export async function getProductsByCategory(
     }
     const { data, error } = await buildQuery(useIlike);
     if (error) throw new Error(`Category fetch error: ${error.message}`);
-    return (data || []) as unknown as MasterProductRow[];
+    return ((data || []) as unknown as MasterProductRow[]).sort(compareCatalogRows);
   };
 
   const rows = await run(false);
@@ -371,7 +402,7 @@ export async function getProductsByCategory(
 
 /**
  * Server-side search: pg_trgm RPC when no nearby filter is given, otherwise
- * `ilike` on `name` / `category` with the IN filter. Up to 50 rows by rating.
+ * `ilike` on `name` / `category` with the IN filter. Up to 50 rows by popularity.
  * The `.or()` pattern sanitiser strips `% , . ( )` — all of them are PostgREST
  * filter-grammar characters (C28). `Dev_Search_inhibit_ForceError` throws
  * 'Search is unavailable right now.' so screens can show their error state.
@@ -421,8 +452,8 @@ export async function searchProducts(
       .or(`name.ilike.${pattern},category.ilike.${pattern}`);
     if (ids) dbq = dbq.in('id', ids);
     return dbq
-      .order('rating', { ascending: false, nullsFirst: false })
       .order('rating_count', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
       .limit(SEARCH_LIMIT);
   };
 
@@ -432,7 +463,7 @@ export async function searchProducts(
   }
   const { data, error } = await ilikeQuery();
   if (error) throw new Error(`Search error: ${error.message}`);
-  return (data || []).map((r) => masterRowToProduct(r as MasterProductRow));
+  return ((data || []) as unknown as MasterProductRow[]).sort(compareCatalogRows).map(masterRowToProduct);
 }
 
 /* ───────────── Category-name lookups (pre-normalised keys) ───────────── */
@@ -723,24 +754,16 @@ export function getCachedProduct(id: string): Product | undefined {
 let popularFor: HomeCatalogCache | null = null;
 let popularOrder: Product[] = EMPTY_PRODUCTS;
 
-/** Most-reviewed first, then best-rated — the home "frequently bought" fallback order. */
-function compareByReviews(a: Product, b: Product): number {
-  const ac = a.reviewCount ?? 0;
-  const bc = b.reviewCount ?? 0;
-  if (bc !== ac) return bc - ac;
-  return (b.avgRating ?? 0) - (a.avgRating ?? 0);
-}
-
 /**
  * The `limit` (default 20) most popular products of the memory catalog —
- * `reviewCount desc, avgRating desc`, computed once per catalog object. `[]`
- * when the catalog is not loaded.
+ * `comparePopularity` order, computed once per catalog object. `[]` when the
+ * catalog is not loaded.
  */
 export function getPopularProducts(limit: number = 20): Product[] {
   const cache = memoryHomeCache;
   if (!cache) return EMPTY_PRODUCTS;
   if (popularFor !== cache) {
-    popularOrder = cache.products.slice().sort(compareByReviews);
+    popularOrder = cache.products.slice().sort(comparePopularity);
     popularFor = cache;
   }
   return popularOrder.slice(0, Math.max(0, limit));

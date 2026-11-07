@@ -74,6 +74,7 @@ import { clearLiveAddressCache, getLiveAddressCache, setLiveAddressCache } from 
 import { logSilentFailure } from "../../lib/logSilentFailure";
 import { getMemoryOrders, getUserOrders, readUserOrdersCache, splitActivePast, type Order } from "../../lib/orderService";
 import {
+  comparePopularity,
   getCountForCategoryName,
   getMemoryHomeCache,
   getPopularProducts,
@@ -230,14 +231,6 @@ function pullCatalog(key: string, nearbyIds: Set<string> | undefined): Promise<C
   });
   inFlightCatalog.set(key, promise);
   return promise;
-}
-
-/** Most-reviewed first, then best-rated — mirrors productService's popularity order for the cold-install fallback. */
-function compareByReviews(a: Product, b: Product): number {
-  const ac = a.reviewCount ?? 0;
-  const bc = b.reviewCount ?? 0;
-  if (bc !== ac) return bc - ac;
-  return (b.avgRating ?? 0) - (a.avgRating ?? 0);
 }
 
 /**
@@ -769,7 +762,7 @@ export default function HomeScreen() {
     }
     if (popular.length > 0) return popular;
     // Cold install (no memory catalog yet): rank the nearby view itself.
-    return Array.from(viewById.values()).sort(compareByReviews).slice(0, RAIL_LENGTH);
+    return Array.from(viewById.values()).sort(comparePopularity).slice(0, RAIL_LENGTH);
   }, [viewById, userTopProductIds]);
 
   const banners = useMemo(() => getActiveBanners(Date.now(), [...BANNERS, ...remoteBanners]), [remoteBanners]);
