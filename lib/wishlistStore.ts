@@ -101,7 +101,7 @@ function syncIds(): void {
 // cached() resolve even when no screen is mounted.
 subscribe(WISHLIST_KEY, syncIds);
 
-/** Optimistic row for a product that is not in the server list yet; `discountedPrice` carries the GST-inclusive card price with gstRate null so wishlistItemToProduct reproduces it. */
+/** Optimistic row for a product that is not in the server list yet; `discountedPrice` carries the card price (GST-inclusive, like every catalogue price) so wishlistItemToProduct reproduces it. */
 function syntheticItem(product: { id: string; name: string; image_url?: string; price: number; unit: string; isLoose?: boolean }): WishlistItem {
   return {
     wishlistItemId: `local:${product.id}`,
@@ -298,15 +298,13 @@ export function clearWishlistMemory(): void {
 }
 
 /**
- * GST-inclusive Product for ProductCard / Stepper, EXACTLY as app/wishlist.tsx:39-44 priced it:
- * gstRate = isLoose ? 0 : Number(gstRate) || 0; price = discountedPrice + discountedPrice·gst/100;
- * original_price = basePrice > 0 ? basePrice + basePrice·gst/100 : undefined. Remaining fields
- * take the catalog mapper's defaults (unit 'piece', in_stock from isActive, category '').
+ * Product for ProductCard / Stepper, priced like the catalog mapper (productService masterRowToProduct):
+ * catalogue prices already include GST, so price = discountedPrice and original_price = basePrice when
+ * > 0. Remaining fields take the catalog mapper's defaults (unit 'piece', in_stock from isActive, category '').
  */
 export function wishlistItemToProduct(item: WishlistItem): Product {
-  const gstRate = item.isLoose ? 0 : Number(item.gstRate) || 0;
-  const price = item.discountedPrice + (item.discountedPrice * gstRate) / 100;
-  const originalPrice = item.basePrice > 0 ? item.basePrice + (item.basePrice * gstRate) / 100 : undefined;
+  const price = item.discountedPrice;
+  const originalPrice = item.basePrice > 0 ? item.basePrice : undefined;
   return {
     id: item.productId,
     name: item.name,

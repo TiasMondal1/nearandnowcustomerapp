@@ -199,15 +199,11 @@ async function selectInChunks(
 }
 
 function masterRowToProduct(data: MasterProductRow): Product {
-  const isLoose = data.is_loose ?? false;
-  const gstRate = isLoose ? 0 : parseNum(data.gst_rate);
-  const preTax = parseNum(data.discounted_price);
-  // Add GST on top of the discounted (pre-tax) price, matching the website.
-  const price = preTax + (preTax * gstRate) / 100;
-  const preTaxBase = parseNum(data.base_price);
-  const originalPrice = preTaxBase > 0
-    ? preTaxBase + (preTaxBase * gstRate) / 100
-    : undefined;
+  // Catalogue prices already include GST (backend utils/catalogPrice.ts): the customer pays
+  // discounted_price as stored, and base_price is the MRP. Nothing is added on top.
+  const price = parseNum(data.discounted_price);
+  const mrp = parseNum(data.base_price);
+  const originalPrice = mrp > 0 ? mrp : undefined;
 
   const avgRating =
     data.rating == null
