@@ -100,6 +100,7 @@ module.exports = {
         backgroundColor: "#ffffff",
         foregroundImage: "./assets/images/adaptive-icon-foreground.png",
         monochromeImage: "./assets/images/adaptive-icon-monochrome.png",
+        blockedPermissions: ["android.permission.ACTIVITY_RECOGNITION"],
       },
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
@@ -114,7 +115,7 @@ module.exports = {
       // when it comes from EAS's GOOGLE_SERVICES_JSON file env var it's an
       // absolute path elsewhere on the build machine, not relative to this file.
       ...(hasGoogleServicesFile ? { googleServicesFile: googleServicesFilePath } : {}),
-      versionCode: 6,
+      versionCode: 7,
       permissions: [
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
