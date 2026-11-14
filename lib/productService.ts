@@ -12,6 +12,12 @@ import { supabase } from './supabase';
 const MASTER_PRODUCT_FIELDS =
   'id,name,category,base_price,discounted_price,gst_rate,unit,image_url,description,is_loose,is_active,created_at,rating,rating_count';
 
+// The product page only: the extra photos (migration 20261115000000). Kept off every list
+// query so catalog / search / category payloads don't carry gallery URLs they never show.
+const PRODUCT_DETAIL_FIELDS = `${MASTER_PRODUCT_FIELDS},additional_images`;
+/** At most this many extra photos (the DB CHECK allows 8). */
+const MAX_ADDITIONAL_IMAGES = 8;
+
 // Lean field list used by the home catalog load. Excludes the potentially large `description`
 // field, which the home screen never renders — slashes payload size & parse time.
 const HOME_PRODUCT_FIELDS =
@@ -55,7 +61,14 @@ export interface Product {
   category: string;
   price: number;
   original_price?: number;
+  /** The main image — every list, the cart and orders use it. */
   image_url?: string;
+  /**
+   * Extra photos for the product page gallery, after `image_url`
+   * (master_products.additional_images). Only set on products fetched by
+   * `getProductById`; catalog/list products never carry it. Use `productGallery`.
+   */
+  additional_images?: string[];
   description?: string;
   in_stock: boolean;
   unit: string;
@@ -75,6 +88,7 @@ interface MasterProductRow {
   gst_rate?: number | string | null;
   unit?: string | null;
   image_url?: string | null;
+  additional_images?: unknown;
   description?: string | null;
   is_loose?: boolean | null;
   is_active?: boolean | null;
@@ -198,6 +212,30 @@ async function selectInChunks(
   return rows.length > limit ? rows.slice(0, limit) : rows;
 }
 
+/** http(s) URLs only, no blanks or repeats, never the main image itself, capped. */
+function cleanImageList(value: unknown, mainImage: string | null | undefined): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string') continue;
+    const url = item.trim();
+    if (!/^https?:\/\//i.test(url) || url === mainImage || out.includes(url)) continue;
+    out.push(url);
+    if (out.length === MAX_ADDITIONAL_IMAGES) break;
+  }
+  return out;
+}
+
+/**
+ * Every photo of a product in display order for the product page: the main image, then the
+ * extra photos. `[]` when it has none (the page shows its no-image placeholder).
+ */
+export function productGallery(product: Pick<Product, 'image_url' | 'additional_images'>): string[] {
+  const main = product.image_url?.trim();
+  const extras = cleanImageList(product.additional_images, main);
+  return main ? [main, ...extras] : extras;
+}
+
 function masterRowToProduct(data: MasterProductRow): Product {
   // Catalogue prices already include GST (backend utils/catalogPrice.ts): the customer pays
   // discounted_price as stored, and base_price is the MRP. Nothing is added on top.
@@ -219,6 +257,8 @@ function masterRowToProduct(data: MasterProductRow): Product {
         ? Number(data.rating_count)
         : data.rating_count;
 
+  const additionalImages = cleanImageList(data.additional_images, data.image_url);
+
   return {
     id: data.id,
     name: data.name,
@@ -226,6 +266,8 @@ function masterRowToProduct(data: MasterProductRow): Product {
     price,
     original_price: originalPrice,
     image_url: data.image_url ?? undefined,
+    // Only present when there are some, so list products stay as lean as before.
+    ...(additionalImages.length ? { additional_images: additionalImages } : {}),
     description: data.description ?? undefined,
     in_stock: data.is_active !== false,
     unit: data.unit ?? 'piece',
@@ -538,6 +580,10 @@ export function getCountForCategoryName(
  * active-ids round trip is skipped and only the row is refreshed; if that
  * refresh fails the cached copy is returned so the PDP still paints.
  */
+const UNDEFINED_COLUMN = '42703';
+/** Set once the database answered 42703 for additional_images; later fetches skip the column. */
+let detailColumnMissing = false;
+
 export async function getProductById(masterProductId: string): Promise<Product | null> {
   const cachedProduct = getCachedProduct(masterProductId);
   try {
@@ -551,14 +597,26 @@ export async function getProductById(masterProductId: string): Promise<Product |
       if (!activeIds.has(masterProductId)) return null;
     }
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('master_products')
-      .select(MASTER_PRODUCT_FIELDS)
+      .select(detailColumnMissing ? MASTER_PRODUCT_FIELDS : PRODUCT_DETAIL_FIELDS)
       .eq('id', masterProductId)
       .single();
+    // 42703 = undefined column: a database without additional_images yet (migration
+    // 20261115000000 not applied). Show the product with its main image instead of failing.
+    if (error?.code === UNDEFINED_COLUMN && !detailColumnMissing) {
+      detailColumnMissing = true;
+      ({ data, error } = await supabase
+        .from('master_products')
+        .select(MASTER_PRODUCT_FIELDS)
+        .eq('id', masterProductId)
+        .single());
+    }
 
     if (error || !data) return cachedProduct ?? null;
-    return masterRowToProduct(data as MasterProductRow);
+    // `unknown` first: supabase-js types the row from the select string, and the
+    // detail/fallback field-list union doesn't parse as one shape.
+    return masterRowToProduct(data as unknown as MasterProductRow);
   } catch (err) {
     logSilentFailure('Fetch product', err);
     return cachedProduct ?? null;

@@ -6,9 +6,8 @@
 // hidden on /product/*, so that strip is the only View cart here). Navigation is silent — the heart (toggle) and the
 // strip (swoosh) are the only feedback this file owns; ADD / ± play inside CartContext.
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Image } from "expo-image";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   FlatList,
@@ -25,6 +24,7 @@ import {
 import Animated, { useAnimatedStyle, useSharedValue, withSequence, withSpring } from "react-native-reanimated";
 
 import StarRating from "../../components/StarRating";
+import { ProductGallery } from "../../components/product/ProductGallery";
 import {
   Badge,
   BottomDock,
@@ -64,13 +64,13 @@ import { useIsWishlisted } from "../../hooks/useWishlist";
 import { getDevFlag, useDevFlag } from "../../lib/devFlags";
 import { feedback } from "../../lib/feedback";
 import { formatMoney } from "../../lib/formatMoney";
-import { cdnImage } from "../../lib/imageUrl";
 import { logSilentFailure } from "../../lib/logSilentFailure";
 import {
   getCachedProduct,
   getMemoryHomeCache,
   getProductById,
   getProductsForCategoryName,
+  productGallery,
   type Product,
 } from "../../lib/productService";
 import { toggleWishlist } from "../../lib/wishlistStore";
@@ -93,6 +93,7 @@ const SIMILAR_MAX = 10;
 const RAIL_GAP = 8;
 const RAIL_ITEM_LENGTH = PRODUCT_CARD.railWidth + RAIL_GAP;
 const EMPTY_PRODUCTS: Product[] = [];
+const EMPTY_IMAGES: string[] = [];
 const WHITESPACE = /\s/;
 
 type FetchState = "loading" | "ready" | "notFound" | "error";
@@ -175,6 +176,8 @@ export default function ProductDetailsScreen() {
   const eta = useDeliveryEta();
   const online = useIsOnline();
   const reduced = useMotionReduced();
+  // Main image, then the extra photos (only the getProductById copy carries those; the catalog seed shows the main one).
+  const gallery = useMemo(() => (product ? productGallery(product) : EMPTY_IMAGES), [product]);
   const loading = useForceSkeleton(!product && !!productId && fetchState === "loading");
   const slow = useSlowLoad(loading);
 
@@ -267,7 +270,6 @@ export default function ProductDetailsScreen() {
   const mrp = product.original_price;
   const saving = mrp != null && mrp > product.price ? mrp - product.price : 0;
   const pct = discountPercent(product.price, mrp);
-  const heroUri = cdnImage(product.image_url, HERO_IMAGE_WIDTH);
   const inCart = qty > 0;
   const showRail = !orionOff && !railOff && similar.length >= 2;
   const hasRating = typeof product.avgRating === "number" && product.avgRating > 0;
@@ -300,19 +302,13 @@ export default function ProductDetailsScreen() {
         contentContainerStyle={[styles.scrollContent, { paddingBottom: dockHeight + 16 }]}
       >
         <View style={styles.hero}>
-          {heroUri ? (
-            <Image
-              source={{ uri: heroUri }}
-              style={styles.heroImage}
-              contentFit="contain"
-              cachePolicy="memory-disk"
-              transition={motion.imageFade}
-              priority="high"
+          {gallery.length > 0 ? (
+            <ProductGallery
+              images={gallery}
+              widthHint={HERO_IMAGE_WIDTH}
+              productName={product.name}
               recyclingKey={product.id}
-              accessible
-              accessibilityLabel={product.name}
-              alt={product.name}
-              accessibilityIgnoresInvertColors
+              imageStyle={styles.heroImage}
             />
           ) : (
             <View style={styles.heroFallback} accessible accessibilityLabel={`${product.name}, no image`}>
