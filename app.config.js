@@ -100,8 +100,12 @@ module.exports = {
         backgroundColor: "#ffffff",
         foregroundImage: "./assets/images/adaptive-icon-foreground.png",
         monochromeImage: "./assets/images/adaptive-icon-monochrome.png",
-        blockedPermissions: ["android.permission.ACTIVITY_RECOGNITION"],
       },
+      // expo-sensors' manifest declares ACTIVITY_RECOGNITION (Pedometer only).
+      // The app uses just the Accelerometer (hooks/useShakeDetector.ts), so
+      // strip it from the merged manifest. Must sit directly under `android`;
+      // nested anywhere else (it was briefly inside adaptiveIcon) Expo ignores it.
+      blockedPermissions: ["android.permission.ACTIVITY_RECOGNITION"],
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
       package: "com.nearandnow.customer",
