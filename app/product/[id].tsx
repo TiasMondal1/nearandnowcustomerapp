@@ -84,6 +84,11 @@ import { toggleWishlist } from "../../lib/wishlistStore";
 const HERO_IMAGE_WIDTH = 800;
 /** The hero is 1:1 up to this height (design §3.6). */
 const HERO_MAX_HEIGHT = 320;
+/**
+ * Gallery page dots, from the hero's bottom edge. The sheet overlaps the hero's bottom 20 px and the photo stops 32 px
+ * up (styles.heroImage), so 23 centres the 6 px dots in the 12 px of air between them — visible, touching neither.
+ */
+const HERO_DOTS_BOTTOM = 23;
 /** Same threshold as Price / ProductCard: smaller gaps show the strike + "Save ₹X" only. */
 const DEAL_BADGE_MIN_PCT = 5;
 /** "About this product" shows this many lines; the remainder lives in a Collapsible. */
@@ -309,6 +314,7 @@ export default function ProductDetailsScreen() {
               productName={product.name}
               recyclingKey={product.id}
               imageStyle={styles.heroImage}
+              dotsBottom={HERO_DOTS_BOTTOM}
             />
           ) : (
             <View style={styles.heroFallback} accessible accessibilityLabel={`${product.name}, no image`}>

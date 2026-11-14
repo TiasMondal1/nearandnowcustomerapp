@@ -31,11 +31,17 @@ type Props = {
   productName: string;
   /** product.id: keeps expo-image from showing the previous product's pixels while the next loads. */
   recyclingKey: string;
-  /** Where the photo sits inside the hero (the page's inset style, with room for the dots below). */
+  /** Where the photo sits inside the hero (the page's inset style). */
   imageStyle: StyleProp<ImageStyle>;
+  /**
+   * Distance of the page dots from the hero's bottom edge. The product page's sheet overlaps the hero's bottom 20 px,
+   * so the page passes a value that puts the dots in the air between the photo and the sheet — anything smaller hides
+   * them under the sheet.
+   */
+  dotsBottom: number;
 };
 
-function ProductGalleryImpl({ images, widthHint, productName, recyclingKey, imageStyle }: Props) {
+function ProductGalleryImpl({ images, widthHint, productName, recyclingKey, imageStyle, dotsBottom }: Props) {
   const [size, setSize] = useState<{ width: number; height: number } | null>(null);
   const [index, setIndex] = useState(0);
   const listRef = useRef<FlatList<string>>(null);
@@ -56,11 +62,12 @@ function ProductGalleryImpl({ images, widthHint, productName, recyclingKey, imag
   }, []);
 
   const pageWidth = size?.width ?? 0;
-  const onMomentumScrollEnd = useCallback(
+  // The dot follows the swipe (the page more than half on screen), not only where the fling settles.
+  const onScroll = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
       if (pageWidth <= 0) return;
-      const next = Math.round(e.nativeEvent.contentOffset.x / pageWidth);
-      setIndex(Math.max(0, Math.min(count - 1, next)));
+      const next = Math.max(0, Math.min(count - 1, Math.round(e.nativeEvent.contentOffset.x / pageWidth)));
+      setIndex((prev) => (prev === next ? prev : next));
     },
     [pageWidth, count],
   );
@@ -125,7 +132,9 @@ function ProductGalleryImpl({ images, widthHint, productName, recyclingKey, imag
         pagingEnabled
         bounces={false}
         showsHorizontalScrollIndicator={false}
-        onMomentumScrollEnd={onMomentumScrollEnd}
+        onScroll={onScroll}
+        onMomentumScrollEnd={onScroll}
+        scrollEventThrottle={32}
         getItemLayout={getItemLayout}
         // The visible photo plus its neighbours, so the next one is already loading when the swipe starts.
         initialNumToRender={2}
@@ -134,7 +143,12 @@ function ProductGalleryImpl({ images, widthHint, productName, recyclingKey, imag
         // The page's vertical ScrollView keeps vertical drags; this list only takes sideways ones.
         nestedScrollEnabled
       />
-      <View style={styles.dots} pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+      <View
+        style={[styles.dots, { bottom: dotsBottom }]}
+        pointerEvents="none"
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+      >
         {images.map((uri, i) => (
           <View key={`${i}:${uri}`} style={[styles.dot, i === index && styles.dotActive]} />
         ))}
@@ -150,7 +164,6 @@ const DOT = 6;
 const styles = StyleSheet.create({
   dots: {
     position: "absolute",
-    bottom: 12,
     left: 0,
     right: 0,
     flexDirection: "row",
@@ -158,6 +171,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
   },
-  dot: { width: DOT, height: DOT, borderRadius: DOT / 2, backgroundColor: C.border },
-  dotActive: { width: DOT * 3, backgroundColor: C.primary },
+  // C.border vanished on the hero's sand ground (C.bgSoft); textLight at half strength reads without competing.
+  dot: { width: DOT, height: DOT, borderRadius: DOT / 2, backgroundColor: C.textLight, opacity: 0.45 },
+  dotActive: { width: DOT * 3, backgroundColor: C.primary, opacity: 1 },
 });
