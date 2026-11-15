@@ -3,6 +3,7 @@ import Constants from 'expo-constants';
 
 import { applyDevNetworkSeams, recordNetworkLog, type NetworkLogEntry } from './apiClient';
 import { getDevFlag } from './devFlags';
+import { reportSupabaseResponse } from './reportHandled';
 
 // Two-layer fallback: Metro-inlined process.env (local + EAS builds with vars set)
 // → Constants.expoConfig.extra (always baked in by app.config.js, catches any case
@@ -80,7 +81,12 @@ function describeRequest(input: FetchInput, init?: RequestInit): { method: strin
 const devFetch: typeof fetch = async (input, init) => {
   await applyDevNetworkSeams('supabase');
   const target = toRequestInfo(input);
-  if (!getDevFlag('Dev_Perf_inhibit_NetworkLog')) return fetch(target, init);
+  if (!getDevFlag('Dev_Perf_inhibit_NetworkLog')) {
+    const response = await fetch(target, init);
+    // Failed queries the screens handle quietly → Sentry. A success costs one check.
+    if (response.status >= 400) reportSupabaseResponse(input, init, response);
+    return response;
+  }
 
   const { method, path } = describeRequest(input, init);
   const startedAt = Date.now();
@@ -88,6 +94,7 @@ const devFetch: typeof fetch = async (input, init) => {
   try {
     const response = await fetch(target, init);
     status = response.status;
+    if (response.status >= 400) reportSupabaseResponse(input, init, response);
     return response;
   } catch (err) {
     status = err instanceof Error && err.message.includes('Network request failed') ? 'offline' : 'error';

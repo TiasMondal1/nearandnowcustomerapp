@@ -60,3 +60,5 @@ app-example
 
 # Firebase Android app config — contains project identifiers, not committed
 google-services.json
+
+.env.local

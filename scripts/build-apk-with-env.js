@@ -43,6 +43,7 @@ if (fs.existsSync(envPath)) {
   console.log("  EXPO_PUBLIC_SUPABASE_URL      =", supaUrl || "(not set)");
   console.log("  EXPO_PUBLIC_SUPABASE_ANON_KEY =", supaKey ? supaKey.slice(0, 20) + "…" : "(not set)");
   console.log("  EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=", mapsKey ? mapsKey.slice(0, 8) + "… (native manifest + JS)" : "(not set — MapView may crash in release)");
+  console.log("  EXPO_PUBLIC_SENTRY_DSN        =", process.env.EXPO_PUBLIC_SENTRY_DSN ? "set (crash reporting on)" : "(not set — no crash reporting)");
 
   if (!supaUrl || !supaKey) {
     console.error("\nERROR: EXPO_PUBLIC_SUPABASE_URL or EXPO_PUBLIC_SUPABASE_ANON_KEY missing from .env.");
@@ -57,6 +58,17 @@ if (fs.existsSync(envPath)) {
 }
 
 process.env.NODE_ENV = process.env.NODE_ENV || "production";
+
+// The Sentry wizard keeps the source-map upload token in .env.local (gitignored). It is a secret, unlike the
+// EXPO_PUBLIC_* values above, so it never goes in .env. Only that one key is read from it.
+const envLocalPath = path.join(rootDir, ".env.local");
+if (!process.env.SENTRY_AUTH_TOKEN && fs.existsSync(envLocalPath)) {
+  const match = fs.readFileSync(envLocalPath, "utf8").match(/^\s*SENTRY_AUTH_TOKEN\s*=\s*["']?([^"'\s]+)["']?\s*$/m);
+  if (match) {
+    process.env.SENTRY_AUTH_TOKEN = match[1];
+    console.log("SENTRY_AUTH_TOKEN loaded from .env.local — source maps will be uploaded to Sentry.");
+  }
+}
 
 // Sentry source-map upload is a post-build step that requires SENTRY_AUTH_TOKEN.
 // For local / side-loaded APK builds we don't need it — disable auto-upload so

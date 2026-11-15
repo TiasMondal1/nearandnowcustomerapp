@@ -1,5 +1,7 @@
 import * as Sentry from '@sentry/react-native';
 
+import { isTransportError } from './apiClient';
+
 /**
  * Single entry point for logging an error that's already surfaced to the
  * user (an error state, a retry banner, etc.) — as opposed to a
@@ -19,8 +21,14 @@ import * as Sentry from '@sentry/react-native';
  */
 export function logError(context: string, err: unknown): void {
   console.error(`[error] ${context}:`, err);
+  // apiFetch already reported a failed response (lib/reportHandled.ts), and
+  // offline / timeout / session-expired are expected; don't send them twice.
+  if (isTransportError(err)) return;
   try {
+    // "warning" → Sentry priority Medium: recorded and grouped by context, no
+    // alert email. The user already saw an error state; crashes still email.
     Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+      level: 'warning',
       tags: { context },
     });
   } catch {

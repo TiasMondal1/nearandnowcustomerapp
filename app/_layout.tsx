@@ -47,7 +47,8 @@ import { isSupabaseConfigured } from "../lib/supabase";
 // ─── Module scope (runs during the native splash) ────────────────────────────
 
 // Sentry (DECISIONS D7): DSN from the inlined env var, else app.config.js `extra.sentryDsn` (typed through
-// lib/appExtra — the one sanctioned cast of `extra`). Empty DSN (every local build today) → `enabled: false`, harmless.
+// lib/appExtra — the one sanctioned cast of `extra`). Empty DSN → `enabled: false`, harmless. Dev builds never report.
+// Project near-now/react-native (EU region), DSN set in .env and the EAS production env on 2026-11-15.
 const SENTRY_DSN = process.env.EXPO_PUBLIC_SENTRY_DSN || getAppExtra().sentryDsn || "";
 Sentry.init({
   dsn: SENTRY_DSN,
@@ -55,6 +56,17 @@ Sentry.init({
   tracesSampleRate: 0.2,
   // Updates.channel is null in local Gradle builds and only populated in EAS builds (MAP §7.10).
   environment: Updates.channel ?? "local",
+  // Logs written with Sentry.logger.* (console.* is not forwarded).
+  enableLogs: true,
+  // Session Replay: 10% of sessions, plus every session that hits an error. Everything on screen is masked — these
+  // are the SDK defaults, spelled out so a later edit can't loosen them by accident (addresses and phone numbers).
+  replaysSessionSampleRate: 0.1,
+  replaysOnErrorSampleRate: 1.0,
+  integrations: [
+    Sentry.mobileReplayIntegration({ maskAllText: true, maskAllImages: true, maskAllVectors: true }),
+    // In-app "send feedback" form. It only opens when code calls Sentry.showFeedbackWidget().
+    Sentry.feedbackIntegration(),
+  ],
 });
 
 // iOS 'modal' presents a UIKit view controller ABOVE every AppShell sibling (toasts, offline banner, dev stripe

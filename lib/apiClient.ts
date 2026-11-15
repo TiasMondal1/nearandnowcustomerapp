@@ -3,6 +3,7 @@ import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
 
 import { getDevFlag } from './devFlags';
+import { reportRequestFailure } from './reportHandled';
 
 // ─── User-facing messages (shared with lib/network.ts, OfflineBanner, tests) ──
 
@@ -231,6 +232,24 @@ async function resolveToken(): Promise<string | null> {
   return token;
 }
 
+// ─── Transport errors (already reported, or expected) ────────────────────────
+
+// Every error apiFetch throws is a request outcome: a failed response it has
+// already reported to Sentry, or an expected one (offline, timeout, session
+// expired). logError() checks this so the same failure isn't sent twice, while
+// a real bug in the caller's own code still is.
+const transportErrors = new WeakSet<object>();
+
+function markTransportError<E>(error: E): E {
+  if (error && typeof error === 'object') transportErrors.add(error);
+  return error;
+}
+
+/** True for an error thrown by apiFetch itself (see markTransportError). */
+export function isTransportError(error: unknown): boolean {
+  return !!error && typeof error === 'object' && transportErrors.has(error);
+}
+
 // ─── apiFetch ─────────────────────────────────────────────────────────────────
 
 /**
@@ -289,8 +308,27 @@ export async function apiFetch<T>(path: string, options?: ApiFetchOptions): Prom
     logStatus = status;
 
     if (!ok) {
-      const body = (data && typeof data === 'object' ? data : {}) as { message?: unknown; error?: unknown };
+      const body = (data && typeof data === 'object' ? data : {}) as {
+        message?: unknown;
+        error?: unknown;
+        code?: unknown;
+        requestId?: unknown;
+      };
       const message = String(body.message || body.error || `Request failed (${status})`);
+
+      // A failure the calling screen will handle quietly → Sentry, once per
+      // endpoint + status per 10 min. 401 is a session expiry, not a bug.
+      if (status !== 401) {
+        reportRequestFailure({
+          source: 'api',
+          method,
+          url: path,
+          status,
+          code: typeof body.code === 'string' ? body.code : undefined,
+          message,
+          requestId: typeof body.requestId === 'string' ? body.requestId : undefined,
+        });
+      }
 
       if (status === 401) {
         // Only treat this as a real session expiry if we actually sent a token —
@@ -326,12 +364,12 @@ export async function apiFetch<T>(path: string, options?: ApiFetchOptions): Prom
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes('Network request failed')) {
       logStatus = 'offline';
-      throw new Error(OFFLINE_MESSAGE);
+      throw markTransportError(new Error(OFFLINE_MESSAGE));
     }
     if (typeof logStatus !== 'number') {
       logStatus = message === OFFLINE_MESSAGE ? 'offline' : message === TIMEOUT_MESSAGE ? 'timeout' : 'error';
     }
-    throw error;
+    throw markTransportError(error);
   } finally {
     recordNetworkLog({ method, path, ms: Date.now() - startedAt, status: logStatus });
   }
