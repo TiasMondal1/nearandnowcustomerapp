@@ -34,7 +34,7 @@ export type AdditionRequestOptions = {
 
 export async function createAdditionPayment(
   orderId: string,
-  items: { product_id: string; quantity: number }[],
+  items: { product_id: string; quantity: number; sell_by?: 'piece' }[],
   options?: AdditionRequestOptions,
 ): Promise<CreateAdditionPaymentResponse> {
   return apiFetch<CreateAdditionPaymentResponse>(`/api/orders/${orderId}/add-items/create-payment`, {

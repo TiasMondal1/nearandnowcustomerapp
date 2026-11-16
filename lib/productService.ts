@@ -10,7 +10,7 @@ import { supabase } from './supabase';
 // Real schema columns for popularity sorting are `rating` and `rating_count`
 // (NOT `avg_rating` / `review_count`); see `popularityScore` for how they combine.
 const MASTER_PRODUCT_FIELDS =
-  'id,name,category,base_price,discounted_price,gst_rate,unit,image_url,description,is_loose,is_active,created_at,rating,rating_count';
+  'id,name,category,base_price,discounted_price,gst_rate,unit,image_url,description,is_loose,max_quantity,piece_weight_g,is_active,created_at,rating,rating_count';
 
 // The product page only: the extra photos (migration 20261115000000). Kept off every list
 // query so catalog / search / category payloads don't carry gallery URLs they never show.
@@ -21,7 +21,7 @@ const MAX_ADDITIONAL_IMAGES = 8;
 // Lean field list used by the home catalog load. Excludes the potentially large `description`
 // field, which the home screen never renders — slashes payload size & parse time.
 const HOME_PRODUCT_FIELDS =
-  'id,name,category,base_price,discounted_price,gst_rate,unit,image_url,is_loose,is_active,created_at,rating,rating_count';
+  'id,name,category,base_price,discounted_price,gst_rate,unit,image_url,is_loose,max_quantity,piece_weight_g,is_active,created_at,rating,rating_count';
 
 /**
  * AsyncStorage key of the slim v2 home catalog envelope
@@ -73,6 +73,16 @@ export interface Product {
   in_stock: boolean;
   unit: string;
   isLoose?: boolean;
+  /**
+   * Most a customer may order in one go (master_products.max_quantity: 10 for most
+   * products; kg for loose ones). Checkout refuses more, so the cart stops here.
+   */
+  maxQuantity?: number;
+  /**
+   * Loose items only: average grams per piece (master_products.piece_weight_g). Set = the
+   * customer may also buy it by the piece at a fixed price (lib/looseQuantity.ts piecePrice).
+   */
+  pieceWeightG?: number;
   created_at?: string;
   avgRating?: number;
   reviewCount?: number;
@@ -91,6 +101,8 @@ interface MasterProductRow {
   additional_images?: unknown;
   description?: string | null;
   is_loose?: boolean | null;
+  max_quantity?: number | string | null;
+  piece_weight_g?: number | string | null;
   is_active?: boolean | null;
   created_at?: string | null;
   rating?: number | string | null;
@@ -258,6 +270,8 @@ function masterRowToProduct(data: MasterProductRow): Product {
         : data.rating_count;
 
   const additionalImages = cleanImageList(data.additional_images, data.image_url);
+  const maxQuantity = Number(data.max_quantity);
+  const pieceWeightG = Number(data.piece_weight_g);
 
   return {
     id: data.id,
@@ -272,6 +286,8 @@ function masterRowToProduct(data: MasterProductRow): Product {
     in_stock: data.is_active !== false,
     unit: data.unit ?? 'piece',
     isLoose: data.is_loose ?? false,
+    ...(maxQuantity > 0 ? { maxQuantity } : {}),
+    ...(data.is_loose && pieceWeightG > 0 ? { pieceWeightG } : {}),
     created_at: data.created_at ?? undefined,
     avgRating: Number.isFinite(avgRating as number) ? (avgRating as number) : undefined,
     reviewCount: Number.isFinite(reviewCount as number) ? (reviewCount as number) : undefined,

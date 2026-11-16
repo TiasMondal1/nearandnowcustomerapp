@@ -24,6 +24,7 @@ import {
 import Animated, { useAnimatedStyle, useSharedValue, withSequence, withSpring } from "react-native-reanimated";
 
 import StarRating from "../../components/StarRating";
+import { LooseAmountPicker } from "../../components/product/LooseAmountPicker";
 import { ProductGallery } from "../../components/product/ProductGallery";
 import {
   Badge,
@@ -354,6 +355,9 @@ export default function ProductDetailsScreen() {
               <EtaLine size="md" eta={eta} />
             </View>
           ) : null}
+
+          {/* Loose items: quick weights, a typed amount (50 g steps), or by the piece. Renders nothing otherwise. */}
+          <LooseAmountPicker key={product.id} product={product} />
 
           <View style={styles.metaRow}>
             <MetaPill icon="tag-outline" iconColor={C.primary} label={product.category} />

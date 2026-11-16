@@ -44,9 +44,10 @@ function CartLineBase({ item, last }: { item: CartItem; last: boolean }): React.
       unit: item.unit ?? "",
       image_url: item.image_url,
       isLoose: item.isLoose,
+      maxQuantity: item.maxQty,
       in_stock: true,
     }),
-    [item.product_id, item.name, item.price, item.unit, item.image_url, item.isLoose],
+    [item.product_id, item.name, item.price, item.unit, item.image_url, item.isLoose, item.maxQty],
   );
   const lineTotal = formatMoney(item.price * item.quantity);
   const unitText = item.isLoose ? formatQuantityDisplay(item.quantity, true, item.unit) : item.unit ?? "";

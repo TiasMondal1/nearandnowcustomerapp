@@ -3,7 +3,7 @@
 // ADD → [− n +] on every surface: grid/rail cards (sm), rows + checkout lines (md), the PDP dock (lg) and the
 // confirmation quick-add rail (xs). The quantity comes from the per-product cart subscription, so a tap re-renders
 // this control only — never the card or the list (speed-and-ease #1/#18). Haptics + sounds are fired INSIDE the
-// CartContext mutations; the buttons here are silent. The only feedback this file owns is the "Max 99" error.
+// CartContext mutations; the buttons here are silent. The only feedback this file owns is the "Max N per item" error.
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import React, { useCallback, useState, useSyncExternalStore } from "react";
 import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
@@ -11,10 +11,11 @@ import Animated from "react-native-reanimated";
 
 import { C } from "../../constants/colors";
 import { fontFamily, motion, opacity, radius } from "../../constants/ui";
-import { cartActions, useCartQty } from "../../context/CartContext";
+import { cartActions, MAX_QUANTITY_PER_ITEM, useCartQty, useCartSellBy } from "../../context/CartContext";
 import { getDevFlag, subscribeDevFlags } from "../../lib/devFlags";
 import { feedback } from "../../lib/feedback";
 import type { Product } from "../../lib/productService";
+import { LOOSE_STEP_KG, maxPieces } from "../../lib/looseQuantity";
 import { formatQuantityDisplay } from "../../lib/quantityFormat";
 import { AnimatedNumber } from "./motion/AnimatedNumber";
 import { usePressScale } from "./motion/PressableScale";
@@ -34,10 +35,13 @@ export type StepperSize = "xs" | "sm" | "md" | "lg";
  */
 export type StepperVariant = "outlined" | "filled" | "tinted";
 
-export type StepperProduct = Pick<Product, "id" | "name" | "price" | "unit" | "image_url" | "isLoose" | "in_stock">;
+export type StepperProduct = Pick<
+  Product,
+  "id" | "name" | "price" | "unit" | "image_url" | "isLoose" | "in_stock" | "maxQuantity" | "pieceWeightG"
+>;
 
 export type StepperProps = {
-  /** The product this control adds/steps. `isLoose` MUST be present (loose items step 0.25 kg — MAP §2.11 #38). */
+  /** The product this control adds/steps. `isLoose` MUST be present (loose items step 50 g — MAP §2.11 #38; a by-piece line steps 1). */
   product: StepperProduct;
   /** Geometry preset. Default 'sm' (30×66). */
   size?: StepperSize;
@@ -134,10 +138,22 @@ function useRigelFlags(): RigelFlags {
 
 // ─── Cart handlers (module-level: no per-card closures) ───────────────────────
 
-/** Max 99 per line: the store fires nothing for 'max' (CONTRACTS §3.1), so the control owns the error + toast. */
-function onMaxReached(): void {
+/**
+ * The most this product's line may hold: kg for a by-weight loose line, pieces for a by-piece one
+ * (a catalog product converts its kg limit; a cart line's own `maxQty` is already in pieces).
+ */
+function lineMax(product: StepperProduct, byPiece: boolean): number | undefined {
+  if (byPiece && product.pieceWeightG) return maxPieces(product.maxQuantity, product.pieceWeightG);
+  return product.maxQuantity;
+}
+
+/** The line hit its product's limit (99 when unknown): the store fires nothing for 'max' (CONTRACTS §3.1), so the control owns the error + toast. */
+function onMaxReached(product: StepperProduct, byPiece: boolean): void {
   feedback.error();
-  notify({ id: "cart-max", title: "Max 99 per item", tone: "warning" });
+  const limit = lineMax(product, byPiece);
+  const max = limit && limit > 0 ? Math.min(limit, MAX_QUANTITY_PER_ITEM) : MAX_QUANTITY_PER_ITEM;
+  const amount = byPiece ? `${max} pieces` : product.isLoose ? formatQuantityDisplay(max, true, product.unit) : String(max);
+  notify({ id: "cart-max", title: `Max ${amount} per item`, tone: "warning" });
 }
 
 function addToCart(product: StepperProduct, onAdded?: () => void): void {
@@ -148,15 +164,16 @@ function addToCart(product: StepperProduct, onAdded?: () => void): void {
     unit: product.unit,
     image_url: product.image_url,
     isLoose: product.isLoose,
+    maxQty: product.maxQuantity,
   });
-  if (result === "max") onMaxReached();
+  if (result === "max") onMaxReached(product, false);
   else if (result === "added") onAdded?.();
 }
 
 /** `incrementQty` reads the step from the stored line, so N fast taps always net N (CartContext comment). */
-function stepCart(product: StepperProduct, direction: 1 | -1): void {
-  const result = cartActions.incrementQty(product.id, direction);
-  if (result === "max") onMaxReached();
+function stepCart(product: StepperProduct, direction: 1 | -1, byPiece: boolean): void {
+  const result = cartActions.incrementQty(product.id, direction, { maxQty: lineMax(product, byPiece) });
+  if (result === "max") onMaxReached(product, byPiece);
   // The line vanished under the finger (undo / clear raced the tap): a "+" still means "I want one".
   else if (result === "missing" && direction === 1) addToCart(product);
 }
@@ -165,7 +182,7 @@ function stepCart(product: StepperProduct, direction: 1 | -1): void {
 
 /**
  * ADD → [− n +]. Quantity via `useCartQty(product.id)`; ADD → `cartActions.addItem` (with `isLoose`); ± →
- * `cartActions.incrementQty(id, ±1)`; 'max' → `feedback.error()` + toast "Max 99 per item". `in_stock === false` →
+ * `cartActions.incrementQty(id, ±1)`; 'max' → `feedback.error()` + toast "Max 10 per item" (the product's own limit). `in_stock === false` →
  * a "Sold out" pill (C.bgSoft / C.textSub 11/700), not pressable. At the minimum quantity the − glyph crossfades to
  * `trash-can-outline` and the tap removes the line (label "Remove <name> from cart"). Integer counts roll
  * (`AnimatedNumber mode="roll"`); loose quantities crossfade through `formatQuantityDisplay(qty, isLoose, unit)`.
@@ -186,6 +203,7 @@ export function Stepper({
   testID,
 }: StepperProps): React.JSX.Element {
   const qty = useCartQty(product.id);
+  const byPiece = useCartSellBy(product.id) === "piece";
   const flags = useRigelFlags();
   const reduced = useMotionReduced();
   const layoutEnabled = useLayoutTransitionsEnabled();
@@ -196,10 +214,13 @@ export function Stepper({
   const label = addLabel ?? (isLg ? "Add to cart" : "ADD");
   const soldOut = product.in_stock === false;
   const inCart = qty > 0;
-  const step = product.isLoose ? 0.25 : 1;
+  // 50 g for a loose item bought by weight; 1 for pieces and packaged items.
+  const step = product.isLoose && !byPiece ? LOOSE_STEP_KG : 1;
   const atMin = inCart && qty <= step + MIN_EPSILON;
-  const looseDisplay = product.isLoose === true || !Number.isInteger(qty);
-  const display = looseDisplay ? formatQuantityDisplay(qty, product.isLoose, product.unit) : String(qty);
+  const looseDisplay = !byPiece && (product.isLoose === true || !Number.isInteger(qty));
+  const display = byPiece ? `${qty} pc` : looseDisplay ? formatQuantityDisplay(qty, product.isLoose, product.unit) : String(qty);
+  /** Weights and "3 pc" crossfade as text; plain counts roll. */
+  const textCount = looseDisplay || byPiece;
 
   const animate = !flags.legacy && !reduced;
   const morph = animate && animateLayout && layoutEnabled && !flags.noMorph;
@@ -219,10 +240,10 @@ export function Stepper({
   const controlsEnter = swap && latch.id === product.id && (latch.flipped || inCart !== latch.initialInCart);
 
   const handleAdd = useCallback(() => addToCart(product, onAdded), [product, onAdded]);
-  const handleMinus = useCallback(() => stepCart(product, -1), [product]);
-  const handlePlus = useCallback(() => stepCart(product, 1), [product]);
+  const handleMinus = useCallback(() => stepCart(product, -1, byPiece), [product, byPiece]);
+  const handlePlus = useCallback(() => stepCart(product, 1, byPiece), [product, byPiece]);
 
-  const minWidth = fullWidth ? undefined : inCart && looseDisplay ? LOOSE_MIN_WIDTH[size] : geometry.minWidth;
+  const minWidth = fullWidth ? undefined : inCart && textCount ? LOOSE_MIN_WIDTH[size] : geometry.minWidth;
   const frameStyle = [
     styles.frame,
     { height: geometry.height, minWidth },
@@ -275,7 +296,7 @@ export function Stepper({
             accessibilityLabel={`Quantity ${display}`}
             testID={testID ? `${testID}-count` : undefined}
           >
-            {looseDisplay ? (
+            {textCount ? (
               swap ? (
                 <Animated.Text
                   key={display}

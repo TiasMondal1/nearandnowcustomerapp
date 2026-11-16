@@ -45,7 +45,7 @@ import { logError } from "../../lib/logError";
 import { logSilentFailure } from "../../lib/logSilentFailure";
 import { markOrderPlaced } from "../../lib/orderHistoryFlag";
 import { cancelOrder, getOrderById, getOrderPaymentStatus, invalidateOrders, peekOrder, type Order } from "../../lib/orderService";
-import { formatQuantityDisplay } from "../../lib/quantityFormat";
+import { formatQuantityDisplay, isLooseOrderLine } from "../../lib/quantityFormat";
 import { clearSavedPaymentMethodsCache } from "../../lib/razorpayService";
 import { fetchOrderTrackingFull } from "../../lib/trackingService";
 import { payOrderWithWallet } from "../../lib/walletService";
@@ -601,7 +601,7 @@ export default function OrderDetailScreen() {
                 </Text>
               </View>
               <View style={styles.itemRight}>
-                <Text style={styles.itemQty}>×{formatQuantityDisplay(item.quantity)}</Text>
+                <Text style={styles.itemQty}>×{formatQuantityDisplay(item.quantity, isLooseOrderLine(item.quantity, item.unit), item.unit)}</Text>
                 <Text style={styles.itemTotal}>{formatMoney(item.price * item.quantity, { decimals: 2 })}</Text>
               </View>
             </View>

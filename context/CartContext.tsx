@@ -11,6 +11,7 @@ import { computeCouponDiscount, type CouponKind } from '../lib/couponMath';
 import { getDevFlag, subscribeDevFlags } from '../lib/devFlags';
 import { feedback } from '../lib/feedback';
 import { logSilentFailure } from '../lib/logSilentFailure';
+import { LOOSE_STEP_KG } from '../lib/looseQuantity';
 import { useAuth } from './AuthContext';
 
 const CART_STORAGE_KEY = 'nn_cart_items';
@@ -19,12 +20,11 @@ const COUPON_STORAGE_KEY = 'nn_cart_coupon';
 const CART_PAYLOAD_VERSION = 2;
 /** Debounce for the AsyncStorage write after a mutation; flushed early on AppState → background. */
 const PERSIST_DEBOUNCE_MS = 200;
-const LOOSE_STEP = 0.25;
 
 // Client-side ceiling only — the backend independently enforces each
 // product's own master_products.min_quantity/max_quantity at order-creation
-// time, which is the real security boundary. This is just so the cart itself
-// can never be pushed to an absurd quantity in the UI.
+// time, which is the real security boundary. A line stops at its product's
+// own limit (`maxQty`, 10 for most products) when known, else at this.
 export const MAX_QUANTITY_PER_ITEM = 99;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -36,11 +36,23 @@ export type CartItem = {
   unit?: string;
   image_url?: string;
   quantity: number;
-  // Loose/weighed products (e.g. produce sold by weight) step in 0.25 kg
-  // increments instead of whole units — matches the website cart and the
-  // backend's own validateQuantity(), which now accepts fractional
-  // quantities for these products.
+  // Loose/weighed products (e.g. produce sold by weight) step in 50 g
+  // (LOOSE_STEP_KG) instead of whole units — the backend's validateQuantity()
+  // accepts any multiple of 50 g for these products.
   isLoose?: boolean;
+  /**
+   * 'piece': a loose item bought by the piece (2026-11-16). The line then holds
+   * whole pieces (`isLoose` false), `price` is the fixed piece price, `unit` is
+   * "pc (~180 g)" and `maxQty` is in pieces. One line per product: choosing
+   * the other way (weight / pieces) on the product page replaces the line.
+   */
+  sellBy?: 'piece';
+  /**
+   * The product's max_quantity. Without it the cart allowed 99 while checkout
+   * refused anything over the product's limit (10 for most), so the customer
+   * only found out at the last step.
+   */
+  maxQty?: number;
 };
 
 export type Coupon = {
@@ -82,16 +94,22 @@ export type CartSnapshot = {
 export type CartActions = {
   /** First add → quantity = step (0.25 loose / 1 unit); existing line → +step. `isLoose` MUST be passed by callers. Plays `add` unless silent; 'max' plays nothing. */
   addItem(item: Omit<CartItem, 'quantity'>, opts?: CartMutationOptions): AddResult;
-  /** One commit, one persist. `quantity` (when given) is ADDED to an existing line or used as the new line's quantity; lines already at 99 are skipped. Silent unless `{ silent: false }`. */
+  /** One commit, one persist. `quantity` (when given) is ADDED to an existing line or used as the new line's quantity; lines already at their limit are skipped. Silent unless `{ silent: false }`. */
   addMany(items: (Omit<CartItem, 'quantity'> & { quantity?: number })[], opts?: CartMutationOptions): { added: number; skipped: number };
   /** Returns the removed line (for Undo) or null when absent. Plays `remove` unless silent. */
   removeItem(productId: string, opts?: CartMutationOptions): CartItem | null;
-  /** Undo for removeItem: re-inserts with its own quantity (clamped to 99; replaces the line if it exists). Silent unless `{ silent: false }` (then `add`). */
+  /** Undo for removeItem: re-inserts with its own quantity (clamped to its limit; replaces the line if it exists). Silent unless `{ silent: false }` (then `add`). */
   restoreItem(item: CartItem, opts?: CartMutationOptions): void;
-  /** Absolute quantity (callers computing from a render snapshot); ≤ 0 removes; clamped to 99. Silent unless `{ silent: false }`. */
+  /** Absolute quantity (callers computing from a render snapshot); ≤ 0 removes; clamped to the line's limit. Silent unless `{ silent: false }`. */
   updateQty(productId: string, qty: number, opts?: CartMutationOptions): void;
-  /** ±one step, step read from the stored line's `isLoose`; MAX 99; reaching ≤ 0 removes. +1 plays `add`, −1 plays `remove` (unless silent); 'max'/'missing' play nothing. */
-  incrementQty(productId: string, direction: 1 | -1, opts?: CartMutationOptions): IncrementResult;
+  /**
+   * Sets the product's line to exactly `item` + `quantity` (clamped to its limit), replacing any
+   * line it had — including one bought the other way (weight vs pieces). ≤ 0 removes. Returns the
+   * quantity now in the cart. Plays `add` / `remove` unless silent.
+   */
+  setLine(item: Omit<CartItem, 'quantity'>, quantity: number, opts?: CartMutationOptions): number;
+  /** ±one step, step read from the stored line's `isLoose`; stops at the line's limit (`opts.maxQty` refreshes it); reaching ≤ 0 removes. +1 plays `add`, −1 plays `remove` (unless silent); 'max'/'missing' play nothing. */
+  incrementQty(productId: string, direction: 1 | -1, opts?: CartMutationOptions & { maxQty?: number }): IncrementResult;
   /** Empties items + coupon; returns the previous `{ items, coupon }` for Undo. Plays `remove` once unless silent (nothing when already empty). */
   clearCart(opts?: CartMutationOptions): { items: CartItem[]; coupon: Coupon | null };
   /** Undo for clearCart: restores both in one commit. Silent unless `{ silent: false }`. */
@@ -99,14 +117,14 @@ export type CartActions = {
   applyCoupon(coupon: Coupon): void;
   removeCoupon(): void;
   /**
-   * Checkout-mount price revalidation: `lookup(product_id)` returns the catalog
-   * price (or undefined = unknown, left alone). Lines differing by ≥ ₹0.01 are
+   * Checkout-mount price revalidation: `lookup(product_id, line)` returns the catalog
+   * price for that line — the piece price for a by-piece line — (or undefined = unknown, left alone). Lines differing by ≥ ₹0.01 are
    * updated in ONE silent commit and returned as the drift list.
    * `Dev_Checkout_inhibit_PriceDrift` REPORTS +₹1 on the first line (drift
    * entry only — the stored price is never changed, so repeated checkout
    * focuses cannot compound it); no-op under `Dev_Kepler_inhibit_Feature`.
    */
-  revalidatePrices(lookup: (productId: string) => number | undefined): PriceDrift[];
+  revalidatePrices(lookup: (productId: string, line: CartItem) => number | undefined): PriceDrift[];
 };
 
 // ─── Module store ─────────────────────────────────────────────────────────────
@@ -117,21 +135,31 @@ let hydrated = false;
 let lastUserMutationAt = 0;
 /** product_id → quantity; the per-product subscription reads this, never `items`. */
 const qtyIndex = new Map<string, number>();
+/** product_ids whose line is bought by the piece (`useCartSellBy`); kept in step with qtyIndex by commit(). */
+const pieceIds = new Set<string>();
 const globalListeners = new Set<() => void>();
 const qtyListeners = new Map<string, Set<() => void>>();
 const EMPTY_ITEMS: CartItem[] = [];
 
-function stepFor(isLoose: boolean | undefined): number {
-  return isLoose ? LOOSE_STEP : 1;
+/** One +/- step: 50 g for a by-weight loose line, 1 for pieces and packaged items. */
+function stepFor(line: Pick<CartItem, 'isLoose' | 'sellBy'>): number {
+  return line.isLoose && line.sellBy !== 'piece' ? LOOSE_STEP_KG : 1;
 }
 
-/** Round off float drift from repeated 0.25 addition/subtraction. */
+const sameWay = (a: Pick<CartItem, 'sellBy'>, b: Pick<CartItem, 'sellBy'>) => (a.sellBy === 'piece') === (b.sellBy === 'piece');
+
+/** Round off float drift from repeated 50 g addition/subtraction (whole grams). */
 function roundQty(qty: number): number {
-  return Math.round(qty * 100) / 100;
+  return Math.round(qty * 1000) / 1000;
 }
 
-function clampQty(qty: number): number {
-  return Math.min(qty, MAX_QUANTITY_PER_ITEM);
+/** The most one line may hold: its product's limit when known, never above MAX_QUANTITY_PER_ITEM. */
+function lineCap(maxQty: number | undefined): number {
+  return maxQty != null && maxQty > 0 ? Math.min(maxQty, MAX_QUANTITY_PER_ITEM) : MAX_QUANTITY_PER_ITEM;
+}
+
+function clampQty(qty: number, maxQty?: number): number {
+  return Math.min(qty, lineCap(maxQty));
 }
 
 function buildSnapshot(): CartSnapshot {
@@ -206,14 +234,19 @@ function commit(
   const seen = new Set<string>();
   for (const line of nextItems) {
     seen.add(line.product_id);
-    if (qtyIndex.get(line.product_id) !== line.quantity) {
+    const byPiece = line.sellBy === 'piece';
+    // A switch between weight and pieces at the same number (1 kg -> 1 pc) is a change too.
+    if (qtyIndex.get(line.product_id) !== line.quantity || pieceIds.has(line.product_id) !== byPiece) {
       qtyIndex.set(line.product_id, line.quantity);
+      if (byPiece) pieceIds.add(line.product_id);
+      else pieceIds.delete(line.product_id);
       changed.push(line.product_id);
     }
   }
   for (const id of Array.from(qtyIndex.keys())) {
     if (!seen.has(id)) {
       qtyIndex.delete(id);
+      pieceIds.delete(id);
       changed.push(id);
     }
   }
@@ -323,15 +356,23 @@ function sanitizeItem(raw: unknown): CartItem | null {
   const price = typeof r.price === 'number' ? r.price : Number(r.price);
   const quantity = typeof r.quantity === 'number' ? r.quantity : Number(r.quantity);
   if (!Number.isFinite(price) || !Number.isFinite(quantity) || quantity <= 0) return null;
+  const maxQty = typeof r.maxQty === 'number' && r.maxQty > 0 ? r.maxQty : undefined;
   const line: CartItem = {
     product_id: r.product_id,
     name: r.name,
     price,
-    quantity: clampQty(roundQty(quantity)),
+    quantity: clampQty(roundQty(quantity), maxQty),
   };
+  if (maxQty != null) line.maxQty = maxQty;
   if (typeof r.unit === 'string') line.unit = r.unit;
   if (typeof r.image_url === 'string') line.image_url = r.image_url;
   if (typeof r.isLoose === 'boolean') line.isLoose = r.isLoose;
+  if (r.sellBy === 'piece') {
+    // A piece line is whole pieces; anything else in storage is not one.
+    if (!Number.isInteger(line.quantity)) return null;
+    line.sellBy = 'piece';
+    line.isLoose = false;
+  }
   return line;
 }
 
@@ -440,6 +481,11 @@ export function getCartQty(productId: string): number {
   return qtyIndex.get(productId) ?? 0;
 }
 
+export function getCartSellBy(productId: string): 'piece' | undefined {
+  if (getDevFlag('Dev_Cart_inhibit_SimulateEmpty')) return undefined;
+  return pieceIds.has(productId) ? 'piece' : undefined;
+}
+
 function getTotalQty(): number {
   return getCartSnapshot().totalQty;
 }
@@ -480,23 +526,28 @@ function withoutLine(list: CartItem[], productId: string): CartItem[] {
   return list.filter((p) => p.product_id !== productId);
 }
 
-function withQuantity(list: CartItem[], productId: string, quantity: number): CartItem[] {
-  return list.map((p) => (p.product_id === productId ? { ...p, quantity } : p));
+/** Sets a line's quantity; a known `maxQty` (fresh from the catalog) replaces the stored one. */
+function withQuantity(list: CartItem[], productId: string, quantity: number, maxQty?: number): CartItem[] {
+  return list.map((p) => (p.product_id === productId ? { ...p, quantity, ...(maxQty != null ? { maxQty } : {}) } : p));
 }
 
 /** Module-level, identity-stable — usable from lib/, screens and hosts without a hook. */
 export const cartActions: CartActions = {
   addItem(item, opts) {
     const existing = findLine(item.product_id);
-    const step = stepFor(item.isLoose);
     let result: AddResult;
     let next: CartItem[];
     if (existing) {
-      if (existing.quantity >= MAX_QUANTITY_PER_ITEM) return 'max';
-      next = withQuantity(items, item.product_id, clampQty(roundQty(existing.quantity + step)));
+      // The line keeps the way it was bought (weight or pieces): its own step, and a
+      // fresh limit only when the caller's item is the same kind of line.
+      const fresh = sameWay(existing, item) ? item.maxQty : undefined;
+      const maxQty = fresh ?? existing.maxQty;
+      if (existing.quantity >= lineCap(maxQty)) return 'max';
+      next = withQuantity(items, item.product_id, clampQty(roundQty(existing.quantity + stepFor(existing)), maxQty), fresh);
       result = 'incremented';
     } else {
-      next = [...items, { ...item, quantity: step }];
+      const step = stepFor(item);
+      next = [...items, { ...item, quantity: clampQty(step, item.maxQty) }];
       result = 'added';
     }
     commit(next, coupon, { user: true });
@@ -510,17 +561,24 @@ export const cartActions: CartActions = {
     let skipped = 0;
     for (const entry of list) {
       const { quantity, ...rest } = entry;
-      const step = stepFor(rest.isLoose);
+      const step = stepFor(rest);
       const wanted = quantity != null && Number.isFinite(quantity) && quantity > 0 ? quantity : step;
       const existing = next.find((p) => p.product_id === rest.product_id);
+      if (existing && !sameWay(existing, rest)) {
+        // Re-adding an order bought the other way (pieces vs weight): the new line replaces it.
+        next = [...withoutLine(next, rest.product_id), { ...rest, quantity: clampQty(roundQty(wanted), rest.maxQty) }];
+        added += 1;
+        continue;
+      }
       if (existing) {
-        if (existing.quantity >= MAX_QUANTITY_PER_ITEM) {
+        const maxQty = rest.maxQty ?? existing.maxQty;
+        if (existing.quantity >= lineCap(maxQty)) {
           skipped += 1;
           continue;
         }
-        next = withQuantity(next, rest.product_id, clampQty(roundQty(existing.quantity + wanted)));
+        next = withQuantity(next, rest.product_id, clampQty(roundQty(existing.quantity + wanted), maxQty), rest.maxQty);
       } else {
-        next = [...next, { ...rest, quantity: clampQty(roundQty(wanted)) }];
+        next = [...next, { ...rest, quantity: clampQty(roundQty(wanted), rest.maxQty) }];
       }
       added += 1;
     }
@@ -540,7 +598,7 @@ export const cartActions: CartActions = {
   },
 
   restoreItem(item, opts) {
-    const quantity = clampQty(roundQty(item.quantity));
+    const quantity = clampQty(roundQty(item.quantity), item.maxQty);
     if (!(quantity > 0)) return;
     const restored: CartItem = { ...item, quantity };
     const next = findLine(item.product_id)
@@ -548,6 +606,27 @@ export const cartActions: CartActions = {
       : [...items, restored];
     commit(next, coupon, { user: true });
     if (opts?.silent === false) feedback.add();
+  },
+
+  setLine(item, quantity, opts) {
+    const existing = findLine(item.product_id);
+    const wanted = clampQty(roundQty(quantity), item.maxQty);
+    if (!(wanted > 0)) {
+      if (!existing) return 0;
+      commit(withoutLine(items, item.product_id), coupon, { user: true });
+      if (!opts?.silent) feedback.remove();
+      return 0;
+    }
+    const line: CartItem = { ...item, quantity: wanted };
+    if (item.sellBy !== 'piece') delete line.sellBy;
+    if (existing && sameWay(existing, line) && existing.quantity === wanted && existing.price === line.price) return wanted;
+    const next = existing ? items.map((p) => (p.product_id === item.product_id ? line : p)) : [...items, line];
+    commit(next, coupon, { user: true });
+    if (!opts?.silent) {
+      if (!existing || wanted >= existing.quantity || !sameWay(existing, line)) feedback.add();
+      else feedback.remove();
+    }
+    return wanted;
   },
 
   updateQty(productId, qty, opts) {
@@ -558,7 +637,7 @@ export const cartActions: CartActions = {
       if (opts?.silent === false) feedback.remove();
       return;
     }
-    const clampedQty = clampQty(qty);
+    const clampedQty = clampQty(qty, existing.maxQty);
     if (clampedQty === existing.quantity) return;
     commit(withQuantity(items, productId, clampedQty), coupon, { user: true });
     if (opts?.silent === false) {
@@ -582,8 +661,9 @@ export const cartActions: CartActions = {
   incrementQty(productId, direction, opts) {
     const existing = findLine(productId);
     if (!existing) return 'missing';
-    const step = stepFor(existing.isLoose);
-    if (direction > 0 && existing.quantity >= MAX_QUANTITY_PER_ITEM) return 'max';
+    const step = stepFor(existing);
+    const maxQty = opts?.maxQty ?? existing.maxQty;
+    if (direction > 0 && existing.quantity >= lineCap(maxQty)) return 'max';
     const rounded = roundQty(existing.quantity + Math.sign(direction) * step);
     let result: IncrementResult;
     let next: CartItem[];
@@ -591,7 +671,7 @@ export const cartActions: CartActions = {
       next = withoutLine(items, productId);
       result = 'removed';
     } else {
-      next = withQuantity(items, productId, clampQty(rounded));
+      next = withQuantity(items, productId, clampQty(rounded, maxQty), opts?.maxQty);
       result = 'ok';
     }
     commit(next, coupon, { user: true });
@@ -614,7 +694,7 @@ export const cartActions: CartActions = {
     const next: CartItem[] = [];
     const seen = new Set<string>();
     for (const line of list) {
-      const quantity = clampQty(roundQty(line.quantity));
+      const quantity = clampQty(roundQty(line.quantity), line.maxQty);
       if (!(quantity > 0) || seen.has(line.product_id)) continue;
       seen.add(line.product_id);
       next.push({ ...line, quantity });
@@ -645,7 +725,7 @@ export const cartActions: CartActions = {
         drifts.push({ product_id: line.product_id, name: line.name, oldPrice: line.price, newPrice: fakePrice });
         return line;
       }
-      const newPrice = lookup(line.product_id);
+      const newPrice = lookup(line.product_id, line);
       if (
         newPrice !== undefined &&
         Number.isFinite(newPrice) &&
@@ -701,6 +781,13 @@ export function useCart(): CartSnapshot & CartActions {
 export function useCartQty(productId: string): number {
   const subscribe = useCallback((cb: () => void) => subscribeCartQty(productId, cb), [productId]);
   const read = useCallback(() => getCartQty(productId), [productId]);
+  return useSyncExternalStore(subscribe, read, read);
+}
+
+/** Whether THIS product's line is bought by the piece; re-renders with its quantity subscription. */
+export function useCartSellBy(productId: string): 'piece' | undefined {
+  const subscribe = useCallback((cb: () => void) => subscribeCartQty(productId, cb), [productId]);
+  const read = useCallback(() => getCartSellBy(productId), [productId]);
   return useSyncExternalStore(subscribe, read, read);
 }
 

@@ -6,6 +6,8 @@ import { apiFetch } from './apiClient';
 import { getDevFlag } from './devFlags';
 import { logSilentFailure } from './logSilentFailure';
 import { getMemoryHomeCache, type Product } from './productService';
+import { isPieceUnit, maxPieces, piecePrice, pieceUnitLabel } from './looseQuantity';
+import { isLooseOrderLine } from './quantityFormat';
 import { cached, invalidate, QC_KEYS } from './queryCache';
 
 // ─── User-orders SWR cache ──────────────────────────────────────────────────
@@ -174,6 +176,8 @@ export interface OrderItem {
   quantity: number;
   image?: string;
   unit?: string;
+  /** Checkout only: 'piece' = a loose item bought by the piece (the backend re-prices it). */
+  sellBy?: 'piece';
 }
 
 export interface Order {
@@ -400,6 +404,8 @@ export async function createOrder(input: CreateOrderInput): Promise<Order> {
         // request past the API's 1 MB cap. The server drops it anyway.
         image: it.image?.startsWith('data:') ? undefined : it.image,
         unit: it.unit,
+        // The backend prices a piece line at the fixed piece price and sets its unit.
+        ...(it.sellBy === 'piece' ? { sell_by: 'piece' } : {}),
       })),
       shipping_address: {
         address: addressLine?.trim() || input.delivery_address,
@@ -624,7 +630,7 @@ function approxEqual(a: number, b: number): boolean {
  * (`getCachedProduct` or a nearby-filtered map):
  * - matched in the catalog → `isLoose` + current `price` from the product, `priceChanged` when it moved
  * - `master_product_id` present but not in the catalog → the order line's price with `priceChanged: false`
- *   (`isLoose` inferred from a fractional quantity)
+ *   (`isLoose` inferred from the line: a fractional quantity or a bare "kg" unit; a "pc (~180 g)" unit = by the piece)
  * - no `master_product_id` AND no catalog match → `unavailable.push(name)`
  * Duplicate products (same item from two store orders) are merged by summing quantities.
  */
@@ -648,8 +654,29 @@ export function buildReorderItems(
       if (product) break;
     }
 
+    // A line bought by the piece carries the unit "pc (~180 g)"; it's re-added by the piece.
+    const byPiece = isPieceUnit(line.unit);
     let item: ReorderItem;
-    if (product) {
+    if (product && byPiece) {
+      // No longer sold by the piece (piece weight removed): leave it for the customer to re-pick by weight.
+      if (!product.pieceWeightG) {
+        unavailable.push(name);
+        continue;
+      }
+      const price = piecePrice(product.price, product.pieceWeightG);
+      item = {
+        product_id: product.id,
+        name: product.name,
+        price,
+        unit: pieceUnitLabel(product.pieceWeightG),
+        image_url: product.image_url,
+        isLoose: false,
+        sellBy: 'piece',
+        maxQty: maxPieces(product.maxQuantity, product.pieceWeightG),
+        quantity: qty,
+        priceChanged: !approxEqual(price, Number(line.price) || 0),
+      };
+    } else if (product) {
       item = {
         product_id: product.id,
         name: product.name,
@@ -657,6 +684,7 @@ export function buildReorderItems(
         unit: product.unit,
         image_url: product.image_url,
         isLoose: product.isLoose ?? false,
+        maxQty: product.maxQuantity,
         quantity: qty,
         priceChanged: !approxEqual(product.price, Number(line.price) || 0),
       };
@@ -667,7 +695,8 @@ export function buildReorderItems(
         price: Number(line.price) || 0,
         unit: line.unit,
         image_url: line.image,
-        isLoose: !Number.isInteger(qty),
+        isLoose: !byPiece && isLooseOrderLine(qty, line.unit),
+        ...(byPiece ? { sellBy: 'piece' as const } : {}),
         quantity: qty,
         priceChanged: false,
       };
@@ -677,6 +706,8 @@ export function buildReorderItems(
     }
 
     const existing = byProductId.get(item.product_id);
+    // One cart line per product: a second line bought the other way (weight vs pieces) is left out.
+    if (existing && (existing.sellBy === 'piece') !== (item.sellBy === 'piece')) continue;
     if (existing) {
       existing.quantity += item.quantity;
       existing.priceChanged = existing.priceChanged || item.priceChanged;

@@ -49,7 +49,7 @@ import { logSilentFailure } from "../../../lib/logSilentFailure";
 import { createAdditionPayment, verifyAdditionPayment } from "../../../lib/orderAdditionService";
 import { getOrderById, peekOrder, type Order, type OrderItem } from "../../../lib/orderService";
 import { getMemoryHomeCache, getPopularProducts, type Product } from "../../../lib/productService";
-import { formatQuantityDisplay } from "../../../lib/quantityFormat";
+import { formatQuantityDisplay, isLooseOrderLine } from "../../../lib/quantityFormat";
 import { peekNearbyProductFilter } from "../../../lib/storeService";
 import { paymentConfirmedAt } from "../../../lib/paymentConfirmedAt";
 
@@ -307,7 +307,7 @@ export default function OrderConfirmationScreen() {
 
       const paymentOrder = await createAdditionPayment(
         id,
-        items.map((it) => ({ product_id: it.product_id, quantity: it.quantity })),
+        items.map((it) => ({ product_id: it.product_id, quantity: it.quantity, ...(it.sellBy === "piece" ? { sell_by: "piece" as const } : {}) })),
         { timeoutMs: CREATE_PAYMENT_TIMEOUT_MS },
       );
 
@@ -610,8 +610,8 @@ export default function OrderConfirmationScreen() {
 
 function SummaryRow({ item, last }: { item: OrderItem; last: boolean }) {
   const uri = cdnImage(item.image, THUMB_CDN_WIDTH);
-  // Two-argument form kept on purpose (C51): order items carry no isLoose flag, so a fractional quantity is the signal.
-  const qty = formatQuantityDisplay(item.quantity);
+  // Order items carry no isLoose flag: a fractional quantity or a bare "kg" unit marks a loose line, so 2 kg reads "2 kg", not "2".
+  const qty = formatQuantityDisplay(item.quantity, isLooseOrderLine(item.quantity, item.unit), item.unit);
   const lineTotal = item.price * item.quantity;
   return (
     <View>

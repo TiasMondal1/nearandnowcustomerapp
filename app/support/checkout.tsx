@@ -69,6 +69,7 @@ import { useDeliveryEta } from "../../hooks/useDeliveryEta";
 import { useIsOnline } from "../../hooks/useIsOnline";
 import { usePaymentFlow } from "../../hooks/usePaymentFlow";
 import { useForceSkeleton } from "../../hooks/useSlowLoad";
+import { piecePrice } from "../../lib/looseQuantity";
 import { getDevFlag, useDevFlag } from "../../lib/devFlags";
 import { feedback } from "../../lib/feedback";
 import { formatMoney } from "../../lib/formatMoney";
@@ -281,7 +282,13 @@ export default function CheckoutScreen() {
   // ─── Price drift: on mount, on hydration and on every focus (kepler) ───
   const revalidatePrices = useCallback(() => {
     if (!getCartSnapshot().isHydrated) return;
-    const drifts = cartActions.revalidatePrices((id) => getCachedProduct(id)?.price);
+    // A by-piece line's price is the fixed piece price (per-kg price x piece weight).
+    const drifts = cartActions.revalidatePrices((id, line) => {
+      const product = getCachedProduct(id);
+      if (!product) return undefined;
+      if (line.sellBy !== "piece") return product.price;
+      return product.pieceWeightG ? piecePrice(product.price, product.pieceWeightG) : undefined;
+    });
     if (drifts.length > 0) {
       setDrift(drifts);
       setDriftDismissed(false);
@@ -638,6 +645,7 @@ export default function CheckoutScreen() {
         quantity: i.quantity,
         image: i.image_url,
         unit: i.unit,
+        sellBy: i.sellBy,
       })),
       notes: notesParts.length ? notesParts.join(" | ") : undefined,
       gstin: gstinClaim && gstin.trim() ? normalizeGstin(gstin) : undefined,
