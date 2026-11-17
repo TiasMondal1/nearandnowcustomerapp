@@ -171,7 +171,7 @@ export const DEV_FLAGS = {
   Dev_Home_inhibit_TileCap:        { area: 'Home', type: 'bool', default: false, label: 'Show every category tile', help: 'Disables the 8 + All cap' },
   Dev_Home_inhibit_Rails:          { area: 'Home', type: 'bool', default: false, label: 'Legacy 2×3 product blocks', help: 'Instead of horizontal rails' },
   Dev_Home_inhibit_NoStoresNearby: { area: 'Home', type: 'bool', default: false, label: 'Simulate no stores nearby', help: 'Nearby filter resolves to empty', simulates: true },
-  Dev_Home_inhibit_Catalog:        { area: 'Home', type: 'bool', default: false, label: 'Simulate empty catalog', help: 'loadMasterCatalog* resolve to []', simulates: true },
+  Dev_Home_inhibit_Catalog:        { area: 'Home', type: 'bool', default: false, label: 'Simulate empty catalog', help: 'loadMasterCatalog resolves to []', simulates: true },
   // ── Search / Category ──
   Dev_Search_inhibit_ForceError:  { area: 'Search', type: 'bool', default: false, label: 'Force search error', help: 'searchProducts throws', simulates: true },
   Dev_Category_inhibit_SortChips: { area: 'Category', type: 'bool', default: false, label: 'Hide sort chips on category page', help: 'Server order only' },

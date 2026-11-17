@@ -73,7 +73,14 @@ import { feedback } from "../../lib/feedback";
 import { prefetchImages } from "../../lib/imageUrl";
 import { clearLiveAddressCache, getLiveAddressCache, setLiveAddressCache } from "../../lib/liveAddress";
 import { logSilentFailure } from "../../lib/logSilentFailure";
-import { getMemoryOrders, getUserOrders, readUserOrdersCache, splitActivePast, type Order } from "../../lib/orderService";
+import {
+  getMemoryOrders,
+  getUserOrders,
+  readUserOrdersCache,
+  refreshActiveOrders,
+  splitActivePast,
+  type Order,
+} from "../../lib/orderService";
 import {
   comparePopularity,
   getCountForCategoryName,
@@ -225,7 +232,7 @@ function deriveNearbyView(cache: HomeCatalogCache, nearby: NearbyFilter): Record
 }
 
 /** One request per filter key at a time; a second caller (another location effect run, pull-to-refresh) shares it. */
-function pullCatalog(key: string, nearbyIds: Set<string> | undefined): Promise<CatalogResult> {
+function pullCatalog(key: string, nearbyIds: Set<string>): Promise<CatalogResult> {
   const existing = inFlightCatalog.get(key);
   if (existing) return existing;
   const promise: Promise<CatalogResult> = loadMasterCatalog({ nearbyIds }).finally(() => {
@@ -658,11 +665,14 @@ export default function HomeScreen() {
     }
   }, []);
 
-  /** `force` bypasses the 20 s list TTL — the poll tick must hit the network every time (W3 R1-03). */
-  const fetchOrders = useCallback((opts?: { force?: boolean }) => {
+  /**
+   * `force` bypasses the 20 s list TTL (W3 R1-03). `poll` = the active-order tick: only the orders still in progress
+   * are fetched and laid over the cached history (refreshActiveOrders; always hits the network).
+   */
+  const fetchOrders = useCallback((opts?: { force?: boolean; poll?: boolean }) => {
     if (!userId) return;
     const seq = ++ordersSeqRef.current;
-    getUserOrders(userId, { force: opts?.force })
+    (opts?.poll ? refreshActiveOrders(userId) : getUserOrders(userId, { force: opts?.force }))
       .then((orders) => {
         if (seq !== ordersSeqRef.current) return;
         lastOrdersFetchAtRef.current = Date.now();
@@ -708,7 +718,7 @@ export default function HomeScreen() {
   useEffect(() => {
     if (!userId || !focused || !appActive || !hasActiveOrders || inhibitActivePoll) return;
     if (Date.now() - lastOrdersFetchAtRef.current >= ACTIVE_ORDERS_POLL_MS) fetchOrders();
-    const id = setInterval(() => fetchOrders({ force: true }), ACTIVE_ORDERS_POLL_MS);
+    const id = setInterval(() => fetchOrders({ poll: true }), ACTIVE_ORDERS_POLL_MS);
     return () => clearInterval(id);
   }, [userId, focused, appActive, hasActiveOrders, inhibitActivePoll, fetchOrders]);
 

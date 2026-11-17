@@ -35,6 +35,7 @@ import { markOrderPlaced } from "../lib/orderHistoryFlag";
 import {
   getMemoryOrders,
   getUserOrders,
+  refreshActiveOrders,
   invalidateOrders,
   isActiveOrder,
   readUserOrdersCache,
@@ -133,7 +134,8 @@ export default function OrdersScreen() {
   const firstFocusRef = useRef(true);
 
   const fetchOrders = useCallback(
-    async (opts?: { force?: boolean; background?: boolean }) => {
+    // `poll` = the active-order tick: only orders still in progress are fetched and laid over the cached history.
+    async (opts?: { force?: boolean; background?: boolean; poll?: boolean }) => {
       if (!userId) {
         setOrders([]);
         setLoading(false);
@@ -141,7 +143,7 @@ export default function OrdersScreen() {
       }
       const seq = ++seqRef.current;
       try {
-        const data = await getUserOrders(userId, { force: opts?.force });
+        const data = opts?.poll ? await refreshActiveOrders(userId) : await getUserOrders(userId, { force: opts?.force });
         if (seq !== seqRef.current) return;
         setOrders((prev) => (sameOrders(prev, data) ? prev : data));
         setError(null);
@@ -206,7 +208,7 @@ export default function OrdersScreen() {
   // (otherwise a tick inside the TTL window would just return the cached list).
   useEffect(() => {
     if (!userId || !hasActive || !focused || !appActive || inhibitPoll || inhibitFeature) return;
-    const intervalId = setInterval(() => fetchOrders({ force: true, background: true }), ACTIVE_POLL_MS);
+    const intervalId = setInterval(() => fetchOrders({ poll: true, background: true }), ACTIVE_POLL_MS);
     return () => clearInterval(intervalId);
   }, [userId, hasActive, focused, appActive, inhibitPoll, inhibitFeature, fetchOrders]);
 

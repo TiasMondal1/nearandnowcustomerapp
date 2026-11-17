@@ -8,7 +8,7 @@ import { logSilentFailure } from './logSilentFailure';
 import { getMemoryHomeCache, type Product } from './productService';
 import { isPieceUnit, maxPieces, piecePrice, pieceUnitLabel } from './looseQuantity';
 import { isLooseOrderLine } from './quantityFormat';
-import { cached, invalidate, QC_KEYS } from './queryCache';
+import { cached, invalidate, peek, QC_KEYS, setCached } from './queryCache';
 
 // ─── User-orders SWR cache ──────────────────────────────────────────────────
 // Keyed per user so switching accounts on the same device doesn't cross
@@ -858,6 +858,42 @@ export async function getUserOrders(userId: string, opts?: { force?: boolean }):
 
   if (gen === mirrorGen) rememberOrders(orders);
   return orders;
+}
+
+/**
+ * The 20 s poll while an order is in progress (Home, Orders). It used to re-download the whole history, every item
+ * of every past order, on each tick; now it asks only for the orders still in progress (`?active=true`, the same
+ * rows minus delivered/cancelled) and lays them over the cached history (review 2026-11-17).
+ *
+ * Falls back to one full fetch (`getUserOrders` with `force`) when the cached history can't be patched: nothing
+ * cached yet, an order that was in progress is no longer (delivered or cancelled: its final state is needed), or an
+ * order in progress isn't in the history yet (placed on another device). Dev order flags also take the full path.
+ */
+export async function refreshActiveOrders(userId: string): Promise<Order[]> {
+  if (!userId) return [];
+  const key = QC_KEYS.orders(userId);
+  const history = peek<Order[]>(key);
+  if (!history || getDevFlag('Dev_Orders_inhibit_History') || getDevFlag('Dev_Orders_inhibit_SimulateActive')) {
+    return getUserOrders(userId, { force: true });
+  }
+
+  const gen = mirrorGen;
+  const rows = await apiFetch<BackendCustomerOrder[]>(
+    `/api/orders/customer/${encodeURIComponent(userId)}?active=true`,
+  );
+  const inProgress = Array.isArray(rows) ? rows.map(mapBackendOrder) : [];
+  const freshById = new Map(inProgress.map((o) => [o.id, o]));
+  const known = new Set(history.map((o) => o.id));
+  const setChanged =
+    inProgress.some((o) => !known.has(o.id)) || history.some((o) => isActiveOrder(o) && !freshById.has(o.id));
+  if (setChanged) return getUserOrders(userId, { force: true });
+
+  const merged = history.map((o) => freshById.get(o.id) ?? o);
+  if (gen !== mirrorGen) return merged; // logged out meanwhile: never repopulate the caches
+  setCached(key, merged, { ttlMs: ORDERS_LIST_TTL_MS, userScope: true });
+  rememberOrders(merged);
+  writeUserOrdersCache(userId, merged).catch((err) => logSilentFailure('Write user-orders cache', err));
+  return merged;
 }
 
 // ─── Delivery OTP ────────────────────────────────────────────────────────────

@@ -111,45 +111,19 @@ interface MasterProductRow {
   [key: string]: unknown;
 }
 
-async function fetchAllMasterProductRows(
-  fields: string = MASTER_PRODUCT_FIELDS,
-  nearbyIds?: Set<string>,
-): Promise<MasterProductRow[]> {
-  // If a nearby filter was requested but no stores are nearby, return nothing.
-  if (nearbyIds !== undefined && nearbyIds.size === 0) return [];
-
-  // Nearby subset: one query per ≤ 150-id chunk (each returns ≤ 150 rows, so no paging is needed).
-  if (nearbyIds) {
-    return selectInChunks(
-      nearbyIds,
-      Number.MAX_SAFE_INTEGER,
-      (chunk) => supabase.from('master_products').select(fields).eq('is_active', true).in('id', chunk),
-      'Database error',
-    );
-  }
-
-  const allRows: MasterProductRow[] = [];
-  let from = 0;
-  // Supabase default row cap per request is 1000. Use the full window to minimize
-  // round-trips (fewer network hops = faster cold boot).
-  const batchSize = 1000;
-  let hasMore = true;
-  while (hasMore) {
-    const q = supabase
-      .from('master_products')
-      .select(fields)
-      .eq('is_active', true);
-    const { data, error } = await q.range(from, from + batchSize - 1);
-    if (error) throw new Error(`Database error: ${error.message}`);
-    if (data && data.length > 0) {
-      allRows.push(...(data as unknown as MasterProductRow[]));
-      from += batchSize;
-      hasMore = data.length === batchSize;
-    } else {
-      hasMore = false;
-    }
-  }
-  return allRows;
+/**
+ * The active catalogue rows for `ids`: one query per ≤ 150-id chunk (each returns ≤ 150 rows, so no paging).
+ * Always by id: there is no "whole catalogue" read any more. It paged through all ~16,000 products (≈ 7.4 MB) to
+ * keep the ~100 some shop stocks (review 2026-11-17); callers pass the stocked or nearby ids.
+ */
+async function fetchAllMasterProductRows(fields: string, ids: Set<string>): Promise<MasterProductRow[]> {
+  if (ids.size === 0) return [];
+  return selectInChunks(
+    ids,
+    Number.MAX_SAFE_INTEGER,
+    (chunk) => supabase.from('master_products').select(fields).eq('is_active', true).in('id', chunk),
+    'Database error',
+  );
 }
 
 function parseNum(v: number | string | null | undefined): number {
@@ -308,7 +282,7 @@ export function comparePopularity(a: Product, b: Product): number {
 /**
  * Pure: groups by `product.category` (empty → 'Uncategorized') and sorts each
  * group by `comparePopularity`. Input is never mutated. Used by
- * `loadMasterCatalog*`, the v2 cache read/write and Home's in-memory nearby view.
+ * `loadMasterCatalog`, the v2 cache read/write and Home's in-memory nearby view.
  */
 export function groupProductsByCategory(products: Product[]): Record<string, Product[]> {
   const byCategory: Record<string, Product[]> = {};
@@ -334,8 +308,9 @@ type CatalogResult = {
  * (`undefined` = whole platform, empty Set = nothing).
  * `Dev_Home_inhibit_Catalog` → `{ products: [], productsByCategory: {}, categories }` without a product request.
  */
-export async function loadMasterCatalog(options?: {
-  nearbyIds?: Set<string>;
+/** The catalogue for `nearbyIds` (the stocked or nearby product ids; empty → no products) plus every category. */
+export async function loadMasterCatalog(options: {
+  nearbyIds: Set<string>;
 }): Promise<CatalogResult> {
   if (getDevFlag('Dev_Home_inhibit_Catalog')) {
     const categories = await getAllCategories();
@@ -344,63 +319,18 @@ export async function loadMasterCatalog(options?: {
   // Home catalog does NOT need description text — use the lean field list to shave
   // payload + parse cost noticeably.
   const [rows, categories] = await Promise.all([
-    fetchAllMasterProductRows(HOME_PRODUCT_FIELDS, options?.nearbyIds),
+    fetchAllMasterProductRows(HOME_PRODUCT_FIELDS, options.nearbyIds),
     getAllCategories(),
   ]);
   const products = rows.map(masterRowToProduct);
   return { products, productsByCategory: groupProductsByCategory(products), categories };
 }
 
-async function getAllProductsRaw(options?: {
-  nearbyIds?: Set<string>;
+async function getAllProductsRaw(options: {
+  nearbyIds: Set<string>;
 }): Promise<Product[]> {
-  const rows = await fetchAllMasterProductRows(MASTER_PRODUCT_FIELDS, options?.nearbyIds);
+  const rows = await fetchAllMasterProductRows(MASTER_PRODUCT_FIELDS, options.nearbyIds);
   return rows.map(masterRowToProduct);
-}
-
-/**
- * Cold-start fast path: the top `limit` (default 500) most-popular in-stock
- * products in a SINGLE round-trip (no pagination). The home screen renders
- * the top few per category, so 500 rows fills every section above the fold;
- * the full catalog is then loaded in the background.
- * `Dev_Home_inhibit_Catalog` → empty products with the category list.
- */
-export async function loadMasterCatalogFast(
-  limit: number = 500,
-  nearbyIds?: Set<string>,
-): Promise<CatalogResult> {
-  if (getDevFlag('Dev_Home_inhibit_Catalog')) {
-    const categories = await getAllCategories();
-    return { products: [], productsByCategory: {}, categories };
-  }
-  // If a nearby filter was requested but no stores are nearby, return nothing.
-  if (nearbyIds !== undefined && nearbyIds.size === 0) {
-    const categories = await getAllCategories();
-    return { products: [], productsByCategory: {}, categories };
-  }
-
-  const popular = (ids?: string[]) => {
-    let q = supabase
-      .from('master_products')
-      .select(HOME_PRODUCT_FIELDS)
-      .eq('is_active', true);
-    if (ids) q = q.in('id', ids);
-    return q
-      .order('rating_count', { ascending: false, nullsFirst: false })
-      .order('created_at', { ascending: false })
-      .limit(limit);
-  };
-  const [rows, categories] = await Promise.all([
-    nearbyIds
-      ? selectInChunks(nearbyIds, limit, (chunk) => popular(chunk), 'Database error')
-      : popular().then(({ data, error }) => {
-          if (error) throw new Error(`Database error: ${error.message}`);
-          return ((data || []) as unknown as MasterProductRow[]).sort(compareCatalogRows);
-        }),
-    getAllCategories(),
-  ]);
-  const products = rows.map(masterRowToProduct);
-  return { products, productsByCategory: groupProductsByCategory(products), categories };
 }
 
 /**
@@ -868,7 +798,7 @@ export function prefetchHomeImages(): void {
 // keep the catalogue price.
 
 /** Every active master product (optionally only nearby ones), with today's loose prices. */
-export async function getAllProducts(options?: { nearbyIds?: Set<string> }): Promise<Product[]> {
+export async function getAllProducts(options: { nearbyIds: Set<string> }): Promise<Product[]> {
   return withLoosePrices(await getAllProductsRaw(options));
 }
 
