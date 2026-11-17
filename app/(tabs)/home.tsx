@@ -19,6 +19,7 @@
 // TabHeader is item 0 and the STICKY cell is now INDEX 1 (`stickyHeaderIndices={[1]}` — it was index 0 while the
 // address bar was a `ListHeaderComponent`). The "no location ⇒ clear catalog ⇒ empty state" and "empty Set ⇒ No
 // stores near you" branches are intact, and every async writer is guarded by a sequence ref + `cancelled`.
+import { withLoosePrices } from "../../lib/loosePricing";
 import { FlashList, type FlashListRef, type ListRenderItemInfo, type ViewToken } from "@shopify/flash-list";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
@@ -219,7 +220,8 @@ function useHomeUi<K extends keyof HomeUi>(key: K): HomeUi[K] {
 /** The nearby view: the global product set restricted to what nearby stores carry, grouped like the service does. */
 function deriveNearbyView(cache: HomeCatalogCache, nearby: NearbyFilter): Record<string, Product[]> {
   const ids = nearby.productIds;
-  return groupProductsByCategory(cache.products.filter((p) => ids.has(p.id)));
+  // Today's loose prices for this location (lib/loosePricing.ts).
+  return groupProductsByCategory(withLoosePrices(cache.products.filter((p) => ids.has(p.id))));
 }
 
 /** One request per filter key at a time; a second caller (another location effect run, pull-to-refresh) shares it. */
@@ -437,7 +439,7 @@ export default function HomeScreen() {
       });
       if (seq !== seqRef.current || !nearby || nearby.storeIds.length === 0) return;
       const ids = nearby.productIds;
-      paintView(seq, groupProductsByCategory(result.products.filter((p) => ids.has(p.id))), result.categories);
+      paintView(seq, groupProductsByCategory(withLoosePrices(result.products.filter((p) => ids.has(p.id)))), result.categories);
     },
     [paintView],
   );

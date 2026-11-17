@@ -16,6 +16,7 @@ import { useIsOnline } from "../../hooks/useIsOnline";
 import { useDevFlag } from "../../lib/devFlags";
 import { logSilentFailure } from "../../lib/logSilentFailure";
 import { getAllProducts, getCachedProduct, getMemoryHomeCache, type Product } from "../../lib/productService";
+import { withLoosePrices } from "../../lib/loosePricing";
 import { getNearbyProductFilter } from "../../lib/storeService";
 import { PRODUCT_CARD, ProductCard } from "../ui";
 
@@ -147,7 +148,8 @@ function DidYouForgetStripBase({ cartSig, locKey, style, testID }: DidYouForgetS
         let pool: Product[];
         let lookup: (id: string) => Product | undefined;
         if (cache) {
-          pool = cache.products;
+          // Today's loose prices for this location (getCachedProduct already carries them).
+          pool = withLoosePrices(cache.products);
           lookup = getCachedProduct;
         } else {
           pool = await getAllProducts({ nearbyIds });

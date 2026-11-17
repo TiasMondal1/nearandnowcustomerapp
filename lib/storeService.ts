@@ -4,6 +4,7 @@ import { calculateDistance } from './distanceUtils';
 import { logSilentFailure } from './logSilentFailure';
 import { cached, invalidate, peek, QC_KEYS, seedFromDisk } from './queryCache';
 import { supabase } from './supabase';
+import { setLoosePrices } from './loosePricing';
 
 export interface NearbyStore {
   id: string;
@@ -27,6 +28,8 @@ export type NearbyFilter = {
   productIds: Set<string>;
   nearestKm: number | null;
   nearestStoreName: string | null;
+  /** Today's price per kg of each loose item here: the area price of the nearest shop that has it (2026-11-17). */
+  loosePrices: ReadonlyMap<string, number>;
 };
 
 /** `${lat.toFixed(3)},${lng.toFixed(3)}` (~110 m grid) — the location key shared by the nearby cache and the ETA source. */
@@ -176,10 +179,35 @@ type NearbyPayload = {
   productIds: string[];
   nearestKm: number | null;
   nearestStoreName: string | null;
+  /** master product id → today's loose price here (loose_prices_near). */
+  loosePrices: Record<string, number>;
+  /** India date the loose prices are for: they change at midnight. */
+  priceDate: string;
 };
 
 const NEARBY_TTL_MS = 300_000;
-const NEARBY_PERSIST = { key: 'nn:qc:nearby', version: 1, maxAgeMs: 86_400_000 } as const;
+// v2 (2026-11-17): the payload carries today's loose prices.
+const NEARBY_PERSIST = { key: 'nn:qc:nearby', version: 2, maxAgeMs: 86_400_000 } as const;
+
+/** India's date today (UTC+5:30, no daylight saving). */
+function istToday(now: number = Date.now()): string {
+  return new Date(now + 330 * 60_000).toISOString().slice(0, 10);
+}
+
+/** Today's loose prices near a point; {} if the call fails (checkout re-prices on the server anyway). */
+async function fetchLoosePricesNear(lat: number, lng: number, radiusKm: number): Promise<Record<string, number>> {
+  const { data, error } = await supabase.rpc('loose_prices_near', { p_lat: lat, p_lng: lng, p_radius_km: radiusKm });
+  if (error) {
+    logSilentFailure('Fetch loose prices', error);
+    return {};
+  }
+  const out: Record<string, number> = {};
+  for (const r of (data ?? []) as { master_product_id: string; price: number | string | null }[]) {
+    const n = Number(r.price);
+    if (r.price != null && Number.isFinite(n) && n > 0) out[r.master_product_id] = n;
+  }
+  return out;
+}
 const DEV_ALL_STORES_NAME = 'All stores (dev)';
 
 /** One `NearbyFilter` (and therefore one `Set`) per payload object → stable identity across calls. */
@@ -193,6 +221,7 @@ function toFilter(payload: NearbyPayload): NearbyFilter {
       productIds: new Set(payload.productIds),
       nearestKm: payload.nearestKm,
       nearestStoreName: payload.nearestStoreName,
+      loosePrices: new Map(Object.entries(payload.loosePrices ?? {})),
     };
     filterByPayload.set(payload, filter);
   }
@@ -211,9 +240,11 @@ function cacheKeyFor(lat: number, lng: number, radiusKm: number): string {
 }
 
 async function fetchNearbyPayload(lat: number, lng: number, radiusKm: number): Promise<NearbyPayload> {
+  // The loose prices don't depend on the store list: fetched alongside it.
+  const loosePricesP = fetchLoosePricesNear(lat, lng, radiusKm);
   const stores = await fetchNearbyStoresOrThrow(lat, lng, radiusKm);
   const storeIds = stores.map((s) => s.id);
-  const productIds = await getMasterProductIdsForStores(storeIds);
+  const [productIds, loosePrices] = await Promise.all([getMasterProductIdsForStores(storeIds), loosePricesP]);
   const nearest = stores[0];
   return {
     locationKey: nearbyKey(lat, lng),
@@ -221,6 +252,8 @@ async function fetchNearbyPayload(lat: number, lng: number, radiusKm: number): P
     productIds: Array.from(productIds),
     nearestKm: nearest ? round2(nearest.distanceKm) : null,
     nearestStoreName: nearest ? nearest.name : null,
+    loosePrices,
+    priceDate: istToday(),
   };
 }
 
@@ -239,6 +272,7 @@ const EMPTY_FILTER: NearbyFilter = Object.freeze({
   productIds: new Set<string>(),
   nearestKm: null,
   nearestStoreName: null,
+  loosePrices: new Map<string, number>(),
 });
 
 function emptyFilter(): NearbyFilter {
@@ -251,7 +285,7 @@ const devFilterByIds = new WeakMap<Set<string>, NearbyFilter>();
 function devAllStoresFilter(productIds: Set<string>): NearbyFilter {
   let filter = devFilterByIds.get(productIds);
   if (!filter) {
-    filter = { storeIds: ['*'], productIds, nearestKm: 1, nearestStoreName: DEV_ALL_STORES_NAME };
+    filter = { storeIds: ['*'], productIds, nearestKm: 1, nearestStoreName: DEV_ALL_STORES_NAME, loosePrices: new Map() };
     devFilterByIds.set(productIds, filter);
   }
   return filter;
@@ -297,11 +331,13 @@ export async function getNearbyProductFilter(
   const key = cacheKeyFor(lat, lng, radiusKm);
   const fetcher = () => fetchNearbyPayload(lat, lng, radiusKm);
   let payload = await cached<NearbyPayload>(key, fetcher, { ttlMs: NEARBY_TTL_MS, persist: NEARBY_PERSIST });
-  if (payload.locationKey !== locationKey) {
+  // Another location's row, or yesterday's loose prices (they change at midnight): fetch again.
+  if (payload.locationKey !== locationKey || payload.priceDate !== istToday()) {
     payload = await cached<NearbyPayload>(key, fetcher, { ttlMs: NEARBY_TTL_MS, persist: NEARBY_PERSIST, force: true });
   }
 
   const filter = toFilter(payload);
+  setLoosePrices(filter.loosePrices);
   publishEta(locationKey, filter);
   return filter;
 }
@@ -321,7 +357,10 @@ export function peekNearbyProductFilter(lat: number, lng: number): NearbyFilter 
   }
   const payload = peek<NearbyPayload>(QC_KEYS.nearby(lat, lng));
   if (!payload || payload.locationKey !== nearbyKey(lat, lng)) return undefined;
-  return toFilter(payload);
+  const filter = toFilter(payload);
+  // First paint: yesterday's loose prices are never shown (the async call refetches them).
+  setLoosePrices(payload.priceDate === istToday() ? filter.loosePrices : new Map());
+  return filter;
 }
 
 /**

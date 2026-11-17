@@ -3,6 +3,7 @@
 // SuccessHeader plays the single `success` feedback per order id for every payment mode; the add-more window charges
 // ONLY through its explicit "Pay ₹X to add N items" button (MAP C14 / §7.16 — the 30 s auto-run effect is gone);
 // suggestions come from the warm catalog cache (0 catalog requests); the countdown ticks inside AddMoreWindow alone.
+import { withLoosePrices } from "../../../lib/loosePricing";
 import { useRazorpay, type RazorpayErrorResponse, type RazorpaySuccessResponse } from "@codearcade/expo-razorpay";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
@@ -122,7 +123,7 @@ function pickSuggestions(order: Order | null, location: ActiveLocation | null): 
   const nearby = peekNearbyProductFilter(location.latitude, location.longitude);
   if (nearby) {
     const products = getMemoryHomeCache()?.products ?? [];
-    const available = products.filter((p) => nearby.productIds.has(p.id) && eligible(p));
+    const available = withLoosePrices(products.filter((p) => nearby.productIds.has(p.id) && eligible(p)));
     // Fisher-Yates — `sort(() => Math.random() - 0.5)` is a classic
     // biased-shuffle bug (comparator-based sorts don't guarantee a
     // uniform random permutation from an inconsistent comparator).

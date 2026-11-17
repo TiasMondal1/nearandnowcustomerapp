@@ -6,6 +6,7 @@ import { prefetchImages } from './imageUrl';
 import { logSilentFailure } from './logSilentFailure';
 import { getAllActiveProductIds } from './storeService';
 import { supabase } from './supabase';
+import { withLoosePrice, withLoosePrices } from './loosePricing';
 
 // Real schema columns for popularity sorting are `rating` and `rating_count`
 // (NOT `avg_rating` / `review_count`); see `popularityScore` for how they combine.
@@ -350,7 +351,7 @@ export async function loadMasterCatalog(options?: {
   return { products, productsByCategory: groupProductsByCategory(products), categories };
 }
 
-export async function getAllProducts(options?: {
+async function getAllProductsRaw(options?: {
   nearbyIds?: Set<string>;
 }): Promise<Product[]> {
   const rows = await fetchAllMasterProductRows(MASTER_PRODUCT_FIELDS, options?.nearbyIds);
@@ -408,7 +409,7 @@ export async function loadMasterCatalogFast(
  * Order: popularity (`compareCatalogRows`) — the category screen's "Popular" sort.
  * `.limit(1000)` makes PostgREST's silent cap explicit (rev. 2).
  */
-export async function getProductsByCategory(
+async function getProductsByCategoryRaw(
   categoryName: string,
   options?: { nearbyIds?: Set<string> },
 ): Promise<Product[]> {
@@ -461,7 +462,7 @@ export async function getProductsByCategory(
  * filter-grammar characters (C28). `Dev_Search_inhibit_ForceError` throws
  * 'Search is unavailable right now.' so screens can show their error state.
  */
-export async function searchProducts(
+async function searchProductsRaw(
   query: string,
   options?: { nearbyIds?: Set<string> },
 ): Promise<Product[]> {
@@ -567,7 +568,7 @@ export function getProductsForCategoryName(
   const categoryName = typeof a === 'string' ? a : (b as string);
   const byCategory = typeof a === 'string' ? (b as Record<string, Product[]>) : a;
   if (!byCategory) return EMPTY_PRODUCTS;
-  return normalisedCategoryMap(byCategory).get(categoryName.toLowerCase().trim()) ?? EMPTY_PRODUCTS;
+  return withLoosePrices(normalisedCategoryMap(byCategory).get(categoryName.toLowerCase().trim()) ?? EMPTY_PRODUCTS);
 }
 
 /**
@@ -600,7 +601,7 @@ const UNDEFINED_COLUMN = '42703';
 /** Set once the database answered 42703 for additional_images; later fetches skip the column. */
 let detailColumnMissing = false;
 
-export async function getProductById(masterProductId: string): Promise<Product | null> {
+async function getProductByIdRaw(masterProductId: string): Promise<Product | null> {
   const cachedProduct = getCachedProduct(masterProductId);
   try {
     if (!cachedProduct) {
@@ -818,7 +819,8 @@ export function getCachedProduct(id: string): Product | undefined {
     productIndex = next;
     productIndexFor = cache;
   }
-  return productIndex.get(id);
+  const hit = productIndex.get(id);
+  return hit ? withLoosePrice(hit) : undefined;
 }
 
 let popularFor: HomeCatalogCache | null = null;
@@ -836,7 +838,7 @@ export function getPopularProducts(limit: number = 20): Product[] {
     popularOrder = cache.products.slice().sort(comparePopularity);
     popularFor = cache;
   }
-  return popularOrder.slice(0, Math.max(0, limit));
+  return withLoosePrices(popularOrder.slice(0, Math.max(0, limit)));
 }
 
 /**
@@ -858,4 +860,30 @@ export function prefetchHomeImages(): void {
     for (const p of products.slice(0, 3)) urls.push(p.image_url);
   }
   if (urls.length > 0) prefetchImages(urls, 240);
+}
+
+/* ───────────── Daily loose prices (2026-11-17) ───────────── */
+// Every product read below carries today's loose price for the customer's
+// location (lib/loosePricing.ts); the raw readers and the cached catalogue
+// keep the catalogue price.
+
+/** Every active master product (optionally only nearby ones), with today's loose prices. */
+export async function getAllProducts(options?: { nearbyIds?: Set<string> }): Promise<Product[]> {
+  return withLoosePrices(await getAllProductsRaw(options));
+}
+
+/** A category's products, with today's loose prices. */
+export async function getProductsByCategory(categoryName: string, options?: { nearbyIds?: Set<string> }): Promise<Product[]> {
+  return withLoosePrices(await getProductsByCategoryRaw(categoryName, options));
+}
+
+/** Search results, with today's loose prices. */
+export async function searchProducts(query: string, options?: { nearbyIds?: Set<string> }): Promise<Product[]> {
+  return withLoosePrices(await searchProductsRaw(query, options));
+}
+
+/** One product, with today's loose price. */
+export async function getProductById(masterProductId: string): Promise<Product | null> {
+  const p = await getProductByIdRaw(masterProductId);
+  return p ? withLoosePrice(p) : null;
 }

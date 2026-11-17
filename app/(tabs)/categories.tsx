@@ -4,6 +4,7 @@
 // Tiles are 4-up, r14, flat, on the cream ground; no wash panels or doodle layers. Tile presses are navigation and
 // therefore silent; pull-to-refresh plays the tap tick (CONTRACTS §8). No codename header: the tab itself has
 // none in CONTRACTS §10 — the TabHeader it mounts carries atlas.
+import { withLoosePrices } from "../../lib/loosePricing";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { router, useFocusEffect } from "expo-router";
@@ -74,7 +75,7 @@ function countsFromCache(cache: HomeCatalogCache | null, location: ActiveLocatio
     const nearby = peekNearbyProductFilter(location.latitude, location.longitude);
     if (nearby) {
       const ids = nearby.productIds;
-      byCategory = groupProductsByCategory(cache.products.filter((p) => ids.has(p.id)));
+      byCategory = groupProductsByCategory(withLoosePrices(cache.products.filter((p) => ids.has(p.id))));
     }
   }
   const counts: Counts = {};

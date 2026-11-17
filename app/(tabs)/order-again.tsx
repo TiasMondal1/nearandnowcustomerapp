@@ -9,6 +9,7 @@
 // (MAP C15) so "See all" never 404s. Feedback: Add all → cartActions.addMany silent + ONE feedback.add() + a toast
 // with Undo (silent); chips → Chip's own select haptic; pull-to-refresh → tapSound; everything that only navigates is
 // silent. Nothing here subscribes to the whole cart — each ProductCard's Stepper subscribes to its own quantity.
+import { withLoosePrice } from "../../lib/loosePricing";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
 import { Image } from "expo-image";
@@ -249,7 +250,9 @@ function buildDisplayItems(orders: Order[] | null, index: CatalogIndex): Display
   const seen = new Set<string>();
   const out: DisplayItem[] = [];
   for (const it of orderItems) {
-    const product = (it.masterProductId ? index.byId.get(it.masterProductId) : undefined) ?? matchByName(index, it);
+    const found = (it.masterProductId ? index.byId.get(it.masterProductId) : undefined) ?? matchByName(index, it);
+    // Today's loose price for this location (lib/loosePricing.ts).
+    const product = found ? withLoosePrice(found) : undefined;
     if (product) {
       if (seen.has(product.id)) continue;
       seen.add(product.id);
