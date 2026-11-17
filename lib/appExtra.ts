@@ -54,6 +54,16 @@ export function getAppVersion(): { version: string; build: string } {
   return { version, build };
 }
 
+/**
+ * The installed binary's build number (Android versionCode). EAS assigns it (`appVersionSource: remote`), so it is
+ * read from the binary, never from app.config. `null` on web, in Expo Go or when unknown.
+ */
+export function getNativeBuildNumber(): number | null {
+  const raw = safeNative(() => Application.nativeBuildVersion);
+  const n = raw == null ? NaN : Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
 /** Normalised from `extra.buildProfile`; anything unknown (including unset) → 'local'. */
 export function getBuildProfile(): BuildProfile {
   const raw = getAppExtra().buildProfile;

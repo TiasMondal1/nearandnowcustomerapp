@@ -428,11 +428,15 @@ export default function HomeScreen() {
    */
   const refreshGlobal = useCallback(
     async (seq: number, nearby: NearbyFilter | null) => {
-      // The whole platform catalog in one paged pull, then restricted to the active-id set IN MEMORY — never
-      // `.in('id', <every active id>)`, which blows the 16 KB URL limit on a dense platform (MAP §7.11 C6, W3 R1-05).
-      const [activeIds, raw] = await Promise.all([getAllActiveProductIds(), pullCatalog("global", undefined)]);
-      const result: CatalogResult =
-        activeIds.size > 0 ? { ...raw, products: raw.products.filter((p) => activeIds.has(p.id)) } : raw;
+      // Only the products some live shop stocks, fetched by id in ≤ 150-id chunks (one request per chunk, so the URL
+      // stays far under the 16 KB limit — MAP §7.11 C6, W3 R1-05). It used to page through the WHOLE platform
+      // catalogue (16,110 rows, ~7.4 MB of JSON in 17 sequential requests) every 5 minutes to keep ~100 of them
+      // (review 2026-11-17).
+      const activeIds = await getAllActiveProductIds();
+      // Empty = no live shop anywhere, or the id read failed with nothing cached: keep what is on screen and in the
+      // cache (the nearby view already shows "no shops" when that is the truth).
+      if (activeIds.size === 0) return;
+      const result: CatalogResult = await pullCatalog("global", activeIds);
       // JSON.stringify of a few thousand rows is JS-thread work — keep it off the paint.
       InteractionManager.runAfterInteractions(() => {
         void writeHomeCatalogCache({ products: result.products, categories: result.categories });

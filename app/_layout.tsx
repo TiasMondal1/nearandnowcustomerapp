@@ -22,6 +22,7 @@ import { SafeAreaInsetsContext, SafeAreaProvider, useSafeAreaInsets } from "reac
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { NavReadyProbe } from "../components/NavReadyProbe";
 import { PushBootstrap } from "../components/PushBootstrap";
+import { UpdateRequiredGate } from "../components/UpdateRequiredGate";
 import { CartBar, MotionConfig, OfflineBanner, ToastHost, useMotionReduced } from "../components/ui";
 import { C } from "../constants/colors";
 import { motion } from "../constants/ui";
@@ -252,6 +253,8 @@ function AppShell() {
               <PushBootstrap userId={userId} />
               {/* Boot gate from the root navigation state for URL cold starts where index never mounts (W3 R6-09). */}
               <NavReadyProbe />
+              {/* Above everything: an install below the server's minimum build is asked to update (2026-11-17). */}
+              <UpdateRequiredGate />
             </View>
           </DevModeProvider>
         </ProfileMenuProvider>

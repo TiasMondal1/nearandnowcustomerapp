@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
 
+import { getNativeBuildNumber } from './appExtra';
 import { getDevFlag } from './devFlags';
 import { reportRequestFailure } from './reportHandled';
 
@@ -10,6 +11,12 @@ import { reportRequestFailure } from './reportHandled';
 export const OFFLINE_MESSAGE = 'No internet connection. Please check your network and try again.';
 export const TIMEOUT_MESSAGE = 'Request timeout. Please check your internet connection and try again.';
 export const SERVER_ERROR_MESSAGE = 'Server error. Please try again later.';
+
+/** This binary's build number for the `X-App-Build` header (read once; `null` on web / Expo Go). */
+const appBuildHeader: string | null = (() => {
+  const build = getNativeBuildNumber();
+  return build == null ? null : String(build);
+})();
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -289,6 +296,9 @@ export async function apiFetch<T>(path: string, options?: ApiFetchOptions): Prom
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          // Lets the server tell this build from ones too old for today's loose prices (checkout answers those
+          // with "please update the app").
+          ...(appBuildHeader ? { 'X-App-Build': appBuildHeader } : {}),
           ...(init.headers as Record<string, string> | undefined),
         },
       },
