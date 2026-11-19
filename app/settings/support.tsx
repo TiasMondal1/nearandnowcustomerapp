@@ -3,6 +3,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useState } from "react";
 import { Linking, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { BrandSignOff } from "../../components/brand";
 import {
   ChevronRotate,
   Collapsible,
@@ -111,6 +112,15 @@ export default function SupportScreen() {
       <ScreenHeader title="Support" backFallbackHref="/(tabs)/home" />
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+        <View style={styles.intro}>
+          <Text style={styles.introTitle} accessibilityRole="header" maxFontSizeMultiplier={1.3}>
+            We&apos;re here to help
+          </Text>
+          <Text style={styles.introBody} maxFontSizeMultiplier={1.3}>
+            Chat, call or email us. We&apos;ll sort it out.
+          </Text>
+        </View>
+
         {orderRef ? (
           <View style={styles.orderBand}>
             <Text style={styles.orderBandText}>About order #{orderRef}</Text>
@@ -175,6 +185,8 @@ export default function SupportScreen() {
             accessibilityLabel="Escalate an issue by email"
           />
         </View>
+
+        <BrandSignOff style={styles.signOff} />
       </ScrollView>
     </Screen>
   );
@@ -243,6 +255,10 @@ function FAQ({ q, a, isLast }: { q: string; a: string; isLast?: boolean }) {
 const styles = StyleSheet.create({
   scrollContent: { paddingBottom: layout.scrollBottom },
 
+  intro: { paddingHorizontal: layout.gutter + 2, paddingTop: 16 },
+  introTitle: { ...text.sectionTitleLg },
+  introBody: { ...text.bodySm, marginTop: 4 },
+
   orderBand: { paddingHorizontal: layout.gutter + 2, paddingTop: 14 },
   orderBandText: { fontFamily: fontFamily.semibold, fontSize: 13, color: C.textSub },
 
@@ -268,4 +284,5 @@ const styles = StyleSheet.create({
   infoTitle: { fontFamily: fontFamily.regular },
 
   escalateWrap: { paddingHorizontal: layout.gutter, paddingTop: 20 },
+  signOff: { marginTop: 28 },
 });

@@ -1,8 +1,8 @@
 // codename: kepler
 // Home — the Blinkit feed, composed from components/home/* (W2-home-screen · CONTRACTS §4.18 · design/blinkit-parity
 // §3.1). One FlashList of typed items: TabHeader (atlas + antares ETA hero) → sticky SearchBand + category chip strip
-// (lyra) → text-card banners (deneb) → 8 tiles + "All categories" → "Frequently bought" rail → one rail per category
-// with "See all" → end stamp. The Home-only cart pill is GONE (cyan: the global CartBar is mounted once in the root
+// (lyra) → photo banners (deneb) → 8 tiles + "All categories" → "Frequently bought" rail → photo aisle tiles → one
+// rail per category with "See all", with a trust row and two photo cards between rails → end stamp. The Home-only cart pill is GONE (cyan: the global CartBar is mounted once in the root
 // layout and lifts over the active-orders banner through `setCartBarExtraBottom`). The account sheet is mounted by
 // its provider; the avatar calls `useProfileMenu().open`. Android back asks before exiting (zephyr). No local
 // palette (boreal). Loading is `HomeSkeleton` (onyx).
@@ -37,11 +37,16 @@ import {
   type ViewabilityConfig,
 } from "react-native";
 
+import { BrandSignOff, BrandStoryCard, hasPhoto } from "../../components/brand";
+import { SectionHeader } from "../../components/cards";
 import { ACTIVE_ORDER_BANNER_FOOTPRINT, ActiveOrdersBanner } from "../../components/home/ActiveOrdersBanner";
+import { AisleRow, type HomeAisle } from "../../components/home/AisleRow";
 import { BannerCarousel } from "../../components/home/BannerCarousel";
 import { CategoryChipStrip } from "../../components/home/CategoryChipStrip";
 import { CategoryTileGrid } from "../../components/home/CategoryTileGrid";
+import { HOME_PROMO_SLOT, HomePromo, type HomePromoId } from "../../components/home/HomePromo";
 import { HOME_ITEM_SIZE, HomeSkeleton } from "../../components/home/HomeSkeleton";
+import { HomeTrust } from "../../components/home/HomeTrust";
 import { ProductRail } from "../../components/home/ProductRail";
 import {
   EmptyState,
@@ -51,14 +56,16 @@ import {
   Screen,
   SearchBand,
   setCartBarExtraBottom,
+  SkeletonFade,
   TabHeader,
   useCartBarFootprint,
   useMotionReduced,
   type IconName,
 } from "../../components/ui";
+import { matchAisles } from "../../constants/aisles";
 import { BANNERS, getActiveBanners, type Banner } from "../../constants/banners";
 import { C } from "../../constants/colors";
-import { fontFamily, layout, motion, radius, text } from "../../constants/ui";
+import { fontFamily, layout, motion, radius } from "../../constants/ui";
 import { useAuth } from "../../context/AuthContext";
 import { useLocation, type ActiveLocation } from "../../context/LocationContext";
 import { useProfileMenu } from "../../context/ProfileMenuContext";
@@ -69,13 +76,16 @@ import { getRemoteBanners } from "../../lib/bannerService";
 import { markBoot } from "../../lib/bootGate";
 import { getAllCategories, peekCategories, resolveCategorySlug, type Category } from "../../lib/categoryService";
 import { getDevFlag, useDevFlag } from "../../lib/devFlags";
+import { getFatalError } from "../../lib/fatalError";
 import { feedback } from "../../lib/feedback";
+import { whenHomeSettled } from "../../lib/firstRunPrompts";
 import { prefetchImages } from "../../lib/imageUrl";
 import { clearLiveAddressCache, getLiveAddressCache, setLiveAddressCache } from "../../lib/liveAddress";
 import { logSilentFailure } from "../../lib/logSilentFailure";
 import {
   getMemoryOrders,
   getUserOrders,
+  ordersListInvalidated,
   readUserOrdersCache,
   refreshActiveOrders,
   splitActivePast,
@@ -109,6 +119,8 @@ import {
 const ACTIVE_ORDERS_POLL_MS = 20_000;
 /** With no active order, a focus refetch is skipped while the last fetch is younger than this (speed-and-ease #9). */
 const ORDERS_IDLE_REFRESH_MS = 2 * 60_000;
+/** Longest the first paint may stay in the skeleton before the error cell (with Retry) takes over. */
+const BOOT_WATCHDOG_MS = 15_000;
 /** Second Android back press inside this window exits (motion M24). */
 const BACK_EXIT_WINDOW_MS = 2000;
 /** Scroll quiet time before the search placeholder resumes rotating (motion M31: paused while scrolling). */
@@ -126,8 +138,15 @@ const PREFETCH_PER_RAIL = 4;
 const PREFETCH_WIDTH = 240;
 /** Empty-state cell height so `EmptyState fill` has room to centre under the sticky band. */
 const EMPTY_MIN_HEIGHT = 360;
-/** "See all ›" is a 20 pt text link; ±12 vertical lifts it to 44 pt (nothing sits above/below it in the header row). */
-const SEE_ALL_HIT_SLOP = { top: 12, bottom: 12, left: 8, right: 8 };
+/** The aisle row needs at least this many matched categories; fewer reads as a stray tile. */
+const MIN_AISLES = 3;
+/** Mid-feed rows: each goes after the rail of its Nth section, and only when the feed has at least `minSections`. */
+const TRUST_AFTER_SECTION = 2;
+const TRUST_MIN_SECTIONS = 4;
+const MID_FEED_PROMOS: readonly { id: HomePromoId; afterSection: number; minSections: number }[] = [
+  { id: "search", afterSection: 5, minSections: 7 },
+  { id: "aisles", afterSection: 8, minSections: 10 },
+];
 /** Index of the sticky cell (SearchBand + chip strip); the TabHeader is item 0. */
 const STICKY_INDICES = [1];
 /** A section counts as "in view" for the chip highlight once a fifth of it is visible for 80 ms. */
@@ -159,6 +178,9 @@ type HomeListItem =
   | { kind: "banners"; banners: Banner[] }
   | { kind: "catTileGrid"; categories: Category[]; counts: Record<string, number>; capped: boolean }
   | { kind: "freqBought"; products: Product[] }
+  | { kind: "aisles"; signature: string; aisles: HomeAisle[] }
+  | { kind: "trust" }
+  | { kind: "promo"; id: HomePromoId }
   | { kind: "sectionHeader"; categoryId: string; categoryName: string; slug: string | null }
   | { kind: "productRail"; categoryId: string; categoryName: string; products: Product[] }
   | { kind: "productRow"; rowKey: string; categoryName: string; products: Product[] }
@@ -283,6 +305,9 @@ function seedCatalog(location: ActiveLocation | null, isHydrated: boolean, insta
   return { categories, view: noStores ? {} : deriveNearbyView(cache, nearby), phase: "ready", noStores };
 }
 
+/** `constants/banners.ts` id of the local "Order your usuals again" card. */
+const REORDER_BANNER_ID = "reorder";
+
 type OrdersSeed = { active: Order[]; topIds: string[]; activeKey: string; topKey: string };
 
 /** Orders already in the memory mirror (a previous mount, the Orders tab) paint the banner on frame 1. */
@@ -318,6 +343,12 @@ const keyExtractor = (item: HomeListItem): string => {
       return "tiles";
     case "freqBought":
       return "freq";
+    case "aisles":
+      return "aisles";
+    case "trust":
+      return "trust";
+    case "promo":
+      return `promo-${item.id}`;
     case "sectionHeader":
       return `hdr-${item.categoryId}`;
     case "productRail":
@@ -415,6 +446,14 @@ export default function HomeScreen() {
       if (scrollIdleTimerRef.current) clearTimeout(scrollIdleTimerRef.current);
     };
   }, []);
+
+  // Boot watchdog: a first load that never settles (a request on a dead connection, a location store that never
+  // hydrates) must not strand Home in its skeleton. The sequence is left alone, so a late success still paints.
+  useEffect(() => {
+    if (phase !== "booting") return undefined;
+    const timer = setTimeout(() => setPhase("error"), BOOT_WATCHDOG_MS);
+    return () => clearTimeout(timer);
+  }, [phase, retryTick]);
 
   // ── Catalog writers ────────────────────────────────────────────────────────
 
@@ -566,16 +605,19 @@ export default function HomeScreen() {
 
   // ── Live reverse-geocode from device GPS (placeholder for the address pill while no location is set) ──
   // Deferred past first paint: GPS + reverse-geocode is a 500–2000 ms chain that competes with the catalog request
-  // on the same connection. Scheduling it via InteractionManager lets the feed paint first (how Blinkit behaves on a
-  // cold start). `useDeviceAddress` wraps the permission dialog in `beginNativePrompt()` so welcome/index redirect
-  // pollers wait it out (MAP §7.6). Runs only when no location exists and once per app launch (module flag), so a
-  // remount from select-location never replays the chain.
+  // on the same connection, and on a first run it raises the location permission dialog. It starts only once Home
+  // is the FOCUSED route and has settled (lib/firstRunPrompts, as the push prompt does) — never while Home is
+  // mounted underneath another screen (onboarding's "Pick on map" pushes select-map over it, which asks itself).
+  // `useDeviceAddress` then runs the dialog through `runNativePrompt` (MAP §7.6). `settingsDialog: false`: an
+  // automatic request may raise at most one dialog, never the system location-accuracy one. Runs only when no
+  // location exists and once per app launch (module flag), so a remount from select-location never replays it.
   useEffect(() => {
     if (!isHydrated || location || getLiveAddressCache().resolved) return;
     let cancelled = false;
-    const handle = InteractionManager.runAfterInteractions(() => {
+    const wait = whenHomeSettled();
+    void wait.promise.then(() => {
       if (cancelled) return;
-      requestDeviceAddress().then((result) => {
+      requestDeviceAddress({ settingsDialog: false }).then((result) => {
         // Denied or resolved — either way never replay this launch; `request()` itself never throws.
         setLiveAddressCache(result ? result.address : null, true);
         if (!result) return;
@@ -584,7 +626,7 @@ export default function HomeScreen() {
     });
     return () => {
       cancelled = true;
-      handle.cancel?.();
+      wait.cancel();
     };
   }, [isHydrated, location, requestDeviceAddress]);
 
@@ -625,6 +667,8 @@ export default function HomeScreen() {
     useCallback(() => {
       if (Platform.OS !== "android") return;
       const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+        // The fatal-error overlay owns Back while it is up (components/ErrorBoundary).
+        if (getFatalError()) return false;
         const now = Date.now();
         if (getDevFlag("Dev_Shell_inhibit_BackToExitToast") || now - lastBackPressRef.current < BACK_EXIT_WINDOW_MS) {
           BackHandler.exitApp();
@@ -703,13 +747,21 @@ export default function HomeScreen() {
     };
   }, [userId, applyFetchedOrders]);
 
-  // Focus refetch — skipped while there is no active order and the last fetch is younger than 2 min.
+  // Focus refetch — skipped while there is no active order and the last fetch is younger than 2 min, unless the
+  // list was invalidated since (an order just placed, cancelled or paid): the strip must show on the way back.
+  // When skipped, the in-memory list is still applied: another screen (Orders, Order again) may have refetched it
+  // after an invalidation, which repopulates the entry — no request, and a no-op when nothing changed.
   useFocusEffect(
     useCallback(() => {
       if (!userId) return;
       const idle = activeCountRef.current === 0 && Date.now() - lastOrdersFetchAtRef.current < ORDERS_IDLE_REFRESH_MS;
-      if (!idle) fetchOrders();
-    }, [userId, fetchOrders]),
+      if (!idle || ordersListInvalidated(userId)) {
+        fetchOrders();
+        return;
+      }
+      const memory = getMemoryOrders();
+      if (memory) applyFetchedOrders(memory);
+    }, [userId, fetchOrders, applyFetchedOrders]),
   );
 
   // 20 s poll only while an order is active, Home is focused and the app is active; `Dev_Vega_inhibit_ActivePoll`
@@ -781,7 +833,31 @@ export default function HomeScreen() {
     return Array.from(viewById.values()).sort(comparePopularity).slice(0, RAIL_LENGTH);
   }, [viewById, userTopProductIds]);
 
-  const banners = useMemo(() => getActiveBanners(Date.now(), [...BANNERS, ...remoteBanners]), [remoteBanners]);
+  // The "Order your usuals again" card speaks of past items, so it shows only to a shopper who has some: a guest
+  // or a first-time shopper would land on the Order again tab's sign-in gate or its empty state.
+  const hasOrderHistory = userTopProductIds.length > 0;
+  const banners = useMemo(
+    () =>
+      getActiveBanners(Date.now(), [
+        ...(hasOrderHistory ? BANNERS : BANNERS.filter((b) => b.id !== REORDER_BANNER_ID)),
+        ...remoteBanners,
+      ]),
+    [remoteBanners, hasOrderHistory],
+  );
+
+  /**
+   * Photo aisles: each bundled aisle photo paired with one live category (its own name, its own slug). The
+   * signature is what `AisleRow` compares, so a catalogue repaint with the same aisles does not redraw the photos.
+   */
+  const aisleRow = useMemo(() => {
+    const aisles: HomeAisle[] = [];
+    for (const m of matchAisles(categoriesWithProducts)) {
+      const slug = m.category.slug;
+      if (!slug || !hasPhoto(m.photo)) continue;
+      aisles.push({ id: m.id, photo: m.photo, name: m.category.name, slug });
+    }
+    return { aisles, signature: aisles.map((a) => `${a.id}:${a.slug}:${a.name}`).join("|") };
+  }, [categoriesWithProducts]);
 
   const hasLocation = location != null;
 
@@ -802,7 +878,14 @@ export default function HomeScreen() {
     if (!inhibitBanners && banners.length > 0) out.push({ kind: "banners", banners });
     out.push({ kind: "catTileGrid", categories: categoriesWithProducts, counts: tileCounts, capped: !inhibitTileCap });
     if (frequentlyBought.length > 0) out.push({ kind: "freqBought", products: frequentlyBought });
+    if (aisleRow.aisles.length >= MIN_AISLES) {
+      out.push({ kind: "aisles", signature: aisleRow.signature, aisles: aisleRow.aisles });
+    }
 
+    // Mid-feed rows go after the rail of a given section. `sectionCount` counts sections actually pushed (the
+    // loop skips empty ones); `totalSections` gates each row so it never ends up as the last thing in a short feed.
+    const totalSections = categoriesWithProducts.length;
+    let sectionCount = 0;
     for (const c of categoriesWithProducts) {
       const products = getProductsForCategoryName(c.name, view);
       if (products.length === 0) continue;
@@ -818,6 +901,13 @@ export default function HomeScreen() {
         }
       } else {
         out.push({ kind: "productRail", categoryId: c.id, categoryName: c.name, products: products.slice(0, RAIL_LENGTH) });
+        sectionCount += 1;
+        if (sectionCount === TRUST_AFTER_SECTION && totalSections >= TRUST_MIN_SECTIONS) out.push({ kind: "trust" });
+        for (const promo of MID_FEED_PROMOS) {
+          if (sectionCount === promo.afterSection && totalSections >= promo.minSections && hasPhoto(HOME_PROMO_SLOT[promo.id])) {
+            out.push({ kind: "promo", id: promo.id });
+          }
+        }
       }
     }
     out.push({ kind: "endStamp" });
@@ -833,6 +923,7 @@ export default function HomeScreen() {
     tileCounts,
     inhibitTileCap,
     frequentlyBought,
+    aisleRow,
     view,
     categories,
     inhibitRails,
@@ -874,6 +965,11 @@ export default function HomeScreen() {
     router.push(`/category/${slug}`);
   }, []);
 
+  /** Aisle tile press: the slug is the live category's own. Silent navigation. */
+  const handleAisleSelect = useCallback((slug: string) => {
+    router.push(`/category/${slug}`);
+  }, []);
+
   /** Chip press → scroll the feed so that category's header lands just under the sticky band (lyra / BP-10). */
   const handleChipSelect = useCallback((name: string) => {
     const index = listDataRef.current.findIndex((it) => it.kind === "sectionHeader" && it.categoryName === name);
@@ -881,11 +977,18 @@ export default function HomeScreen() {
     setHomeUi({ activeName: name });
     try {
       listRef.current
-        ?.scrollToIndex({ index, viewOffset: stickyHeightRef.current, animated: !reducedRef.current })
+        // An instant jump, not a glide through every rail in between (owner, 2026-11-19).
+        ?.scrollToIndex({ index, viewOffset: stickyHeightRef.current, animated: false })
         .catch((err) => logSilentFailure("Scroll to category", err));
     } catch (err) {
       logSilentFailure("Scroll to category", err);
     }
+  }, []);
+
+  /** "Home" chip → back to the top of the feed, no category highlighted. */
+  const handleChipHome = useCallback(() => {
+    setHomeUi({ activeName: null });
+    listRef.current?.scrollToOffset({ offset: 0, animated: false });
   }, []);
 
   const handleStickyLayout = useCallback((e: LayoutChangeEvent) => {
@@ -893,19 +996,23 @@ export default function HomeScreen() {
     if (h > 0) stickyHeightRef.current = h;
   }, []);
 
-  /** The highlighted chip follows the first category section in view. */
+  /**
+   * The highlighted chip follows the first category section in view. A mid-feed card (trust, promo) alone in view
+   * keeps the current chip: without that the strip would flip to "Home" and back while the card scrolls past.
+   */
   const handleViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: ViewToken<HomeListItem>[] }) => {
     let name: string | null = null;
+    let midFeed = false;
     for (const token of viewableItems) {
       const it = token.item;
-      if (
-        it &&
-        (it.kind === "sectionHeader" || it.kind === "productRail" || it.kind === "productRow" || it.kind === "seeAllBar")
-      ) {
+      if (!it) continue;
+      if (it.kind === "sectionHeader" || it.kind === "productRail" || it.kind === "productRow" || it.kind === "seeAllBar") {
         name = it.categoryName;
         break;
       }
+      if (it.kind === "trust" || it.kind === "promo") midFeed = true;
     }
+    if (name === null && midFeed) return;
     setHomeUi({ activeName: name });
   }, []);
 
@@ -968,7 +1075,7 @@ export default function HomeScreen() {
         case "header":
           return <HeaderCell />;
         case "search":
-          return <StickyCell names={item.names} onSelect={handleChipSelect} onLayout={handleStickyLayout} />;
+          return <StickyCell names={item.names} onSelect={handleChipSelect} onHome={handleChipHome} onLayout={handleStickyLayout} />;
         case "banners":
           return <BannersCell banners={item.banners} />;
         case "catTileGrid":
@@ -983,9 +1090,15 @@ export default function HomeScreen() {
             />
           );
         case "freqBought":
-          return <ProductRail title="Frequently bought" accent={C.deal} products={item.products} testID="home-freq" />;
+          return <ProductRail title="Frequently bought" accent={C.primary} products={item.products} testID="home-freq" />;
+        case "aisles":
+          return <AisleRow signature={item.signature} aisles={item.aisles} onSelect={handleAisleSelect} testID="home-aisles" />;
+        case "trust":
+          return <HomeTrust />;
+        case "promo":
+          return <HomePromo id={item.id} />;
         case "sectionHeader":
-          return <SectionHeader name={item.categoryName} slug={item.slug} />;
+          return <CategorySectionHeader name={item.categoryName} slug={item.slug} />;
         case "productRail":
           return <ProductRail products={item.products} testID={`home-rail-${item.categoryId}`} />;
         case "productRow":
@@ -998,7 +1111,7 @@ export default function HomeScreen() {
           return <EmptyCell variant={item.variant} onRetry={retry} />;
       }
     },
-    [handleChipSelect, handleStickyLayout, handleTileSelect, retry],
+    [handleAisleSelect, handleChipHome, handleChipSelect, handleStickyLayout, handleTileSelect, retry],
   );
 
   // List padding composes the absolute tab bar, the active-orders banner and the global CartBar (MAP §7.3).
@@ -1018,9 +1131,11 @@ export default function HomeScreen() {
   return (
     <Screen bg={C.bg} edges={["top"]}>
       <View style={styles.root} onLayout={handleRootLayout}>
-        {showSkeleton ? (
-          <HomeSkeleton slow={slow} onRetry={retry} testID="home-skeleton" />
-        ) : (
+        {/* The feed mounts under the skeleton, which then fades out over it (no one-frame swap). */}
+        <SkeletonFade
+          loading={showSkeleton}
+          skeleton={<HomeSkeleton slow={slow} onRetry={retry} testID="home-skeleton" />}
+        >
           <FlashList
             ref={listRef}
             data={listData}
@@ -1040,7 +1155,7 @@ export default function HomeScreen() {
             }
             testID="home-feed"
           />
-        )}
+        </SkeletonFade>
 
         {primaryOrder ? (
           <ActiveOrdersBanner
@@ -1085,10 +1200,12 @@ function HeaderCell() {
 const StickyCell = React.memo(function StickyCell({
   names,
   onSelect,
+  onHome,
   onLayout,
 }: {
   names: readonly string[];
   onSelect: (name: string) => void;
+  onHome: () => void;
   onLayout: (e: LayoutChangeEvent) => void;
 }) {
   const activeName = useHomeUi("activeName");
@@ -1097,7 +1214,7 @@ const StickyCell = React.memo(function StickyCell({
   return (
     <View style={styles.sticky} onLayout={onLayout}>
       <SearchBand mode="button" rotate={!scrolling && focused} style={styles.searchBand} testID="home-search" />
-      <CategoryChipStrip names={names} activeName={activeName} onSelect={onSelect} testID="home-chips" />
+      <CategoryChipStrip names={names} activeName={activeName} onSelect={onSelect} onHome={onHome} testID="home-chips" />
     </View>
   );
 });
@@ -1109,32 +1226,18 @@ function BannersCell({ banners }: { banners: Banner[] }) {
   return <BannerCarousel banners={banners} focused={focused && appActive} style={styles.banners} testID="home-banners" />;
 }
 
-/** Category section header: `text.h3` + "See all ›" (12/700 C.primary, silent navigation; hidden when no slug). */
-const SectionHeader = React.memo(function SectionHeader({ name, slug }: { name: string; slug: string | null }) {
+/** Category section header: the shared 44 dp header with a "See all" pill (silent navigation; no pill without a slug). */
+const CategorySectionHeader = React.memo(function CategorySectionHeader({ name, slug }: { name: string; slug: string | null }) {
   const handlePress = useCallback(() => {
     if (slug) router.push(`/category/${slug}`);
   }, [slug]);
   return (
-    <View style={styles.sectionHeader}>
-      <Text style={styles.sectionTitle} numberOfLines={1} maxFontSizeMultiplier={1.3} accessibilityRole="header">
-        {name}
-      </Text>
-      {slug ? (
-        <PressableScale
-          scale={motion.scale.row}
-          onPress={handlePress}
-          hitSlop={SEE_ALL_HIT_SLOP}
-          accessibilityRole="button"
-          accessibilityLabel={`See all ${name}`}
-          innerStyle={styles.seeAll}
-          pressedStyle={styles.seeAllPressed}
-        >
-          <Text style={styles.seeAllText} maxFontSizeMultiplier={1.3}>
-            See all ›
-          </Text>
-        </PressableScale>
-      ) : null}
-    </View>
+    <SectionHeader
+      title={name}
+      actionLabel={slug ? "See all" : undefined}
+      onAction={slug ? handlePress : undefined}
+      actionAccessibilityLabel={`See all ${name}`}
+    />
   );
 });
 
@@ -1174,13 +1277,16 @@ const LegacySeeAllBar = React.memo(function LegacySeeAllBar({ name, slug }: { na
   );
 });
 
+/** End of the loaded feed: the brand story (photo, title, one line), then the sign-off. Not pressable. */
 function EndStamp() {
   return (
-    <View style={styles.endStamp} accessible accessibilityRole="text">
-      <MaterialCommunityIcons name="leaf" size={14} color={C.textSub} />
-      <Text style={styles.endStampText} maxFontSizeMultiplier={1.3}>
-        That&apos;s everything fresh near you
-      </Text>
+    <View style={styles.endStamp}>
+      <BrandStoryCard
+        slot="feedEnd"
+        title="Your neighbourhood shops, at your door"
+        body="We bring your order from kirana stores within 4 km of you."
+      />
+      <BrandSignOff line="That's everything fresh near you" style={styles.endSignOff} />
     </View>
   );
 }
@@ -1223,6 +1329,7 @@ const EmptyCell = React.memo(function EmptyCell({ variant, onRetry }: { variant:
       <EmptyState
         fill
         iconWrap
+        tone={variant === "error" ? "error" : "default"}
         icon={copy.icon}
         title={copy.title}
         text={copy.text}
@@ -1250,20 +1357,6 @@ const styles = StyleSheet.create({
 
   banners: { paddingTop: 12 },
 
-  // 44 px: h3 line height 22 + 12 above + 10 below (HOME_ITEM_SIZE.sectionHeader).
-  sectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: layout.gutter,
-    paddingTop: 12,
-    paddingBottom: 10,
-  },
-  sectionTitle: { ...text.h3, flex: 1 },
-  seeAll: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.md },
-  seeAllPressed: { backgroundColor: C.primaryXLight },
-  seeAllText: { fontFamily: fontFamily.bold, fontSize: 12, lineHeight: 16, color: C.primary },
-
   legacyRow: {
     flexDirection: "row",
     paddingHorizontal: layout.gutter,
@@ -1286,16 +1379,9 @@ const styles = StyleSheet.create({
   legacySeeAllPressed: { backgroundColor: C.bgSoft },
   legacySeeAllText: { fontFamily: fontFamily.bold, fontSize: 13, lineHeight: 18, color: C.primary, flexShrink: 1 },
 
-  endStamp: {
-    marginTop: 24,
-    alignSelf: "center",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: layout.gutter,
-    paddingVertical: 8,
-  },
-  endStampText: { fontFamily: fontFamily.semibold, fontSize: 12, lineHeight: 16, color: C.textSub },
+  // The story card brings its own gutter; the sign-off is a centred column.
+  endStamp: { marginTop: 24, paddingVertical: 8 },
+  endSignOff: { marginTop: 24, paddingHorizontal: layout.gutter },
 
   emptyWrap: { minHeight: EMPTY_MIN_HEIGHT, justifyContent: "center" },
 });

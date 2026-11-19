@@ -13,6 +13,7 @@ import { C } from "../../constants/colors";
 import { getStatusMeta } from "../../constants/orderStatus";
 import { fontFamily, layout, text as typo } from "../../constants/ui";
 import { useDevFlag } from "../../lib/devFlags";
+import { Sprout } from "../brand";
 import { AnimatedNumber, Card, IconWrap, PrimaryButton, enter } from "../ui";
 import { formatClock, useTrackingNow } from "./LivePill";
 import { StepProgress } from "./StepProgress";
@@ -88,12 +89,15 @@ export function ArrivalHero({
     return (
       <Card size="lg" borderColor={C.hairline} style={[styles.card, style]} testID={testID}>
         <Animated.View entering={enter.rise()} style={styles.delivered}>
-          <IconWrap circle size={64} icon="check" iconSize={34} bg={C.successLight} iconColor={C.success} />
+          <View>
+            <IconWrap circle size={64} icon="check" iconSize={34} bg={C.successLight} iconColor={C.success} />
+            <Sprout width={28} style={styles.deliveredSprout} />
+          </View>
           <Text style={styles.deliveredTitle} accessibilityRole="header" maxFontSizeMultiplier={1.3}>
             {at ? `Delivered at ${at}` : "Delivered"}
           </Text>
           <Text style={styles.body} maxFontSizeMultiplier={1.3}>
-            {deliveredBy ? `Delivered by ${deliveredBy}. Enjoy!` : meta.description}
+            {deliveredBy ? `Delivered by ${deliveredBy}. Thank you for shopping local.` : meta.description}
           </Text>
           <PrimaryButton size="lg" label="Rate order" icon="star-outline" onPress={onRate} style={styles.rateBtn} />
           <PrimaryButton variant="ghost" label="Back to Home" onPress={onHome} />
@@ -205,5 +209,6 @@ const styles = StyleSheet.create({
   signalText: { flex: 1, fontFamily: fontFamily.medium, fontSize: 12, color: C.warningText },
   delivered: { alignItems: "center", gap: 8, paddingVertical: 8 },
   deliveredTitle: { ...typo.h1, textAlign: "center", marginTop: 6 },
+  deliveredSprout: { position: "absolute", left: 6, top: -12 },
   rateBtn: { marginTop: 10 },
 });

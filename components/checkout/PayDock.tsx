@@ -78,7 +78,11 @@ const HELPER_COLOR: Record<PayDockHelperTone, string> = {
 
 function PayMethodSelector({ tipAmount }: { tipAmount: number }): React.JSX.Element {
   const sel = usePaymentSelection();
-  const logo = sel.logoKey ? PAYMENT_LOGOS[sel.logoKey] : null;
+  // The wallet is the brand's own method: its tile is derived here from the mode, so a selection stored before the
+  // wallet had a logo shows it without reselecting (lib/paymentSelection.ts is untouched).
+  const isWallet = sel.mode === "wallet";
+  const logoKey = isWallet ? "wallet" : sel.logoKey;
+  const logo = logoKey ? PAYMENT_LOGOS[logoKey] : null;
   const glyph: IconName = sel.icon && isIconName(sel.icon) ? sel.icon : "cellphone-wireless";
 
   const openOptions = () => {
@@ -95,9 +99,14 @@ function PayMethodSelector({ tipAmount }: { tipAmount: number }): React.JSX.Elem
       pressedStyle={styles.selectorPressed}
       accessibilityLabel={`Pay using ${sel.label}. Change payment method`}
     >
-      <View style={styles.logoWrap}>
+      <View style={isWallet ? styles.walletWrap : styles.logoWrap}>
         {logo ? (
-          <Image source={logo} style={styles.logo} contentFit="contain" accessibilityIgnoresInvertColors />
+          <Image
+            source={logo}
+            style={isWallet ? styles.walletLogo : styles.logo}
+            contentFit="contain"
+            accessibilityIgnoresInvertColors
+          />
         ) : (
           <MaterialCommunityIcons name={glyph} size={22} color={C.text} />
         )}
@@ -248,6 +257,9 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   logo: { width: 32, height: 32 },
+  // Wallet: the app icon is its own tile — full 36 dp, no white bordered square behind it.
+  walletWrap: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
+  walletLogo: { width: 36, height: 36 },
   selectorText: { flex: 1 },
   selectorEyebrowRow: { flexDirection: "row", alignItems: "center", gap: 2 },
   // 11 px, not the spec's 10: DECISIONS D10 floors every text at 11 px.
@@ -269,8 +281,8 @@ const styles = StyleSheet.create({
   payDisabled: { opacity: opacity.disabled },
   payAmount: { justifyContent: "center" },
   payAmountValue: { fontFamily: fontFamily.extrabold, fontSize: 16, color: C.onPrimary, letterSpacing: 0.2 },
-  // 11 px, not the spec's 10 (D10 floor); 85 % white → the C.onDarkSub token.
-  payAmountLabel: { fontFamily: fontFamily.bold, fontSize: 11, color: C.onDarkSub, letterSpacing: 0.6, marginTop: 1 },
+  // 11 px, not the spec's 10 (D10 floor); full white — C.onDarkSub is only 2.9:1 on the saffron face.
+  payAmountLabel: { fontFamily: fontFamily.bold, fontSize: 11, color: C.onPrimary, letterSpacing: 0.6, marginTop: 1 },
   payCta: { flexDirection: "row", alignItems: "center", gap: 6 },
   payCtaText: { fontFamily: fontFamily.extrabold, fontSize: 15, color: C.onPrimary, letterSpacing: 0.2 },
 });

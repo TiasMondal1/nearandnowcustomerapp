@@ -45,7 +45,7 @@ const StarRating = React.memo(function StarRating({ rating, reviewCount, starSiz
               key={i}
               name={name}
               size={starSize}
-              color={name === "star-outline" ? C.textLight : C.warning}
+              color={name === "star-outline" ? C.textLight : C.star}
             />
           );
         })}

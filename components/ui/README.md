@@ -13,18 +13,20 @@ Working rules for every screen and primitive in the customer app (Expo SDK 54, R
 
 ## 2. Tokens
 
-### Colours — `C` (codename boreal: one brand, forest green on cream)
+### Colours — `C` (codename boreal: one brand, saffron on cream with cocoa ink and a leaf-green accent)
+
+Two hues, two jobs — the logo's logic (a saffron n with a green sprout). **Saffron (`primary*`)** is brand, CTAs, selection, navigation and links. **Leaf green (`success*`, `deal*`)** is positive meaning only: done, delivered, verified, paid, FREE, savings, order progress. A tick or a "Delivered" pill is never saffron; a button is never green. `primary` carries white at 3.5:1, so use it for button faces with **bold** labels, glyphs and bold labels on white/cream; brand-coloured text that is not bold takes `primaryDark` (5.8:1 on white).
 
 | Role | Tokens |
 |---|---|
 | Surfaces | `bg` cream (browse ground) · `bgSoft` sand (pressed rows, idle chips) · `surfaceBand` 8 px separator bands · `card` / `white` · `onPrimary` text on brand fills · `border` · `borderSoft` · `hairline` card borders on cream |
-| Brand | `primary` · `primaryDark` (pressed CTA face, links) · `primaryLight` (selected wash) · `primaryXLight` (band top stop, badge bg) · `link` (= primaryDark; blue links are gone) |
-| Text | `text` · `textSub` (body/secondary) · `textLight` (≥ 14 px only, never body copy) · `onDarkSub` (secondary text on dark toasts) |
+| Brand | `primary` saffron · `primaryDark` (pressed CTA face, links, non-bold brand text) · `primaryLight` (selected wash) · `primaryXLight` (band top stop, badge bg) · `link` (= primaryDark; blue links are gone) |
+| Text | `text` cocoa · `textSub` soft cocoa (body/secondary) · `textLight` (AA on white and cream, not on `bgSoft` — never body copy there) · `onDarkSub` (secondary text on dark toasts) |
 | Semantic | `danger` / `dangerLight` / `dangerBorder` · `warning` / `warningLight` / `warningBorder` / `warningText` · `success` / `successLight` / `successBorder` / `successText` · `info` / `infoLight` |
-| Deal | `deal` / `dealDark` / `dealLight` — % off, savings, coupon tags ONLY. Never errors or CTAs. |
-| Overlays | `scrim` · `skeletonLo` / `skeletonHi` · `shadow` |
+| Deal | `deal` / `dealDark` / `dealLight` — leaf green (savings read as green): % off, savings, coupon tags ONLY. Never errors or CTAs. |
+| Overlays | `scrim` · `photoScrim` / `photoScrimClear` (the scrim under text on a photo; `PhotoScrim` only) · `skeletonLo` / `skeletonHi` · `shadow` |
 
-Rules: no hex or rgba literal in `app/` or `components/` (not even a token-derived one — W3 removed DoodleBackdrop's `SoftPanel` wash with its end stop). No local `const T = {…}` palettes. The old aliases for danger / deal / dealLight were deleted in W3 — use `C.danger`, `C.deal`, `C.dealLight`. The one hex that lives outside `constants/colors.ts` is the notification accent in `app.config.js` (it mirrors `C.primary`). `constants/categoryTints.ts` is the one sanctioned exception to the single-palette rule: 8 pastel washes behind category art (data, not chrome — CONTRACTS §1.3; W3 r2 F7 keeps them out of `C` so every `C` value stays a plain colour string).
+Rules: no hex or rgba literal in `app/` or `components/` (not even a token-derived one — W3 removed DoodleBackdrop's `SoftPanel` wash with its end stop). No local `const T = {…}` palettes. The old aliases for danger / deal / dealLight were deleted in W3 — use `C.danger`, `C.deal`, `C.dealLight`. The only hexes that live outside `constants/colors.ts` are the native-shell ones in `app.config.js`, which mirror the palette by hand: the root window background (`C.bg`) and the notification accent and adaptive-icon background (`C.primary`). `constants/categoryTints.ts` is the one sanctioned exception to the single-palette rule: 8 pastel washes behind category art (data, not chrome — CONTRACTS §1.3; W3 r2 F7 keeps them out of `C` so every `C` value stays a plain colour string).
 
 ### Text presets — `text.*` (family via `fontFamily.*`, never `fontWeight`)
 
@@ -41,22 +43,23 @@ Rules: nothing under 11 px, no fractional sizes, **nothing under 14 px is ExtraB
 ### Radius, spacing, layout, shadow
 
 - `radius`: xs 4 · sm 6 · md 8 · lg 10 · xl 12 (most common) · xxl 14 · card 16 · xxxl 20 · sheet 24 · pill 999. Write `radius.xl`, never `borderRadius: 12`.
-- `space[2…40]` raw scale. `layout`: `gutter` 16 · `gutterTight` 12 · `scrollBottom` 40 · `scrollBottomTab` 120 (tab screens + above docks) · `cartBarHeight` 56 · `cartBarGap` 12 · `dockPaddingTop` 14 · `dockMinInset` 12 · `tabHeaderBand` 84 · `searchBandHeight` 48 · `railCardWidth` 132 · `gridGap` 8. New code reads the live dock height with `useDockHeight()`, not `layout.dockBottom`.
+- `space[2…40]` raw scale. `layout`: `gutter` 16 · `gutterTight` 12 · `scrollBottom` 40 · `scrollBottomTab` 120 (tab screens + above docks) · `cartBarHeight` 56 · `cartBarGap` 12 · `dockPaddingTop` 14 · `dockMinInset` 12 · `tabHeaderBand` 84 · `searchBandHeight` 48 · `railCardWidth` 132 · `gridGap` 8 · `photoCardMinHeight` 156 · `aisleTileWidth` 136 · `sectionHeaderHeight` 44. New code reads the live dock height with `useDockHeight()`, not `layout.dockBottom`.
 - `shadow.card | cardMd | cardLg | primarySm | primaryLg | dock | sheet` always pair iOS `shadow*` with Android `elevation`. Android drops elevation under `overflow: hidden`: clip an INNER view (`clipOverflow`), keep the shadow on the OUTER view.
+- `surface.card | photo | tint` is the one card surface: flat, radius 16, 1 px hairline, no shadow. `card` is white; `photo` has the sand ground and clips its content; `tint` is the saffron wash (`C.primaryXLight` with a `C.primaryLight` border). Spread it into a style (`{ ...surface.card, padding: 12 }`) instead of retyping radius and border.
 - `HIT_SLOP` 8 (hoist hit slops to module scope; lift targets < 44 pt to 44 pt) · `TAB_BAR_BASE_HEIGHT` 60 (the tab bar is absolute) · `iconSize.xs…heroLg` 14–56 · `iconWrap.sm|md|lg` 34/38/44 · `border.thin|input|emphasis` 1/1.5/2. `opacity.press*` exist for legacy reads only — new code never uses opacity fades.
 
 ### Motion — `motion.*` (codename onyx)
 
-- Durations (system-driven): `instant` 80 · `fast` 120 · `base` 220 · `slow` 340 · `slower` 520 · `countUp` 900. Springs (finger-driven): `press` {18, 280} · `pop` {14, 220} · `gentle` {20, 160} · `bouncy` {12, 180} · `snappy` {22, 320, mass 0.8}.
-- Scales: `row` 0.98 · `cta` 0.97 · `card` 0.97 · `tile` 0.94 · `chip` 0.94 · `icon` 0.9 · `pop` 1.08 · `popLg` 1.15. Also `imageFade` 120 · `stagger` 60 · `skeletonPeriod` 1100 · `pulsePeriod` 1400 · `swipeDismiss` {80 px, 800} · `sheetDismiss` {0.3, 1000}.
-- Presets from the barrel: `ease`, `dur`, `spr`, `enter`, `exit`, `layoutSpring`, `layoutTiming`, `useMotionReduced()`, `useLayoutTransitionsEnabled()`, `MotionConfig`; primitives `PressableScale`, `Pulse`, `Shake`, `Collapsible`/`ChevronRotate`, `AnimatedNumber`, `Confetti`.
+- Durations (system-driven): `instant` 80 · `fast` 120 · `base` 220 · `slow` 340 · `slower` 520 · `countUp` 900. Springs (finger-driven): `press` {28, 300} (damping ratio 0.81, about 1 % overshoot) · `pop` {14, 220} · `gentle` {20, 160} · `bouncy` {12, 180} · `snappy` {22, 320, mass 0.8}.
+- Scales: `row` 0.98 · `cta` 0.97 · `card` 0.97 · `tile` 0.97 · `chip` 0.97 · `icon` 0.95 · `pop` 1.08 · `popLg` 1.15. Also `imageFade` 120 (remote images) · `photoFade` 220 (bundled photos) · `stagger` 60 · `skeletonPeriod` 1100 · `pulsePeriod` 1400 · `swipeDismiss` {80 px, 800} · `sheetDismiss` {0.3, 1000}.
+- Presets from the barrel: `ease`, `dur`, `spr`, `enter` (`rise`, `drop`, `fade`, `soft`), `exit` (`fall`, `lift`, `fade`, `soft`; the `soft` pair is a 220 ms fade), `layoutSpring`, `layoutTiming`, `useMotionReduced()`, `useLayoutTransitionsEnabled()`, `MotionConfig`; primitives `PressableScale`, `Pulse`, `Shake`, `Collapsible`/`ChevronRotate`, `AnimatedNumber`, `Confetti`.
 - Reanimated 4 only: shared values via `.set()` / `.get()` (React Compiler); no `LayoutAnimation`; no new RN `Animated`; no `entering`/`exiting` on recycled FlashList cells — a `ProductCard` rendered by a FlashList passes `recycled`, which turns the Stepper's width morph and enter/exit crossfades off (`animateLayout={false} animateSwap={false}`); the Stepper never fades its controls in on mount either (the fade is latched to an in-place ADD). Reduced motion (OS setting or `Dev_Onyx_inhibit_Animations`) → scale 1, no shimmer, no loops. The only idle loops allowed are the shared Skeleton clock and the payment overlay halo; motion is otherwise a response to input. Route transitions read the same `useMotionReduced()`.
 
 ## 3. The press recipe
 
 `PressableScale` (or `usePressScale()` for cells that own their `Pressable`) replaces every `TouchableOpacity` and opacity fade:
 
-- `scale` default `motion.scale.card` 0.97; rows pass `motion.scale.row` 0.98, tiles/chips 0.94, icons 0.9. `spring` default `motion.spring.press` {damping 18, stiffness 280}.
+- `scale` default `motion.scale.card` 0.97; rows pass `motion.scale.row` 0.98, tiles/chips 0.97, icons 0.95. `spring` default `motion.spring.press` {damping 28, stiffness 300}.
 - `pressedStyle` is the background highlight: rows `C.bgSoft`, tiles `C.border`, primary CTA `C.primaryDark`, selected pills fill solid. `style` = the outer `Animated.View` (receives the transform); `innerStyle` = the `Pressable` itself (keeps dividers outside the scaled view).
 - `accessibilityRole="button"` by default; icon-only controls must pass `accessibilityLabel`; stepper labels include the product name; use `accessibilityState` for `disabled` / `selected` / `checked` / `expanded` / `busy`.
 - **Haptics are OFF by default (`haptic={false}`).** A press that only navigates or opens something — tiles, banners, avatar, search band, icon buttons, rows, cards, CTAs, back, share, close — is silent. Opt in ONLY where the press itself changes state: `Chip` 'select' (pass `haptic={selected ? false : "select"}` so re-pressing the active chip is silent), `Toggle` 'toggle', `SegmentedControl` 'select', rating stars 'select', dev-panel controls. A control that toggles OFF as well as ON (tip chips, wallet quick chips) calls `feedback.toggle(on)` in its handler with `haptic={false}` — the prop path cannot carry the direction. Never pass `haptic` to a control whose handler mutates the cart — `CartContext` fires add/remove itself. `sound` (ui_tap) is for pull-to-refresh and dev controls only (a tab switch is a `select` haptic with no sound — D11 Q2). `Chip` takes `accessibilityRole="tab"` inside a `tablist` strip and `"radio"` inside a `radiogroup`.
@@ -98,7 +101,15 @@ Platform note (CONTRACTS §2.1): **Silent mode: iOS ring/silent switch mutes UI 
 
 ## 6. Loading, empty, error
 
-Skeleton-first: the loading layout mirrors the real one inside `<SkeletonScreen label="Loading…">` (role `progressbar`); `Skeleton animated` shares one module clock, `shimmer` only for hero blocks ≥ 80 px; skeleton colour matches the screen background. Every skeleton gate goes through `useForceSkeleton(loading)` so `Dev_Onyx_inhibit_SkeletonExit` can hold it. Every screen has an explicit empty AND error state: one `EmptyState`, one CTA, Retry on error; error states pass `tone="error"` (the one error treatment: a C.dangerLight circle with a C.danger glyph). Pull-to-refresh never replaces content with a spinner; `RefreshControl` is tinted `C.primary`. Errors surface through `logError` / `logSilentFailure` (the only Sentry hook points) — never a bare `.catch(() => {})`.
+Skeleton-first: the loading layout mirrors the real one inside `<SkeletonScreen label="Loading…">` (role `progressbar`); `Skeleton animated` shares one module clock, `shimmer` only for hero blocks ≥ 80 px; skeleton colour matches the screen background. Every skeleton gate goes through `useForceSkeleton(loading)` so `Dev_Onyx_inhibit_SkeletonExit` can hold it. `SkeletonFade` cross-fades a full-screen skeleton into its content: `<SkeletonFade loading={showSkeleton} skeleton={<XSkeleton />}>content</SkeletonFade>`. While loading only the skeleton is mounted; after that the content mounts and the skeleton fades out over it in 220 ms (`exit.soft`), instantly under reduced motion. `bg` (default `C.bg`) is the ground behind the fading skeleton, so pass `C.card` on white screens; `style` defaults to `{ flex: 1 }`. Never use it inside a recycled list cell. Every screen has an explicit empty AND error state: one `EmptyState`, one CTA, Retry on error; error states pass `tone="error"` (the one error treatment: a C.dangerLight circle with a C.danger glyph, never branded). Non-error states with `iconWrap` sit the glyph in the 80 px brand doorway tile (`BrandFrame`, same C.primaryXLight fill and 1.5 px C.primaryLight border); `sprout` adds the sprout above the tile for resting or positive states only (never "not found", "sign in" or permission states); `media` replaces the icon or tile with a `BrandPhoto` or `BrandLogo`. Both props are ignored for `tone="error"`. Pull-to-refresh never replaces content with a spinner; `RefreshControl` is tinted `C.primary`. Errors surface through `logError` / `logSilentFailure` (the only Sentry hook points) — never a bare `.catch(() => {})`.
+
+### Brand
+
+The logo, the sprout, the doorway shape and the bundled photos live in `components/brand/`; its rules (one logo per viewport, where the sprout and the tagline may appear, photo licences) are in `components/brand/README.md`. Screens import from the `components/brand` barrel; files in `components/ui` import brand primitives by file (`../brand/BrandFrame`) so the crash path stays light.
+
+### Cards — `components/cards`
+
+Shared cards live in `components/cards` and are imported from its barrel. They build on both `components/brand` and `components/ui`, so nothing in either of those folders may import them. All are `React.memo` and their presses are silent. `SectionHeader` is the one section header: a 44 dp row with `title`, an optional `accent` bar and an optional action pill (`actionLabel` + `onAction`). `PhotoCard` is a wide photo card with its text in the left 55 % and an optional white CTA pill; without `onPress` it is a plain view. `PhotoTile` is a 136 x 170 portrait tile with its label on the bottom scrim. `TrustTrio` is a header plus three `surface.card` cards, each with a 36 dp `BrandFrame` glyph; it stacks into a column at large text or on narrow windows. Text on a photo is always `C.onPrimary` and both photo cards return `null` for an unfilled slot. Card copy may only state what the app already states elsewhere, or a neutral browsing prompt, and may only open a route that exists.
 
 ## 7. Dev flags — `lib/devFlags.ts` (codename indigo)
 
@@ -116,8 +127,8 @@ Skeleton-first: the loading layout mirrors the real one inside `<SkeletonScreen 
 
 ## 9. The owner's design direction (MAP §3 — every primitive migration must match it)
 
-1. Press feedback = `Pressable` + background highlight + scale spring (0.98 rows / 0.97 CTAs / 0.94 tiles & chips); opacity fades are out.
-2. Flat, card-less, gradient-less layouts; hairlines and 8 px bands as separators; bare glyphs instead of tinted icon chips; no CTA shadows.
+1. Press feedback = `Pressable` + background highlight + scale spring (0.98 rows / 0.97 CTAs, tiles & chips / 0.95 icons); opacity fades are out.
+2. Flat, shadow-less layouts; hairlines and 8 px bands as separators; bare glyphs instead of tinted icon chips; no CTA shadows. Cards are the flat `surface.*` hairline cards only, and the only gradients are the tab-header band, the skeleton shimmer and the `PhotoScrim` scrim.
 3. Underline inputs with animated focus colour.
 4. Typographic heroes (big numbers/names as text).
 5. Pills fill solid when selected.

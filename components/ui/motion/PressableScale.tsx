@@ -14,12 +14,12 @@ import { spr, useMotionReduced } from "./presets";
 export type PressableScaleProps = Omit<PressableProps, "style" | "children"> & {
   /**
    * Press-in scale target. Default `motion.scale.card` (0.97). Rows pass `motion.scale.row` (0.98), full-width
-   * CTAs `motion.scale.cta` (0.97), tiles/chips `motion.scale.tile` / `motion.scale.chip` (0.94), icon buttons
-   * `motion.scale.icon` (0.9).
+   * CTAs `motion.scale.cta` (0.97), tiles/chips `motion.scale.tile` / `motion.scale.chip` (0.97), icon buttons
+   * `motion.scale.icon` (0.95).
    */
   scale?: number;
   /**
-   * Spring used for press-in AND release. Default `motion.spring.press` ({ damping: 18, stiffness: 280 } — the
+   * Spring used for press-in AND release. Default `motion.spring.press` ({ damping: 28, stiffness: 300 } — the
    * home ProductCard press). Reshaped live by `Dev_Motion_inhibit_SpeedFactor` through `spr()`.
    */
   spring?: { damping: number; stiffness: number; mass?: number };

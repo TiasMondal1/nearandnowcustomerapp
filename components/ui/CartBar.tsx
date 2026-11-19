@@ -308,7 +308,7 @@ const styles = StyleSheet.create({
   thumb: {
     width: 32,
     height: 32,
-    borderRadius: 16,
+    borderRadius: radius.card,
     backgroundColor: C.card,
     borderWidth: 2,
     borderColor: C.primary,

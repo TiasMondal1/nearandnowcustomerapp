@@ -12,7 +12,6 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
-  InteractionManager,
   Keyboard,
   Linking,
   Platform,
@@ -70,6 +69,8 @@ const SETTLE_SUPPRESS_MS = 1500;
 /** Android re-rasterises a Marker's children; keep `tracksViewChanges` on only briefly after a move (MAP §7.17). */
 const MARKER_TRACK_MS = 700;
 const SEARCH_DEBOUNCE_MS = 300;
+/** The automatic GPS fix on mount waits out the push transition into this screen (ms). */
+const AUTO_LOCATE_DELAY_MS = 500;
 const SEARCH_TOP = 12;
 const SEARCH_HEIGHT = 48;
 const PANEL_GAP = 6;
@@ -212,14 +213,16 @@ export default function SelectMapLocationScreen(): React.JSX.Element {
     [runGeocode],
   );
 
-  // ── GPS (the hook owns the OS prompt inside beginNativePrompt; it never throws and never navigates) ──
+  // ── GPS (the hook sequences the OS prompt through runNativePrompt; it never throws and never navigates) ──
   const [gpsAttempt, setGpsAttempt] = useState(0);
   const gpsHandledRef = useRef(0);
 
   // Whether the pending attempt was the automatic mount fix (no gesture → no error haptic, W3 R4-05).
   const autoAttemptRef = useRef(false);
   const locate = useCallback(async (opts?: { auto?: boolean }) => {
-    const result = await requestDeviceAddress();
+    // The automatic mount fix may raise at most one dialog (the permission prompt), never the system
+    // location-accuracy one; the tapped "use current location" keeps the default and may offer it.
+    const result = await requestDeviceAddress(opts?.auto ? { settingsDialog: false } : undefined);
     if (!mountedRef.current) return;
     if (!result) {
       autoAttemptRef.current = !!opts?.auto;
@@ -245,15 +248,22 @@ export default function SelectMapLocationScreen(): React.JSX.Element {
   }, [gpsAttempt, gpsDenied]);
 
   // Mount: geocode the active location, or ask for GPS once the push transition has settled (MAP §2.8 #31).
+  // A real delay, not InteractionManager.runAfterInteractions — that is a plain setImmediate in this React Native
+  // version, so the fix (and the system location-accuracy dialog it can raise) started inside the transition. The
+  // permission dialog itself is sequenced by the hook (lib/pendingNativePrompts). The ref is set when the task
+  // RUNS, so a dependency change during the delay re-arms it instead of dropping it.
   const startedRef = useRef(false);
   useEffect(() => {
     if (startedRef.current) return;
-    startedRef.current = true;
-    const task = InteractionManager.runAfterInteractions(() => {
-      if (initialCoords) void runGeocode(initialCoords.latitude, initialCoords.longitude);
-      else void locate({ auto: true });
-    });
-    return () => task.cancel();
+    const timer = setTimeout(
+      () => {
+        startedRef.current = true;
+        if (initialCoords) void runGeocode(initialCoords.latitude, initialCoords.longitude);
+        else void locate({ auto: true });
+      },
+      initialCoords ? 0 : AUTO_LOCATE_DELAY_MS,
+    );
+    return () => clearTimeout(timer);
   }, [initialCoords, runGeocode, locate]);
 
   // ── Map events ──
@@ -642,7 +652,7 @@ const styles = StyleSheet.create({
   placeName: { fontFamily: fontFamily.bold, fontSize: 15, color: C.text, marginBottom: 2 },
   address: { fontFamily: fontFamily.semibold, fontSize: 14, lineHeight: 20, color: C.text },
 
-  // Legacy marker (Dev_Quartz_inhibit_Feature): the old 3-View pin on the brand green.
+  // Legacy marker (Dev_Quartz_inhibit_Feature): the old 3-View pin on the brand colour (C.primary).
   pinWrap: { width: 36, height: 48, alignItems: "center", justifyContent: "flex-start", backgroundColor: "transparent" },
   pinHead: {
     width: 32,

@@ -70,7 +70,7 @@ function Star({ n, filled, checked, size, disabled, scale, onPress }: StarProps)
         <MaterialCommunityIcons
           name={filled ? "star" : "star-outline"}
           size={size}
-          color={filled ? C.warning : C.textLight}
+          color={filled ? C.star : C.textLight}
         />
       </Animated.View>
     </PressableScale>

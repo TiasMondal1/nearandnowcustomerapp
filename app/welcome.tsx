@@ -4,24 +4,26 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Image, Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import Animated from "react-native-reanimated";
 
+import { BRAND_TAGLINE, BrandPhoto } from "../components/brand";
 import { enter, IconWrap, Screen } from "../components/ui";
 import { C } from "../constants/colors";
+import { fontFamily, text } from "../constants/ui";
 import { useAuth } from "../context/AuthContext";
 import { useLocation } from "../context/LocationContext";
 import { useDevFlag } from "../lib/devFlags";
-import { isNativePromptPending } from "../lib/pendingNativePrompts";
+import { onNativePromptsSettled } from "../lib/pendingNativePrompts";
 
 /** Auto-advance delay (DECISIONS D11 Q7 — 1.2 s). */
 const AUTO_ADVANCE_MS = 1200;
+/** Below this window height the column is too tight for the photo, so it is left out. */
+const PHOTO_MIN_WINDOW_HEIGHT = 640;
+/** Above this system font scale the text needs the photo's room (a three-line address would clip), so it is left out. */
+const PHOTO_MAX_FONT_SCALE = 1.15;
 /** Legacy delay under Dev_Zephyr_inhibit_Feature (the pre-zephyr 2 s, not tappable). */
 const LEGACY_ADVANCE_MS = 2000;
-/** How often to re-check for a pending native dialog before navigating (ms). */
-const PROMPT_POLL_MS = 250;
-/** A stuck / never-released prompt flag must not strand the user here forever (ms). */
-const PROMPT_HARD_CAP_MS = 8000;
 
 function getLocationIcon(label: string | null): keyof typeof MaterialCommunityIcons.glyphMap {
   if (!label) return "map-marker-outline";
@@ -39,6 +41,8 @@ export default function WelcomeScreen() {
   const skipInterstitial = useDevFlag("Dev_Zephyr_inhibit_WelcomeInterstitial");
   const [skipRequested, setSkipRequested] = useState(false);
   const advancedRef = useRef(false);
+  const { height: windowHeight, fontScale } = useWindowDimensions();
+  const showPhoto = windowHeight >= PHOTO_MIN_WINDOW_HEIGHT && fontScale <= PHOTO_MAX_FONT_SCALE;
 
   const firstName = user?.name?.split(" ")[0] ?? "there";
   const displayLabel = location?.label ?? null;
@@ -47,35 +51,25 @@ export default function WelcomeScreen() {
   // 0 = go now (tap, or the interstitial is switched off); otherwise the auto-advance delay.
   const delay = skipInterstitial || skipRequested ? 0 : legacy ? LEGACY_ADVANCE_MS : AUTO_ADVANCE_MS;
 
-  // Navigate to home after `delay` — unless a native permission dialog (push
-  // notifications, fired the instant login succeeded — see
-  // usePushNotifications.dev.ts) may still be up. That's only possible on a
-  // clean install (permissions still undetermined there; already-decided on
-  // every later app open, so this extra wait is a no-op in the overwhelmingly
-  // common case). Navigating blind into that dialog is a known hard-crash
-  // class — a native OS dialog racing a JS-driven screen transition kills the
-  // process below the JS layer, so ErrorBoundary never even sees it. Found +
-  // fixed 2026-09-09, see bug_fixes_2026-07-23.md. Capped so a stuck/never-
-  // released flag can't strand the user on this screen forever.
+  // Navigate to home after `delay` — but never into a native permission dialog, and never in the frame the
+  // Activity resumes from one. A dialog pauses the Activity (this timer with it), so the old "poll, then go at an
+  // 8 s cap" fired the instant the user answered, together with everything else that had queued up — the first-
+  // login blank page (2026-09-09 and 2026-11-19, see lib/pendingNativePrompts.ts and bug_fixes_2026-07-23.md).
+  // `onNativePromptsSettled` waits until nothing native is up AND things have been quiet for a moment; there is
+  // no cap while a dialog is showing (a leaked flag is dropped by the gate itself). The first-run prompts now
+  // wait for Home, so on every normal run this fires the moment the delay elapses.
   useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const hardDeadline = Date.now() + delay + PROMPT_HARD_CAP_MS;
-
-    const tryAdvance = () => {
-      if (cancelled || advancedRef.current) return;
-      if (isNativePromptPending() && Date.now() < hardDeadline) {
-        timer = setTimeout(tryAdvance, PROMPT_POLL_MS);
-        return;
-      }
-      advancedRef.current = true;
-      router.replace("/(tabs)/home");
-    };
-
-    timer = setTimeout(tryAdvance, delay);
+    let cancelSettled: (() => void) | null = null;
+    const timer = setTimeout(() => {
+      cancelSettled = onNativePromptsSettled(() => {
+        if (advancedRef.current) return;
+        advancedRef.current = true;
+        router.replace("/(tabs)/home");
+      });
+    }, delay);
     return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
+      clearTimeout(timer);
+      cancelSettled?.();
     };
   }, [delay]);
 
@@ -96,21 +90,31 @@ export default function WelcomeScreen() {
           {/* Logo */}
           <View style={styles.logoSection}>
             <Image
-              source={require("../assets/near_now_image_640.png")}
+              source={require("../assets/brand/logo-stacked.png")}
               style={styles.logo}
               resizeMode="contain"
               accessibilityIgnoresInvertColors
               accessible={false}
             />
+            <Text style={styles.tagline} maxFontSizeMultiplier={1.3}>
+              {BRAND_TAGLINE}
+            </Text>
           </View>
 
           {/* Greeting */}
           <View style={styles.greetSection}>
-            <Text style={styles.greetTitle} accessibilityRole="header">
+            <Text style={styles.greetTitle} accessibilityRole="header" maxFontSizeMultiplier={1.3}>
               Welcome{user ? `, ${firstName}` : ""}!
             </Text>
-            <Text style={styles.greetSub}>You&apos;re all set to start shopping.</Text>
+            <Text style={styles.greetSub} maxFontSizeMultiplier={1.3}>You&apos;re all set to start shopping.</Text>
           </View>
+
+          {/* Photo: decorative, taller windows at near-default text size only (returns null if the slot is unfilled) */}
+          {showPhoto ? (
+            <View style={styles.photoWrap}>
+              <BrandPhoto slot="welcome" shape="card" priority="high" />
+            </View>
+          ) : null}
 
           {/* Location */}
           <View style={styles.locationSection}>
@@ -123,11 +127,11 @@ export default function WelcomeScreen() {
               iconColor={C.primary}
               style={styles.locationIconCircle}
             />
-            <Text style={styles.locationLabel} numberOfLines={1}>
+            <Text style={styles.locationLabel} numberOfLines={1} maxFontSizeMultiplier={1.3}>
               {displayLabel ?? "Your location"}
             </Text>
             {displayAddress ? (
-              <Text style={styles.locationAddress} numberOfLines={3}>
+              <Text style={styles.locationAddress} numberOfLines={3} maxFontSizeMultiplier={1.3}>
                 {displayAddress}
               </Text>
             ) : null}
@@ -149,33 +153,17 @@ const styles = StyleSheet.create({
   },
 
   logoSection: { alignItems: "center" },
-  logo: { width: 160, height: 145 },
+  logo: { width: 160, height: 117 },
+  tagline: { ...text.label, color: C.textSub, marginTop: 8, textAlign: "center" },
 
   greetSection: { alignItems: "center", gap: 8 },
-  greetTitle: {
-    fontSize: 28,
-    fontFamily: "PlusJakartaSans_800ExtraBold",
-    color: C.text,
-    letterSpacing: -0.3,
-    textAlign: "center",
-  },
-  greetSub: { fontFamily: "PlusJakartaSans_500Medium", fontSize: 14, color: C.textSub, textAlign: "center" },
+  greetTitle: { ...text.price, letterSpacing: -0.3, textAlign: "center" },
+  greetSub: { fontFamily: fontFamily.medium, fontSize: 14, color: C.textSub, textAlign: "center" },
+
+  photoWrap: { width: "100%" },
 
   locationSection: { alignItems: "center", gap: 8, width: "100%" },
   locationIconCircle: { marginBottom: 4 },
-  locationLabel: {
-    fontFamily: "PlusJakartaSans_800ExtraBold",
-    fontSize: 18,
-    color: C.text,
-    letterSpacing: -0.3,
-    textAlign: "center",
-  },
-  locationAddress: {
-    fontFamily: "PlusJakartaSans_500Medium",
-    fontSize: 13,
-    color: C.textSub,
-    textAlign: "center",
-    lineHeight: 19,
-    paddingHorizontal: 16,
-  },
+  locationLabel: { ...text.screenTitle, letterSpacing: -0.3, textAlign: "center" },
+  locationAddress: { ...text.bodySm, fontFamily: fontFamily.medium, textAlign: "center", paddingHorizontal: 16 },
 });

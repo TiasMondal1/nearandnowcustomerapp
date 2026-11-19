@@ -40,11 +40,39 @@ If you ever need to re-apply only the patches without a full prebuild:
 npm run patch:android
 ```
 
+### A prebuild is REQUIRED before the next build (2026-11-19 blank-page fix)
+
+`npm run build:apk` runs Gradle against the existing `android/` folder — it does
+**not** prebuild. Three parts of the "blank grey page" fix are native and only
+reach an APK once `android/` has been regenerated:
+
+- `app.config.js` root `backgroundColor` (the Android window background — the
+  bare window is cream instead of the AppCompat default) — needs the full
+  `npm run prebuild:android`;
+- the extra `configChanges` (`density|fontScale|locale|layoutDirection`, so a
+  font-size / display-size change no longer recreates the Activity inside the
+  live process) — written by `scripts/patch-android.js`, so
+  `npm run patch:android` alone covers this one;
+- `expo-updates` is excluded from the native build (`package.json` →
+  `expo.autolinking.exclude`). Installed-but-disabled, it swallowed fatal native
+  exceptions and left an empty Activity until the app was cleared from recents;
+  without it the app crashes and relaunches cleanly. Autolinking is resolved at
+  Gradle time, so this one applies to any new build. Do not import
+  `expo-updates` from JS while it is excluded (the import throws at startup).
+  To bring OTA updates back: remove the `exclude` entry and configure
+  `updates.url` / `runtimeVersion`.
+
+So run this once before building:
+
+```bash
+npm run prebuild:android
+```
+
 ## App icon
 
-The icon lives at `assets/near_and_now_logo.png` (black background, centered
-logo). To regenerate every variant (icon, adaptive foreground, monochrome,
-splash, notification, favicon) from that one source image:
+The brand sources live in `assets/brand/` (the "doorway n" logo pack — saffron
+`#E85D0F` icon, cream mark). To regenerate every variant (icon, adaptive
+foreground, monochrome, splash, notification, favicon) from them:
 
 ```bash
 npm run icons:generate
@@ -56,12 +84,15 @@ The generator uses sharp and produces:
 
 | Output | Where it's used |
 |---|---|
-| `assets/images/icon.png` | Main app icon (iOS + legacy Android) — logo at 90% of canvas on black |
-| `assets/images/adaptive-icon-foreground.png` | Android adaptive icon — logo at **62%** so the tagline doesn't get cropped by the OS circle/squircle mask |
+| `assets/images/icon.png` | Main app icon (iOS + legacy Android) — the pack's saffron square |
+| `assets/images/adaptive-icon-foreground.png` | Android adaptive icon foreground — cream mark; the `#E85D0F` background is set in `app.config.js` |
 | `assets/images/adaptive-icon-monochrome.png` | Android 13+ themed-icon — white silhouette |
-| `assets/images/splash-icon.png` | Splash screen (black background via `expo-splash-screen`) |
+| `assets/images/splash-icon.png` | Splash screen — stacked logo in the centre 62% (white background via `expo-splash-screen`) |
 | `assets/images/notification-icon.png` | 96×96 white silhouette for push notifications |
 | `assets/images/favicon.png` | Web favicon |
+
+The in-app logo (boot frame, welcome, phone, OTP, onboarding, verify-email) is
+`assets/brand/logo-stacked.png`.
 
 ## Local APK builds
 

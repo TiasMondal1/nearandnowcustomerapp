@@ -30,6 +30,7 @@ import {
 } from "react-native";
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 
+import { BrandPhoto, hasPhoto } from "../../components/brand";
 import { AddressBlock } from "../../components/checkout/AddressBlock";
 import { BillSection } from "../../components/checkout/BillSection";
 import { DidYouForgetStrip } from "../../components/checkout/DidYouForgetStrip";
@@ -100,6 +101,8 @@ const REMOVE_TOAST_WINDOW_MS = 1500;
 const CLEAR_SUPPRESS_MS = 600;
 /** Focus the offending field once the scroll-to has settled. */
 const FOCUS_AFTER_SCROLL_MS = 260;
+/** How long the "Order placed" frame may stay up before the safety net takes over. */
+const LEAVE_TIMEOUT_MS = 4000;
 const LINK_HIT_SLOP = { top: 8, bottom: 8, left: 8, right: 12 } as const;
 const SKELETON_ROWS = [0, 1, 2] as const;
 const SKELETON_BILL_ROWS = [0, 1, 2, 3] as const;
@@ -190,7 +193,10 @@ export default function CheckoutScreen() {
   // the empty state (and used to redirect Home) and race the real navigation.
   // `navigatingAway` is its state twin for JSX — refs are never read in render.
   const navigatingAwayRef = useRef(false);
-  const [navigatingAway, setNavigatingAway] = useState(false);
+  // "confirmation" = the order is placed; "orders" = payment not confirmed yet, leaving for the Orders list.
+  const [navigatingAway, setNavigatingAway] = useState<false | "confirmation" | "orders">(false);
+  // The order just placed, for the safety net below (a navigation that never lands).
+  const placedOrderIdRef = useRef<string | null>(null);
 
   // ─── GSTIN ───
   const [gstinClaim, setGstinClaim] = useState(false);
@@ -272,8 +278,9 @@ export default function CheckoutScreen() {
 
   const cartSig = useMemo(() => items.map((i) => i.product_id).sort().join(","), [items]);
   const offlineBlocked = !online && !cobaltOff;
+  // Never "0 items": the cart is emptied the moment an order succeeds, while this screen is still on show.
   const subtitle = [
-    `${itemCount} ${itemCount === 1 ? "item" : "items"}`,
+    itemCount > 0 ? `${itemCount} ${itemCount === 1 ? "item" : "items"}` : null,
     eta.state === "open" && eta.minutes != null ? `Delivery in ${eta.minutes} min` : null,
   ]
     .filter(Boolean)
@@ -675,8 +682,9 @@ export default function CheckoutScreen() {
         // "add more" window does not attach items to this order, so leaving the
         // just-ordered items in the cart looked like checkout silently failed.
         // Silent: the confirmation screen owns the one success feedback.
+        placedOrderIdRef.current = created.id;
         navigatingAwayRef.current = true;
-        setNavigatingAway(true);
+        setNavigatingAway("confirmation");
         cartActions.clearCart({ silent: true });
         goToOrderConfirmation(created.id);
         return created;
@@ -792,8 +800,9 @@ export default function CheckoutScreen() {
           notePaymentConfirmed(internalOrder.id);
           markOrderPlaced().catch((err) => logSilentFailure("Mark order-placed flag", err));
           invalidateOrders(user.id);
+          placedOrderIdRef.current = internalOrder.id;
           navigatingAwayRef.current = true;
-          setNavigatingAway(true);
+          setNavigatingAway("confirmation");
           cartActions.clearCart({ silent: true });
           goToOrderConfirmation(internalOrder.id);
         } catch (err: unknown) {
@@ -857,8 +866,9 @@ export default function CheckoutScreen() {
         // payment-options screen (instead of the stale empty cache).
         clearSavedPaymentMethodsCache();
         invalidateOrders(user.id);
+        placedOrderIdRef.current = internalOrder.id;
         navigatingAwayRef.current = true;
-        setNavigatingAway(true);
+        setNavigatingAway("confirmation");
         cartActions.clearCart({ silent: true });
         goToOrderConfirmation(internalOrder.id);
         return;
@@ -900,13 +910,15 @@ export default function CheckoutScreen() {
       // is genuinely ambiguous (Razorpay's webhook may still land and
       // confirm the charge after we gave up polling), so unlike a clean
       // cancel/fail above, voiding the order here risks cancelling one that
-      // then gets marked paid. Kept exactly as before: order stays, cart is
-      // cleared, customer is routed to Orders to follow up. This Alert stays
-      // (it explains money and navigates).
+      // then gets marked paid. Order stays, cart is cleared, customer is
+      // routed to Orders to follow up. Navigate first, explain second: the
+      // Alert (it explains money) then sits over the Orders list, never over
+      // an emptied cart.
       invalidateOrders(user.id);
       navigatingAwayRef.current = true;
-      setNavigatingAway(true);
+      setNavigatingAway("orders");
       cartActions.clearCart({ silent: true });
+      router.replace("/orders");
 
       const messageByReason = {
         verify_failed:
@@ -916,19 +928,7 @@ export default function CheckoutScreen() {
       } as const;
 
       feedback.error();
-      Alert.alert(
-        "Payment not confirmed",
-        messageByReason[result.reason],
-        [{ text: "Go to Orders", onPress: () => router.replace("/orders") }],
-        {
-          cancelable: true,
-          onDismiss: () => {
-            // Android back on the Alert: the cart is empty now, so show the empty state instead of a frozen frame.
-            navigatingAwayRef.current = false;
-            setNavigatingAway(false);
-          },
-        },
-      );
+      Alert.alert("Payment not confirmed", messageByReason[result.reason], [{ text: "OK" }]);
       return;
     } catch (err: unknown) {
       logError("Place order", err);
@@ -939,6 +939,22 @@ export default function CheckoutScreen() {
       setPayingOrderId(null);
     }
   };
+
+  // Safety net: the leaving frame has no way out of its own, so if this screen is still mounted ~4 s after an
+  // away-navigation, go straight to the confirmation (order id known) or fall back to the empty cart.
+  useEffect(() => {
+    if (!navigatingAway) return undefined;
+    const timer = setTimeout(() => {
+      const orderId = placedOrderIdRef.current;
+      if (orderId) {
+        router.replace(`/order/confirmation/${orderId}`);
+        return;
+      }
+      navigatingAwayRef.current = false;
+      setNavigatingAway(false);
+    }, LEAVE_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [navigatingAway]);
 
   // ─── Render ───
   const addressBlock = useMemo(
@@ -953,20 +969,37 @@ export default function CheckoutScreen() {
     [location?.label, location?.address, shakes.address, addressError],
   );
 
-  const showSkeleton = useForceSkeleton(!isHydrated || navigatingAway);
+  // The skeleton is the not-yet-hydrated frame only; leaving after an order has its own calm state.
+  const showSkeleton = useForceSkeleton(!isHydrated) && !navigatingAway;
   const showEmpty = !showSkeleton && items.length === 0;
 
   return (
     <Screen bg={C.card} edges={["top"]}>
-      <ScreenHeader size="md" align="left" title="Cart" subtitle={subtitle} backFallbackHref="/(tabs)/home" />
+      <ScreenHeader
+        size="md"
+        align="left"
+        title={navigatingAway ? "Order placed" : "Cart"}
+        subtitle={navigatingAway ? undefined : subtitle || undefined}
+        backFallbackHref="/(tabs)/home"
+      />
 
-      {showSkeleton ? (
+      {navigatingAway ? (
+        <EmptyState
+          fill
+          iconWrap
+          icon={navigatingAway === "orders" ? "clock-outline" : "check-circle-outline"}
+          title={navigatingAway === "orders" ? "Payment not confirmed yet" : "Order placed"}
+          text={navigatingAway === "orders" ? "Taking you to your orders" : "Taking you to your order"}
+        />
+      ) : showSkeleton ? (
         <CheckoutSkeleton />
       ) : showEmpty ? (
         <EmptyState
           fill
           iconWrap
+          sprout
           icon="cart-outline"
+          media={hasPhoto("emptyCart") ? <BrandPhoto slot="emptyCart" width={112} sprout /> : undefined}
           title="Your cart is empty"
           text="Add fresh picks from nearby stores"
           action={{ label: "Browse products", onPress: browseProducts }}
@@ -1152,7 +1185,7 @@ type GstinSectionProps = {
   onFieldBlur: (field: "gstin" | "invoiceName") => void;
 };
 
-/** "Add GSTIN" row (ListRow + Collapsible; the GST chip is brand green, no blue) with the two fields on Inputs. */
+/** "Add GSTIN" row (ListRow + Collapsible; the GST chip is brand saffron, no blue) with the two fields on Inputs. */
 const GstinSection = React.memo(function GstinSection({
   open,
   onToggle,
@@ -1352,7 +1385,7 @@ const styles = StyleSheet.create({
   // GSTIN
   gstRow: { paddingHorizontal: 0, paddingVertical: 2 },
   // 11 px, not the spec's 10: DECISIONS D10 floors every text at 11 px.
-  gstChip: { fontFamily: fontFamily.bold, fontSize: 11, letterSpacing: 0.3, color: C.primary },
+  gstChip: { fontFamily: fontFamily.bold, fontSize: 11, letterSpacing: 0.3, color: C.primaryDark },
   gstFields: { gap: 12, paddingTop: 12 },
   verifiedRow: { flexDirection: "row", alignItems: "center", gap: 4 },
   verifiedText: { fontFamily: fontFamily.semibold, fontSize: 11, color: C.successText },

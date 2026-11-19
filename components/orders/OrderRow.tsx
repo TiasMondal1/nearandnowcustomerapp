@@ -178,7 +178,10 @@ function OrderRowBase({
     .filter(Boolean)
     .join(", ");
   const total = formatMoney(order.order_total);
-  const a11yLabel = `Order ${number}, ${meta.label.toLowerCase()}, ${dateLabel}, ${total}, ${plural(count, "item")}`;
+  // The count is dropped when unknown (an order read without its lines) — the label never reads "0 items".
+  const a11yLabel = [`Order ${number}`, meta.label.toLowerCase(), dateLabel, total, count > 0 ? plural(count, "item") : null]
+    .filter(Boolean)
+    .join(", ");
   const hasActions = showReorder || showRate || isActive || needsPayment;
 
   return (
@@ -196,7 +199,7 @@ function OrderRowBase({
           <OrderThumbs items={items} />
           <View style={styles.meta}>
             <View style={styles.badges}>
-              <Badge label={meta.label} bg={meta.bg} color={meta.color} pill size="sm" />
+              <Badge label={meta.label} bg={meta.bg} color={meta.text} pill size="sm" />
               {needsPayment ? <Badge label="Payment pending" tone="warning" pill size="sm" /> : null}
             </View>
             <Text style={styles.date} numberOfLines={1} maxFontSizeMultiplier={1.3}>

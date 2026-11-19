@@ -12,7 +12,7 @@ The customer-facing mobile app for Near & Now, a hyperlocal grocery / essentials
 | Data | Supabase (anon key — public catalog reads, RPCs, realtime) + the Near & Now REST backend (`lib/apiClient.ts`, bearer token) |
 | Payments | `@codearcade/expo-razorpay` |
 | Feedback | expo-haptics, expo-audio (8 UI sounds in `assets/sounds/`), expo-sensors (shake gate for dev mode) |
-| Infra | expo-notifications (push), expo-location + react-native-maps, expo-secure-store, @sentry/react-native, expo-updates (installed, OTA not configured) |
+| Infra | expo-notifications (push), expo-location + react-native-maps, expo-secure-store, @sentry/react-native, expo-updates (in package.json but **excluded from the native build** via `expo.autolinking.exclude`; never import it — see BUILD_COMMANDS.md) |
 | Type | Plus Jakarta Sans 400 / 500 / 600 / 700 / 800 via `@expo-google-fonts/plus-jakarta-sans` — the only five faces loaded |
 
 ## Setup
@@ -40,7 +40,7 @@ Never prefix a secret with `EXPO_PUBLIC_`: Metro inlines every static reference 
 | `npm run docs:dev-flags` / `docs:dev-flags:check` | regenerate / verify the flag table in `docs/DEV_MODE.md` from `lib/devFlags.ts` |
 | `npm run build` | `expo export` (static web bundle) |
 | `npm run build:apk*`, `build:aab`, `build:android`, `prebuild:android`, `patch:android` | local Gradle builds and the EAS production build — see `BUILD_COMMANDS.md` and the signing warning below |
-| `npm run icons:generate` | regenerate every icon / splash variant from `assets/near_and_now_logo.png` |
+| `npm run icons:generate` | regenerate every icon / splash variant from the brand sources in `assets/brand/` |
 
 ## Architecture pointers
 

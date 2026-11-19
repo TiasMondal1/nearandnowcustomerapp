@@ -19,6 +19,7 @@ import {
   UNVERIFIED_COPY,
   type AddItemsPhase,
 } from "../../../components/confirmation/AddMoreWindow";
+import { BrandStoryCard } from "../../../components/brand";
 import { SuccessHeader } from "../../../components/confirmation/SuccessHeader";
 import {
   BottomDock,
@@ -454,6 +455,7 @@ export default function OrderConfirmationScreen() {
         {loadState === "notFound" ? (
           <EmptyState
             fill
+            iconWrap
             icon="package-variant-closed-remove"
             title="Order not found"
             text="This link doesn't match any of your orders"
@@ -471,7 +473,7 @@ export default function OrderConfirmationScreen() {
         ) : (
           <EmptyState
             fill
-            iconWrap
+            tone="error"
             icon="alert-circle-outline"
             title="Couldn't load your order"
             text="It was placed — check My orders"
@@ -557,6 +559,13 @@ export default function OrderConfirmationScreen() {
             Order summary
           </Text>
           <View style={styles.summaryRows}>
+            {/* An order read without its lines (cold start from a notification): one muted row, never an empty block.
+                Same words as order detail / tracking — this screen does not refetch, so it promises nothing. */}
+            {orderItems.length === 0 ? (
+              <Text style={styles.moreItems} maxFontSizeMultiplier={1.3}>
+                No items to show
+              </Text>
+            ) : null}
             {previewItems.map((item, idx) => (
               <SummaryRow key={`${item.product_id ?? item.master_product_id ?? item.name}-${idx}`} item={item} last={idx === previewItems.length - 1} />
             ))}
@@ -576,6 +585,14 @@ export default function OrderConfirmationScreen() {
             </Text>
           </View>
         </View>
+
+        <BrandStoryCard
+          slot="orderPlaced"
+          title="Packed by a shop near you"
+          body="Thank you for shopping local."
+          style={styles.story}
+          testID="confirmation-story"
+        />
       </ScrollView>
 
       {RazorpayUI}
@@ -674,6 +691,7 @@ const styles = StyleSheet.create({
 
   // Summary
   summary: { paddingHorizontal: layout.gutter, paddingTop: 20 },
+  story: { marginTop: 24 },
   summaryRows: { marginTop: 4 },
   summaryRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10 },
   thumbWrap: {

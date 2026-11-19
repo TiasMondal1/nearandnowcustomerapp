@@ -17,10 +17,12 @@ import {
   ProductCard,
   Screen,
   ScreenHeader,
+  SkeletonFade,
   SkeletonProductCard,
   SkeletonScreen,
   useCartBarFootprint,
 } from "../../components/ui";
+import { BrandPhoto, hasPhoto } from "../../components/brand";
 import { C } from "../../constants/colors";
 import { fontFamily, layout } from "../../constants/ui";
 import { useLocation, type ActiveLocation } from "../../context/LocationContext";
@@ -233,44 +235,46 @@ export default function CategorySlugScreen() {
         testID="category-header"
       />
 
-      {showSkeleton ? (
-        <CategorySkeleton slow={slow} onRetry={retry} />
-      ) : error ? (
-        <EmptyState
-          fill
-          tone="error"
-          icon="alert-circle-outline"
-          title={error}
-          text="Check your connection and try again"
-          action={{ label: "Retry", onPress: retry }}
-        />
-      ) : isEmpty ? (
-        <EmptyState
-          fill
-          iconWrap
-          icon="package-variant-closed-remove"
-          title="Nothing here yet"
-          text="Try another category or check back soon"
-          action={{ label: "Browse categories", onPress: browseCategories }}
-        />
-      ) : (
-        <>
-          {inhibitSortChips ? null : <SortChips value={sort} onChange={setSort} />}
-          <FlashList
-            data={sorted}
-            keyExtractor={keyExtractor}
-            getItemType={getItemType}
-            renderItem={renderItem}
-            numColumns={NUM_COLUMNS}
-            drawDistance={DRAW_DISTANCE}
-            contentContainerStyle={listContent}
-            showsVerticalScrollIndicator={false}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} colors={[C.primary]} />}
-            accessibilityLabel={`${category?.name ?? "Category"} products`}
-            testID="category-grid"
+      <SkeletonFade loading={showSkeleton} skeleton={<CategorySkeleton slow={slow} onRetry={retry} />}>
+        {error ? (
+          <EmptyState
+            fill
+            tone="error"
+            icon="alert-circle-outline"
+            title={error}
+            text="Check your connection and try again"
+            action={{ label: "Retry", onPress: retry }}
           />
-        </>
-      )}
+        ) : isEmpty ? (
+          <EmptyState
+            fill
+            iconWrap
+            sprout
+            icon="package-variant-closed-remove"
+            media={hasPhoto("emptyCalm") ? <BrandPhoto slot="emptyCalm" width={112} sprout /> : undefined}
+            title="Nothing here yet"
+            text="Try another category or check back soon"
+            action={{ label: "Browse categories", onPress: browseCategories }}
+          />
+        ) : (
+          <>
+            {inhibitSortChips ? null : <SortChips value={sort} onChange={setSort} />}
+            <FlashList
+              data={sorted}
+              keyExtractor={keyExtractor}
+              getItemType={getItemType}
+              renderItem={renderItem}
+              numColumns={NUM_COLUMNS}
+              drawDistance={DRAW_DISTANCE}
+              contentContainerStyle={listContent}
+              showsVerticalScrollIndicator={false}
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} colors={[C.primary]} />}
+              accessibilityLabel={`${category?.name ?? "Category"} products`}
+              testID="category-grid"
+            />
+          </>
+        )}
+      </SkeletonFade>
     </Screen>
   );
 }

@@ -7,6 +7,7 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   AccessibilityInfo,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   StyleSheet,
@@ -24,6 +25,7 @@ import { useAuth } from "../context/AuthContext";
 import { sendOTP } from "../lib/authService";
 import { getDevFlag } from "../lib/devFlags";
 import { feedback } from "../lib/feedback";
+import { waitForNativePromptsSettled } from "../lib/pendingNativePrompts";
 
 const CODE_LENGTH = 6;
 /** Seconds before "Resend code" becomes available (first send and every resend). */
@@ -117,6 +119,12 @@ export default function OtpScreen() {
       //   router.replace("/welcome");
       // }
       feedback.tap(); // quiet confirm (W3 F7 / R2-24): light haptic + toast only — `success` is reserved for order placement
+      // The session is live from here, so anything keyed on `userId` has started. Never navigate into a native
+      // permission dialog (or in the frame the Activity resumes from one): drop the keyboard, then wait until
+      // nothing native is up and settled — immediate in practice, since the first-run prompts now wait for Home
+      // (lib/pendingNativePrompts, lib/firstRunPrompts).
+      Keyboard.dismiss();
+      await waitForNativePromptsSettled();
       // /phone is the stack root under this screen; replace swaps only the top, so unwind first or Home keeps
       // /phone (and a second /phone after logout) underneath it (W3 R6-05).
       if (router.canDismiss()) router.dismissAll();
@@ -236,7 +244,7 @@ export default function OtpScreen() {
           {/* Logo */}
           <View style={styles.logoSection}>
             <Image
-              source={require("../assets/near_now_image_640.png")}
+              source={require("../assets/brand/logo-stacked.png")}
               style={styles.logo}
               resizeMode="contain"
               accessible={false}
@@ -360,7 +368,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   logoSection: { alignItems: "center", paddingTop: space[4] },
-  logo: { width: 160, height: 145 },
+  logo: { width: 160, height: 117 },
   header: { gap: space[8] },
   pageName: { ...text.eyebrow },
   title: { ...text.h1 },

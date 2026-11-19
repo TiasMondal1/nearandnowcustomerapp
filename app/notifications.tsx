@@ -33,6 +33,7 @@ import {
   SkeletonScreen,
   useMotionReduced,
 } from "../components/ui";
+import { BrandPhoto, hasPhoto } from "../components/brand";
 import { C } from "../constants/colors";
 import { fontFamily, layout, motion, text } from "../constants/ui";
 import { useAuth } from "../context/AuthContext";
@@ -396,7 +397,7 @@ function NotificationsBody({ userId }: { userId: string }) {
     if (enablingPush) return;
     setEnablingPush(true);
     try {
-      // registerForPushNotifications wraps the OS dialog in beginNativePrompt() itself (MAP §7.6).
+      // registerForPushNotifications runs the OS dialog through runNativePrompt() itself (MAP §7.6).
       const token = await registerForPushNotifications(userId);
       if (token) {
         setPushEnabled(true);
@@ -586,7 +587,14 @@ function NotificationsBody({ userId }: { userId: string }) {
               action={{ label: "Retry", onPress: () => void load(true) }}
             />
           ) : (
-            <EmptyState iconWrap icon="bell-outline" title="You're all caught up" text="Order updates will appear here" />
+            <EmptyState
+              iconWrap
+              sprout
+              icon="bell-outline"
+              media={hasPhoto("emptyCalm") ? <BrandPhoto slot="emptyCalm" width={112} sprout /> : undefined}
+              title="You're all caught up"
+              text="Order updates will appear here"
+            />
           )
         }
       />

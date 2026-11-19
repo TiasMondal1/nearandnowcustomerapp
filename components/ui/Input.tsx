@@ -48,7 +48,7 @@ export type InputProps = Omit<TextInputProps, "style"> & {
   showCounter?: boolean;
   /** External shake: increment to shake the field (e.g. on submit with an invalid value). */
   shakeTrigger?: number;
-  /** Colour the border and label sweep to on focus. Default C.primary; the dev panel passes C.text (no brand green there). */
+  /** Colour the border and label sweep to on focus. Default C.primary; the dev panel passes C.text (no brand colour there). */
   focusColor?: string;
   containerStyle?: StyleProp<ViewStyle>;
   inputStyle?: StyleProp<TextStyle>;

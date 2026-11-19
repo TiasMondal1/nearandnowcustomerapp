@@ -73,6 +73,41 @@ function describeRequest(input: FetchInput, init?: RequestInit): { method: strin
   return { method, path };
 }
 
+/** No Supabase request may run longer than this (ms). */
+const SUPABASE_TIMEOUT_MS = 15_000;
+
+// A request on a dead connection never settles on its own: React Native builds its OkHttp client with connect /
+// read / write timeouts of 0, and only apiFetch had a timer. A hung read left Home in its skeleton until the app
+// was killed. Every Supabase request now aborts after 15 s. A caller-supplied signal (`.abortSignal()`) is
+// chained, not replaced: either one aborts the request. The rejection keeps the name "AbortError" on purpose —
+// postgrest-js retries any OTHER fetch failure of a GET three more times with backoff, which would turn one 15 s
+// timeout into a minute; an AbortError is returned to the caller at once as `{ error }`.
+async function fetchWithTimeout(target: string | Request, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const callerSignal = init?.signal ?? (typeof target === 'string' ? undefined : target.signal);
+  const onCallerAbort = () => controller.abort();
+  if (callerSignal?.aborted) controller.abort();
+  else callerSignal?.addEventListener('abort', onCallerAbort);
+
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, SUPABASE_TIMEOUT_MS);
+
+  try {
+    return await fetch(target, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (!timedOut) throw err;
+    const timeout = new Error(`Supabase request timed out after ${SUPABASE_TIMEOUT_MS / 1000} s`);
+    timeout.name = 'AbortError';
+    throw timeout;
+  } finally {
+    clearTimeout(timer);
+    callerSignal?.removeEventListener('abort', onCallerAbort);
+  }
+}
+
 // Same offline / latency / fail-rate seams as apiFetch so catalog loads slow
 // down and fail on demand too (kepler #27). Plain pass-through when dev mode
 // is locked. Timing + status land in the dev panel's network log when
@@ -82,7 +117,7 @@ const devFetch: typeof fetch = async (input, init) => {
   await applyDevNetworkSeams('supabase');
   const target = toRequestInfo(input);
   if (!getDevFlag('Dev_Perf_inhibit_NetworkLog')) {
-    const response = await fetch(target, init);
+    const response = await fetchWithTimeout(target, init);
     // Failed queries the screens handle quietly → Sentry. A success costs one check.
     if (response.status >= 400) reportSupabaseResponse(input, init, response);
     return response;
@@ -92,12 +127,13 @@ const devFetch: typeof fetch = async (input, init) => {
   const startedAt = Date.now();
   let status: NetworkLogEntry['status'] = 'error';
   try {
-    const response = await fetch(target, init);
+    const response = await fetchWithTimeout(target, init);
     status = response.status;
     if (response.status >= 400) reportSupabaseResponse(input, init, response);
     return response;
   } catch (err) {
-    status = err instanceof Error && err.message.includes('Network request failed') ? 'offline' : 'error';
+    const message = err instanceof Error ? err.message : '';
+    status = message.includes('Network request failed') ? 'offline' : message.includes('timed out') ? 'timeout' : 'error';
     throw err;
   } finally {
     recordNetworkLog({ method, path, ms: Date.now() - startedAt, status });

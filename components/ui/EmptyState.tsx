@@ -4,6 +4,9 @@ import { StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle 
 
 import { C } from "../../constants/colors";
 import { iconSize as iconSizes, layout, text as typo } from "../../constants/ui";
+// By file, not through the brand barrel: components/ErrorBoundary.tsx reaches EmptyState by file and the crash
+// path must stay light (the barrel would pull in expo-image through BrandPhoto).
+import { BrandFrame } from "../brand/BrandFrame";
 import { IconWrap } from "./IconWrap";
 import { PrimaryButton, type PrimaryButtonSize, type PrimaryButtonVariant } from "./PrimaryButton";
 import type { IconName } from "./types";
@@ -33,9 +36,13 @@ export type EmptyStateProps = {
   iconSize?: number;
   /** Default C.textLight (C.primary when `iconWrap`). */
   iconColor?: string;
-  /** Tab-root style: icon inside an 80px circle, bg C.primaryXLight, border 1.5 C.primaryLight. Default false. */
+  /** Tab-root style: icon inside the 80px brand doorway tile, bg C.primaryXLight, border 1.5 C.primaryLight. Default false. */
   iconWrap?: boolean;
-  /** 'error' = the one error treatment everywhere: iconWrap circle on C.dangerLight with a C.danger glyph (W3 R3-14). Default 'default'. */
+  /** Sprout above the doorway tile. For resting or positive states only. Default false. Ignored for tone="error" and for bare (non-wrapped) glyphs. */
+  sprout?: boolean;
+  /** Replaces the icon or tile (a BrandPhoto or BrandLogo). Default none. Ignored for tone="error". */
+  media?: React.ReactNode;
+  /** 'error' = the one error treatment everywhere: an 80px circle on C.dangerLight with a C.danger glyph (W3 R3-14). Default 'default'. */
   tone?: "default" | "error";
   /** Extra content rendered under the text / action. */
   children?: React.ReactNode;
@@ -45,7 +52,10 @@ export type EmptyStateProps = {
   testID?: string;
 };
 
-/** Centered column: 56px C.textLight glyph, 16/800 title, 14 body, optional sm CTA. gap 10, padding 32, marginTop 80. */
+/**
+ * Centered column: 56px C.textLight glyph (or the doorway tile with `iconWrap`, the red circle with `tone="error"`,
+ * or `media`), 16/800 title, 14 body, optional sm CTA. gap 10, padding 32, marginTop 80.
+ */
 export function EmptyState({
   icon,
   title,
@@ -55,6 +65,8 @@ export function EmptyState({
   iconSize,
   iconColor,
   iconWrap = false,
+  sprout = false,
+  media,
   tone = "default",
   children,
   style,
@@ -70,10 +82,16 @@ export function EmptyState({
 
   return (
     <View style={[styles.base, fill ? styles.fill : styles.top, style]} testID={testID}>
-      {wrapped ? (
-        <IconWrap size={80} circle bg={error ? C.dangerLight : C.primaryXLight} style={error ? styles.iconWrapBorderError : styles.iconWrapBorder}>
+      {error ? (
+        <IconWrap size={80} circle bg={C.dangerLight} style={styles.iconWrapBorderError}>
           {glyph}
         </IconWrap>
+      ) : media != null ? (
+        media
+      ) : wrapped ? (
+        <BrandFrame size={80} sprout={sprout}>
+          {glyph}
+        </BrandFrame>
       ) : (
         glyph
       )}
@@ -100,7 +118,6 @@ const styles = StyleSheet.create({
   base: { alignItems: "center", gap: 10, padding: layout.emptyPadding },
   top: { marginTop: layout.emptyTop },
   fill: { flex: 1, justifyContent: "center" },
-  iconWrapBorder: { borderWidth: 1.5, borderColor: C.primaryLight },
   iconWrapBorderError: { borderWidth: 1.5, borderColor: C.dangerBorder },
   title: { ...typo.emptyTitle },
   text: { ...typo.emptyText },

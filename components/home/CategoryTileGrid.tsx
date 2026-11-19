@@ -10,9 +10,10 @@ import { StyleSheet, Text, View } from "react-native";
 
 import { categoryFallbackIcon, categoryTint } from "../../constants/categoryTints";
 import { C } from "../../constants/colors";
-import { fontFamily, layout, motion, radius, text } from "../../constants/ui";
+import { fontFamily, layout, motion, radius } from "../../constants/ui";
 import type { Category } from "../../lib/categoryService";
 import { cdnImage } from "../../lib/imageUrl";
+import { SectionHeader } from "../cards";
 import { PressableScale } from "../ui";
 
 export type CategoryTileGridProps = {
@@ -74,11 +75,7 @@ function CategoryTileGridBase({ categories, counts, capped, onSelect, onSeeAll, 
 
   return (
     <View style={styles.root} testID={testID}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle} numberOfLines={1} maxFontSizeMultiplier={1.3} accessibilityRole="header">
-          Shop by category
-        </Text>
-      </View>
+      <SectionHeader title="Shop by category" />
       <View style={styles.grid}>
         {visible.map((category, i) => (
           <CategoryTile
@@ -144,7 +141,7 @@ const CategoryTile = React.memo(function CategoryTile({
             accessibilityIgnoresInvertColors
           />
         ) : (
-          <MaterialCommunityIcons name={categoryFallbackIcon(index)} size={TILE_GLYPH} color={C.primary} />
+          <MaterialCommunityIcons name={categoryFallbackIcon(index)} size={TILE_GLYPH} color={C.primaryDark} />
         )}
       </View>
       <Text style={styles.tileLabel} numberOfLines={2} maxFontSizeMultiplier={1.3}>
@@ -181,9 +178,6 @@ const AllCategoriesTile = React.memo(function AllCategoriesTile({ onPress, testI
 
 const styles = StyleSheet.create({
   root: {},
-  // 44 px tall: h3 line height 22 + 12 above + 10 below (HOME_ITEM_SIZE.catTileHeader).
-  header: { paddingHorizontal: layout.gutter, paddingTop: 12, paddingBottom: 10 },
-  headerTitle: { ...text.h3 },
   // Tiles carry 4 px of their own horizontal padding, so the row pads 12 to land on the 16 px gutter.
   grid: { flexDirection: "row", flexWrap: "wrap", paddingHorizontal: layout.gutter - 4 },
   tile: { width: "25%" },

@@ -185,7 +185,7 @@ export default function SelectLocationScreen(): React.JSX.Element {
     applyLocation({ ...coords, label: a.label, address: a.address, source: "saved" });
   };
 
-  // ── GPS row (the subtitle primes the OS prompt; the hook owns beginNativePrompt and never navigates) ──
+  // ── GPS row (the subtitle primes the OS prompt; the hook sequences it through runNativePrompt and never navigates) ──
   const [gpsAttempt, setGpsAttempt] = useState(0);
   const gpsHandledRef = useRef(0);
 
@@ -386,6 +386,7 @@ export default function SelectLocationScreen(): React.JSX.Element {
     </SkeletonScreen>
   ) : loadError && !addresses ? (
     <EmptyState
+      tone="error"
       icon="cloud-off-outline"
       title="Couldn't load addresses"
       text={loadError}

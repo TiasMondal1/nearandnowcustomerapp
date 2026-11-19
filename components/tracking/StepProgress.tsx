@@ -1,6 +1,7 @@
 // codename: mira
 // StepProgress — the tracking hero's four-step bar (Placed · Packed · On the way · Delivered) on the segmented
-// `ProgressBar` (CONTRACTS §4.12): done = C.primary, the active pill pulses once per status change, idle = C.bgSoft.
+// `ProgressBar` (CONTRACTS §4.12): done = C.success (order progress is "going well / done", so it is leaf green, never
+// the saffron brand colour), the active pill pulses once per status change, idle = C.bgSoft.
 import React from "react";
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
 
@@ -53,6 +54,7 @@ export function StepProgress({ status, height = 6, style, testID }: StepProgress
         segments={TRACKING_STEPS.length}
         activeIndex={active}
         progress={(active + 1) / TRACKING_STEPS.length}
+        color={C.success}
         height={height}
         accessibilityLabel={`Order progress: ${label}`}
       />

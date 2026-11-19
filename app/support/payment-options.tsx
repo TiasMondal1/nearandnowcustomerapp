@@ -304,6 +304,7 @@ export default function PaymentOptionsScreen() {
             title={WALLET_SELECTION.label}
             subtitle={walletSubtitle}
             icon="wallet-outline"
+            logoKey="wallet"
             selected={isWallet}
             disabled={walletInsufficient}
             onPress={() => select(WALLET_SELECTION, isWallet)}

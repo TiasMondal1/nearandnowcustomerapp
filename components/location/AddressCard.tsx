@@ -1,6 +1,6 @@
 // Swipeable address row for the address book (/location). Moved out of app/location/AddressCard.tsx — a
 // component that had become the route `/location/AddressCard` by accident (MAP C13) — and rebuilt on
-// ReanimatedSwipeable (RNGH 2.28): swipe left reveals Edit (C.successLight / C.success) and Delete
+// ReanimatedSwipeable (RNGH 2.28): swipe left reveals Edit (C.primaryXLight / C.primaryDark) and Delete
 // (C.dangerLight / C.danger); the body is AddressRow. One card open at a time (module ref), one `select`
 // haptic when the swipe crosses the open threshold, and both actions exposed to screen readers through
 // `accessibilityActions` (W15-location-foundations, 2026-10-03).
@@ -102,9 +102,9 @@ function RightActions({ progress, label, onEdit, onDelete }: RightActionsProps):
       <SwipeAction
         icon="pencil-outline"
         label="Edit"
-        bg={C.successLight}
-        pressedBg={C.successBorder}
-        color={C.success}
+        bg={C.primaryXLight}
+        pressedBg={C.primaryLight}
+        color={C.primaryDark}
         accessibilityLabel={`Edit ${label} address`}
         onPress={onEdit}
       />

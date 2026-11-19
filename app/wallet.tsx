@@ -28,8 +28,9 @@ import {
   SkeletonScreen,
   useMotionReduced,
 } from "../components/ui";
+import { BrandLogo, Sprout } from "../components/brand";
 import { C } from "../constants/colors";
-import { fontFamily, motion, text } from "../constants/ui";
+import { fontFamily, motion, radius, surface, text } from "../constants/ui";
 import { useAuth } from "../context/AuthContext";
 import { useRefetchOnReconnect } from "../hooks/useRefetchOnReconnect";
 import { useForceSkeleton } from "../hooks/useSlowLoad";
@@ -180,7 +181,7 @@ const renderTxItem = ({ item }: ListRenderItemInfo<TxListItem>) =>
 
 // ─── Quick chip ───────────────────────────────────────────────────────────────
 
-// Quick-amount pill: gray chip that fills green when selected, with a quick
+// Quick-amount pill: gray chip that fills saffron (C.primary) when selected, with a quick
 // scale-down on press that springs back on release. Selecting an amount is a
 // state change, so the press carries the `toggle` haptic (not when already selected).
 function QuickChip({ amount, active, onPress }: { amount: number; active: boolean; onPress: () => void }) {
@@ -464,8 +465,11 @@ export default function WalletScreen() {
 
   const header = (
     <>
-      {/* Balance — flat and typographic, no hero card */}
+      {/* Balance — the same typographic balance inside a flat tinted card (no gradient, no shadow) */}
       <View style={styles.balanceBlock}>
+        {/* Decorative, in the top-right corner beside the label: clear of the balance, the delta chip and the
+            nudge's Dismiss button. Left out of the error row (error states stay unbranded). */}
+        {balance == null && balanceError ? null : <Sprout width={40} style={styles.balanceSprout} />}
         <Text style={styles.balanceLabel}>Wallet balance</Text>
         {balance == null ? (
           balanceError ? (
@@ -479,7 +483,7 @@ export default function WalletScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Retry loading balance"
               >
-                <Text style={styles.retryText}>Retry</Text>
+                <Text style={styles.balanceRetryText}>Retry</Text>
               </PressableScale>
             </View>
           ) : (
@@ -651,11 +655,15 @@ export default function WalletScreen() {
     <Screen edges={["top"]} bg={C.white}>
       {/* Header — transparent 40px chevron back, ink title; no onBack (deep-link-safe fallback) */}
       <ScreenHeader
-        title="My Wallet"
+        title="My wallet"
         titleStyle={styles.headerTitle}
         backProps={{ size: 40, bg: "transparent", icon: "chevron-left", iconSize: 28, color: C.text }}
         backFallbackHref="/(tabs)/home"
-        right={<View style={styles.headerSpacer} />}
+        right={
+          <View style={styles.headerSpacer}>
+            <BrandLogo variant="mark" height={24} />
+          </View>
+        }
         style={styles.header}
       />
 
@@ -684,20 +692,33 @@ export default function WalletScreen() {
 
 const styles = StyleSheet.create({
   header: { borderBottomColor: C.hairline },
-  headerSpacer: { width: 40 },
+  headerSpacer: { width: 40, alignItems: "center", justifyContent: "center" },
   headerTitle: { color: C.text, letterSpacing: -0.2 },
   scroll: { paddingBottom: 60 },
 
-  // Flat typographic balance block (Uber Cash layout)
-  balanceBlock: { paddingHorizontal: 20, paddingTop: 24, paddingBottom: 28 },
+  // Typographic balance in a flat tinted card
+  balanceBlock: {
+    ...surface.tint,
+    borderRadius: radius.xxxl,
+    marginHorizontal: 16,
+    marginTop: 16,
+    marginBottom: 20,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 22,
+    overflow: "hidden",
+  },
+  balanceSprout: { position: "absolute", right: 16, top: 14 },
   balanceLabel: { fontSize: 13, color: C.textSub, fontFamily: fontFamily.semibold, letterSpacing: 0.3 },
   balanceRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 6 },
   balanceAmount: { fontFamily: fontFamily.extrabold, fontSize: 44, lineHeight: 52, color: C.text, letterSpacing: -1.2 },
   balanceSpinner: { alignSelf: "flex-start", marginTop: 14 },
   balanceErrorRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 10 },
   balanceErrorText: { fontFamily: fontFamily.medium, fontSize: 13, color: C.textSub },
-  deltaChip: { backgroundColor: C.primaryLight, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
-  deltaChipText: { fontFamily: fontFamily.bold, fontSize: 13, color: C.primaryDark },
+  // primaryDark: on the card's tinted ground a 13 px saffron label is under 4.5:1.
+  balanceRetryText: { fontFamily: fontFamily.bold, fontSize: 13, color: C.primaryDark },
+  deltaChip: { backgroundColor: C.successLight, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
+  deltaChipText: { fontFamily: fontFamily.bold, fontSize: 13, color: C.successText },
   nudgeRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 10 },
   nudgeText: { fontFamily: fontFamily.medium, fontSize: 12, color: C.textSub, flex: 1 },
 

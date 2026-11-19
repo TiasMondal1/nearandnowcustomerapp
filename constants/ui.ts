@@ -45,6 +45,10 @@ export const layout = {
   // Catalog grids / rails
   railCardWidth: 132,    // horizontal ProductCard rail width
   gridGap: 8,            // ProductCard grid gap
+  // Photo cards / section headers (components/cards)
+  photoCardMinHeight: 156, // wide PhotoCard
+  aisleTileWidth: 136,     // PhotoTile width; height is round(width x 1.25) = 170
+  sectionHeaderHeight: 44, // SectionHeader row: 12 above, 22 line, 10 below
 } as const;
 
 // ─── Radius ───────────────────────────────────────────────────────────────────
@@ -124,7 +128,7 @@ export const text = {
   // Amounts
   amount: { fontFamily: fontFamily.extrabold, fontSize: 18, color: C.text },                                          // orders total, checkout totalValue
   amountLg: { fontFamily: fontFamily.extrabold, fontSize: 22, color: C.text },                                        // cart projectedAmount, product name
-  price: { fontFamily: fontFamily.extrabold, fontSize: 28, color: C.text },                                           // product price — ink, not green
+  price: { fontFamily: fontFamily.extrabold, fontSize: 28, color: C.text },                                           // product price — ink, not a brand colour
   priceLg: { fontFamily: fontFamily.extrabold, fontSize: 22, lineHeight: 28, letterSpacing: -0.4, color: C.text },   // product sheet / CartBar total
   // Buttons (label colour is C.onPrimary — the literal "#fff" is gone)
   buttonLg: { fontFamily: fontFamily.extrabold, fontSize: 16, color: C.onPrimary, letterSpacing: 0.3 },               // product addBtn, location CTAs
@@ -153,6 +157,16 @@ export const shadow = {
   sheet: { shadowColor: C.shadow,  shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 20 }, // ProfileMenu
 } as const satisfies Record<string, Shadow>;
 export type ShadowName = keyof typeof shadow;
+
+// ─── Surfaces ─────────────────────────────────────────────────────────────────
+// The one card surface: flat, hairline, radius 16. No shadow (every card here clips a photo, and Android
+// drops elevation under overflow: hidden). `photo` clips its content; `tint` is the saffron wash.
+export const surface = {
+  card: { backgroundColor: C.card, borderRadius: radius.card, borderWidth: 1, borderColor: C.hairline },
+  photo: { backgroundColor: C.bgSoft, borderRadius: radius.card, borderWidth: 1, borderColor: C.hairline, overflow: 'hidden' },
+  tint: { backgroundColor: C.primaryXLight, borderRadius: radius.card, borderWidth: 1, borderColor: C.primaryLight },
+} as const satisfies Record<string, ViewStyle>;
+export type SurfaceName = keyof typeof surface;
 
 // ─── Header ───────────────────────────────────────────────────────────────────
 export const header = {
@@ -183,14 +197,15 @@ export const HEADER_HEIGHT = header.contentHeight + header.borderWidth; // 67
 export const motion = {
   duration: { instant: 80, fast: 120, base: 220, slow: 340, slower: 520, countUp: 900 },
   spring: {
-    press:  { damping: 18, stiffness: 280 },            // press in/out (home ProductCard today)
+    press:  { damping: 28, stiffness: 300 },            // press in/out: damping ratio 0.81, about 1 % overshoot
     pop:    { damping: 14, stiffness: 220 },            // one-shot emphasis (icon pop, CartBar bounce)
     gentle: { damping: 20, stiffness: 160 },            // sheets, pill snap
     bouncy: { damping: 12, stiffness: 180 },            // heart / star pop
     snappy: { damping: 22, stiffness: 320, mass: 0.8 }, // stepper width morph, digit roll
   },
-  scale: { row: 0.98, cta: 0.97, card: 0.97, tile: 0.94, chip: 0.94, icon: 0.9, pop: 1.08, popLg: 1.15 },
+  scale: { row: 0.98, cta: 0.97, card: 0.97, tile: 0.97, chip: 0.97, icon: 0.95, pop: 1.08, popLg: 1.15 },
   imageFade: 120,
+  photoFade: 220,        // bundled photos (BrandPhoto) fading in over their sand ground
   stagger: 60,
   skeletonPeriod: 1100,
   pulsePeriod: 1400,

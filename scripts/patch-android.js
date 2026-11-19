@@ -337,14 +337,25 @@ if (fs.existsSync(manifestPath)) {
     mfChanged = true;
   }
 
-  // Add smallestScreenSize to configChanges if missing.
-  if (!mf.includes("smallestScreenSize") && mf.includes("android:configChanges=")) {
-    mf = mf.replace(
-      /android:configChanges="([^"]+)"/,
-      (_, existing) => `android:configChanges="${existing}|smallestScreenSize"`,
-    );
-    note("AndroidManifest.xml: added smallestScreenSize to configChanges");
-    mfChanged = true;
+  // Add the missing configChanges to the MainActivity (the first android:configChanges in the manifest).
+  // smallestScreenSize: tablet / multi-window resizes. density | fontScale | locale | layoutDirection: without
+  // them a display-size, font-size or language change (or the system applying one on resume) destroys and
+  // recreates MainActivity inside the SAME process — React remounts against already-initialised module state
+  // with no splash to cover it. Declared here, React Native gets onConfigurationChanged instead and re-reads
+  // the display metrics itself.
+  const WANTED_CONFIG_CHANGES = ["smallestScreenSize", "density", "fontScale", "locale", "layoutDirection"];
+  const configChangesMatch = mf.match(/android:configChanges="([^"]+)"/);
+  if (configChangesMatch) {
+    const present = configChangesMatch[1].split("|").map((part) => part.trim());
+    const missing = WANTED_CONFIG_CHANGES.filter((flag) => !present.includes(flag));
+    if (missing.length > 0) {
+      mf = mf.replace(
+        /android:configChanges="([^"]+)"/,
+        (_, existing) => `android:configChanges="${existing}|${missing.join("|")}"`,
+      );
+      note(`AndroidManifest.xml: added ${missing.join(", ")} to configChanges`);
+      mfChanged = true;
+    }
   }
 
   // Add android:resizeableActivity="true" to the MainActivity if missing.

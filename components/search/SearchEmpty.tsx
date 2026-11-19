@@ -8,7 +8,7 @@ import { ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { C } from "../../constants/colors";
 import { TRENDING_SEARCHES } from "../../constants/searchTrending";
-import { HIT_SLOP, layout, motion, text } from "../../constants/ui";
+import { HIT_SLOP, layout, motion, radius, text } from "../../constants/ui";
 import { RECENT_SEARCHES_MAX } from "../../lib/recentSearches";
 import { Chip, PressableScale } from "../ui";
 
@@ -115,7 +115,7 @@ const styles = StyleSheet.create({
   section: { paddingHorizontal: layout.gutter, paddingTop: 16 },
   titleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 28, marginBottom: 10 },
   title: { ...text.h3 },
-  clear: { paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8 },
+  clear: { paddingHorizontal: 8, paddingVertical: 6, borderRadius: radius.md },
   clearPressed: { backgroundColor: C.primaryXLight },
   clearText: { ...text.link },
   chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },

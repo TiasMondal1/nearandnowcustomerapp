@@ -57,12 +57,13 @@ export function isTerminalStatus(status: string | null | undefined): boolean {
 /**
  * The parts of a snapshot the screen renders from. `refresh()` only calls `setData` when this key changes
  * (design/speed-and-ease #8, MAP P7): a poll that brings nothing new must not re-render the map subtree.
- * `delivery_otp` is included on top of the #8 formula so a PIN that lands without a status change still paints.
+ * `delivery_otp` is included on top of the #8 formula so a PIN that lands without a status change still paints;
+ * so is each store's item count, so lines that arrive (or change) without a status change paint too.
  */
 export function snapshotKey(next: TrackingFullResponse): string {
   const order = next.order;
   const stores = (order?.store_orders ?? [])
-    .map((so) => `${so.id}:${so.status ?? ''}:${so.delivery_partner_id ?? ''}`)
+    .map((so) => `${so.id}:${so.status ?? ''}:${so.delivery_partner_id ?? ''}:${so.order_items?.length ?? 0}`)
     .join('|');
   return [
     order?.status ?? '',

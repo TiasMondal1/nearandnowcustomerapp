@@ -26,7 +26,8 @@ export type EtaLineProps = {
 };
 
 /**
- * open → "⚡ Delivery in <N> minutes" in C.primary with the number on `AnimatedNumber mode="roll"` (snaps under
+ * open → "⚡ Delivery in <N> minutes" (C.primary bolt, C.primaryDark text — the 13–14 px semibold line needs 4.5:1,
+ * which saffron itself cannot reach on cream) with the number on `AnimatedNumber mode="roll"` (snaps under
  * `Dev_Antares_inhibit_Ticker` and reduced motion) · closed → "Store closed · opens later today" in C.warningText ·
  * unknown → "Finding stores…" in C.textSub · none → renders null. One accessible text element whose label is the full
  * sentence. The bolt springs 1 → 1.2 → 1 (`motion.spring.pop` then `.press`) only when the minutes decrease.
@@ -116,8 +117,8 @@ export function EtaLine({ size = "sm", eta: etaProp, style, testID }: EtaLinePro
 
 const styles = StyleSheet.create({
   line: { flexDirection: "row", alignItems: "center", alignSelf: "flex-start", gap: 4 },
-  textSm: { fontFamily: fontFamily.semibold, fontSize: 13, lineHeight: 18, color: C.primary },
-  textMd: { fontFamily: fontFamily.semibold, fontSize: 14, lineHeight: 20, color: C.primary },
+  textSm: { fontFamily: fontFamily.semibold, fontSize: 13, lineHeight: 18, color: C.primaryDark },
+  textMd: { fontFamily: fontFamily.semibold, fontSize: 14, lineHeight: 20, color: C.primaryDark },
   closed: { color: C.warningText },
   unknown: { color: C.textSub },
 });

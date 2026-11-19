@@ -29,6 +29,7 @@ export {
   type SkeletonCircleProps,
   type SkeletonScreenProps,
 } from "./Skeleton";
+export { SkeletonFade, type SkeletonFadeProps } from "./SkeletonFade";
 export { Divider, type DividerProps } from "./Divider";
 export { IconWrap, defaultIconWrapRadius, defaultIconWrapIconSize, type IconWrapProps } from "./IconWrap";
 export {

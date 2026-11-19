@@ -17,6 +17,7 @@ import { useAuth } from "../context/AuthContext";
 import { requestDevUnlock } from "../context/DevModeContext";
 import { getAppVersion } from "../lib/appExtra";
 import { useDevFlag } from "../lib/devFlags";
+import { BrandSignOff } from "./brand";
 import { BottomSheet, ListRow, PressableScale, type IconName } from "./ui";
 
 interface ProfileMenuProps {
@@ -110,7 +111,7 @@ export default function ProfileMenu({ visible, onClose, unreadCount = 0 }: Profi
   const showUnreadDot = unreadCount > 0 && !unreadDotOff;
 
   return (
-    <BottomSheet visible={visible} onClose={onClose} onDismiss={runPending} contentStyle={styles.sheetContent}>
+    <BottomSheet visible={visible} onClose={onClose} onDismiss={runPending} contentStyle={styles.sheetContent} calm>
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* Identity header — name is the headline, avatar trails (Uber account layout) */}
         <View style={styles.identityRow}>
@@ -178,13 +179,13 @@ export default function ProfileMenu({ visible, onClose, unreadCount = 0 }: Profi
           accessibilityRole="none"
           style={styles.footer}
         >
-          <Text style={styles.footerBrand}>Near & Now</Text>
-          <Text style={styles.footerTagline}>Digital Dukaan, local dil se</Text>
-          {atlasOff ? null : (
-            <Text style={styles.footerVersion} accessibilityLabel={`Version ${version}, build ${build}`}>
-              Version {version} ({build})
-            </Text>
-          )}
+          <BrandSignOff>
+            {atlasOff ? null : (
+              <Text style={styles.footerVersion} accessibilityLabel={`Version ${version}, build ${build}`}>
+                Version {version} ({build})
+              </Text>
+            )}
+          </BrandSignOff>
         </Pressable>
       </ScrollView>
     </BottomSheet>
@@ -287,7 +288,5 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 16,
   },
-  footerBrand: { fontFamily: "PlusJakartaSans_800ExtraBold", fontSize: 15, color: C.primary },
-  footerTagline: { fontFamily: "PlusJakartaSans_600SemiBold", fontSize: 11, color: C.textLight, marginTop: 3 },
   footerVersion: { fontFamily: "PlusJakartaSans_500Medium", fontSize: 11, color: C.textLight, marginTop: 4 },
 });

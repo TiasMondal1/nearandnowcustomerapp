@@ -325,6 +325,7 @@ export default function EditLocationScreen(): React.JSX.Element {
         <ScreenHeader title="Edit address" backFallbackHref="/location" />
         <EmptyState
           fill
+          tone="error"
           icon="cloud-off-outline"
           title="Couldn't load the address"
           text={loadError}

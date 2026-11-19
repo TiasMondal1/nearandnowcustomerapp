@@ -6,7 +6,7 @@
 // this component is the single owner of the order-placed feedback (PLAN §5 rule 5).
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import React, { useEffect, useRef, useState } from "react";
-import { StyleSheet, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from "react-native";
+import { StyleSheet, Text, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from "react-native";
 import Animated, { useAnimatedStyle, useSharedValue, withSequence, withSpring } from "react-native-reanimated";
 
 import { C } from "../../constants/colors";
@@ -14,6 +14,7 @@ import { fontFamily, iconSize, motion, shadow, text } from "../../constants/ui";
 import { useDeliveryEta } from "../../hooks/useDeliveryEta";
 import { getDevFlag, useDevFlag } from "../../lib/devFlags";
 import { haptic, sound } from "../../lib/feedback";
+import { BrandLogo, Sprout } from "../brand";
 import { Confetti, IconButton, Pulse, dur, enter, spr, useMotionReduced } from "../ui";
 
 /** Orders older than this are not celebrated again (a push / deep link into an old order in a new JS session — W3 R2-20). */
@@ -57,6 +58,16 @@ const STAGGER_NUMBER_MS = 200;
 const STAGGER_ETA_MS = 280;
 /** Close button offset inside the band. */
 const CLOSE_INSET = 8;
+/** Brand logo (horizontal, 20 dp tall → 76 wide) in the band's top-left corner; clears the 96 dp circle at 360 dp. */
+const LOGO_HEIGHT = 20;
+const LOGO_LEFT = 16;
+const LOGO_TOP = 17;
+/** Sprout on the check circle: pops with it (child of the animated view), static under reduced motion. */
+const SPROUT_WIDTH = 40;
+/** Burst palette: saffron, its wash, leaf green and white — the brand's colours only (the default adds C.warning). */
+const CONFETTI_COLORS = [C.primary, C.primaryLight, C.success, C.white];
+/** Flash glyph before the ETA line. */
+const ETA_GLYPH_SIZE = 14;
 
 /**
  * Order ids whose celebration already played in this JS session. Module-scoped (not a ref) because the guard must
@@ -127,7 +138,7 @@ export function SuccessHeader({ placedAtMs, orderId, orderNumber, onClose, topIn
   };
 
   const arriving = eta.state === "open" && eta.minutes != null ? `arriving in about ${eta.minutes} minutes` : null;
-  const etaCopy = arriving ? `⚡ Arriving in about ${eta.minutes} minutes` : "We'll let you know when it's on the way";
+  const etaCopy = arriving ? `Arriving in about ${eta.minutes} minutes` : "We'll let you know when it's on the way";
   const liveLabel = `Order placed, ${arriving ?? "we'll let you know when it's on the way"}`;
   const circleCentreY = topInset + BAND_PADDING_TOP + CIRCLE_SIZE / 2;
   const confettiOrigin = bandWidth > 0 ? { x: bandWidth / 2, y: circleCentreY } : undefined;
@@ -145,10 +156,13 @@ export function SuccessHeader({ placedAtMs, orderId, orderNumber, onClose, topIn
       style={[styles.band, { paddingTop: topInset + BAND_PADDING_TOP }, style]}
       testID={testID}
     >
+      {/* One logo per viewport: the band signs the moment. Decorative — the live region below carries the words. */}
+      <BrandLogo variant="horizontal" height={LOGO_HEIGHT} style={[styles.logo, { top: topInset + LOGO_TOP }]} />
+
       <View style={styles.checkWrap}>
         <Pulse
           size={CIRCLE_SIZE}
-          color={C.primary}
+          color={C.success}
           once
           active={popEnabled}
           period={RING_MS}
@@ -158,7 +172,8 @@ export function SuccessHeader({ placedAtMs, orderId, orderNumber, onClose, topIn
           style={styles.ring}
         />
         <Animated.View style={[styles.circle, popStyle]} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-          <MaterialCommunityIcons name="check" size={CHECK_SIZE} color={C.primary} />
+          <MaterialCommunityIcons name="check" size={CHECK_SIZE} color={C.success} />
+          <Sprout width={SPROUT_WIDTH} style={styles.sprout} />
         </Animated.View>
       </View>
 
@@ -169,9 +184,12 @@ export function SuccessHeader({ placedAtMs, orderId, orderNumber, onClose, topIn
         <Animated.Text entering={entering(STAGGER_NUMBER_MS)} style={styles.orderNumber} maxFontSizeMultiplier={1.3}>
           #{orderNumber}
         </Animated.Text>
-        <Animated.Text entering={entering(STAGGER_ETA_MS)} style={styles.eta} maxFontSizeMultiplier={1.3} numberOfLines={2}>
-          {etaCopy}
-        </Animated.Text>
+        <Animated.View entering={entering(STAGGER_ETA_MS)} style={styles.etaRow}>
+          {arriving ? <MaterialCommunityIcons name="flash" size={ETA_GLYPH_SIZE} color={C.primaryDark} /> : null}
+          <Text style={styles.eta} maxFontSizeMultiplier={1.3} numberOfLines={2}>
+            {etaCopy}
+          </Text>
+        </Animated.View>
       </View>
 
       <IconButton
@@ -187,7 +205,7 @@ export function SuccessHeader({ placedAtMs, orderId, orderNumber, onClose, topIn
       {/* Confetti clip: a flat absolute layer with overflow hidden so the burst never leaves the band. It is a SIBLING
           of the elevated circle, never its parent (Android drops elevation under overflow:hidden — MAP §7.4). */}
       <View pointerEvents="none" style={styles.confettiClip}>
-        {confettiOn ? <Confetti origin={confettiOrigin} onDone={() => setConfettiOn(false)} /> : null}
+        {confettiOn ? <Confetti origin={confettiOrigin} colors={CONFETTI_COLORS} onDone={() => setConfettiOn(false)} /> : null}
       </View>
     </View>
   );
@@ -219,7 +237,10 @@ const styles = StyleSheet.create({
   copy: { alignItems: "center", marginTop: 20 },
   title: { ...text.h1, textAlign: "center" },
   orderNumber: { fontFamily: fontFamily.bold, fontSize: 14, lineHeight: 20, color: C.textSub, marginTop: 6, textAlign: "center" },
-  eta: { fontFamily: fontFamily.semibold, fontSize: 14, lineHeight: 20, color: C.primary, marginTop: 8, textAlign: "center" },
+  etaRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4, marginTop: 8 },
+  eta: { fontFamily: fontFamily.semibold, fontSize: 14, lineHeight: 20, color: C.primaryDark, textAlign: "center", flexShrink: 1 },
+  logo: { position: "absolute", left: LOGO_LEFT },
+  sprout: { position: "absolute", left: 12, top: -16 },
   close: { position: "absolute", right: CLOSE_INSET },
   confettiClip: { ...StyleSheet.absoluteFillObject, overflow: "hidden" },
 });

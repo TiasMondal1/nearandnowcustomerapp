@@ -105,7 +105,7 @@ const TONE_ICON: Record<ToastTone, IconName> = {
 
 const TONE_COLOR: Record<ToastTone, string> = {
   neutral: C.white,
-  success: C.primaryLight,
+  success: C.successBorder,
   error: C.dangerBorder,
   warning: C.warningBorder,
   info: C.white,

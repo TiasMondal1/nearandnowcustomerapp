@@ -226,6 +226,7 @@ export default function PaymentsScreen() {
         ListEmptyComponent={
           <EmptyState
             iconWrap
+            sprout
             icon="credit-card-outline"
             title="No payments yet"
             text="Your payment history will appear here"

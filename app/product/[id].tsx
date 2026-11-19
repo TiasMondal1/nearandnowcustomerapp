@@ -250,7 +250,7 @@ export default function ProductDetailsScreen() {
         {failed ? (
           <EmptyState
             fill
-            iconWrap
+            tone="error"
             icon="cloud-off-outline"
             title="Couldn't load this product"
             text="Check your connection and try again."

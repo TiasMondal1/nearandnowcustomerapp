@@ -1,7 +1,7 @@
 // codename: indigo
 // Momentary dev-panel actions (CONTRACTS §5, design §4.4 "Actions tab", speed-and-ease §2): Feedback previews, visual
 // previews, diagnostics, data resets, flag import/export and the lock. Every button is a `PrimaryButton size="xs"
-// variant="secondary"` (ink on sand — never brand green), destructive ones confirm first through `confirmAction()` (the
+// variant="secondary"` (ink on sand — never the brand colour), destructive ones confirm first through `confirmAction()` (the
 // sanctioned use of Alert; the browser `confirm()` on web, where RN-web's Alert is a no-op), and results arrive as toasts.
 // `buildDiagnostics()` is the JSON the "Copy diagnostics" action copies and the Sentry test event attaches as a breadcrumb
 // (phone masked, userId and per-user storage keys cut to `<uid>`, token never included).
@@ -10,7 +10,6 @@ import * as Sentry from "@sentry/react-native";
 import Constants, { ExecutionEnvironment } from "expo-constants";
 import { Image } from "expo-image";
 import * as Notifications from "expo-notifications";
-import * as Updates from "expo-updates";
 import React, { useEffect, useRef, useState } from "react";
 import { AccessibilityInfo, Alert, Dimensions, PixelRatio, Platform, StyleSheet, Text, View } from "react-native";
 
@@ -76,22 +75,6 @@ export function maskPhone(phone: string | null | undefined): string | null {
   const tail = phone.slice(-4);
   const hidden = Math.max(0, phone.length - head.length - tail.length);
   return `${head}${"•".repeat(hidden)}${tail}`;
-}
-
-export type UpdatesInfo = { channel: string | null; runtimeVersion: string | null; updateId: string | null; isEmbeddedLaunch: boolean | null };
-
-/** `expo-updates` fields, null-tolerant (MAP §7.10: all null/false in local Gradle builds; the module can throw on web). `updateId` is cut to 8 chars. */
-export function readUpdates(): UpdatesInfo {
-  try {
-    return {
-      channel: Updates.channel ?? null,
-      runtimeVersion: Updates.runtimeVersion ?? null,
-      updateId: Updates.updateId ? Updates.updateId.slice(0, 8) : null,
-      isEmbeddedLaunch: typeof Updates.isEmbeddedLaunch === "boolean" ? Updates.isEmbeddedLaunch : null,
-    };
-  } catch {
-    return { channel: null, runtimeVersion: null, updateId: null, isEmbeddedLaunch: null };
-  }
 }
 
 /** True on the Hermes engine (`HermesInternal` is defined). */
@@ -164,7 +147,6 @@ async function clearNnCaches(): Promise<number> {
  */
 export async function buildDiagnostics(): Promise<Record<string, unknown>> {
   const { version, build } = getAppVersion();
-  const updates = readUpdates();
   const win = Dimensions.get("window");
   const [reduceMotion, push, storedUserId, storedUserData, storage] = await Promise.all([
     safe("reduceMotion", () => AccessibilityInfo.isReduceMotionEnabled(), false),
@@ -184,8 +166,6 @@ export async function buildDiagnostics(): Promise<Record<string, unknown>> {
       version,
       versionCode: Constants.expoConfig?.android?.versionCode ?? build,
       profile: getBuildProfile(),
-      channel: updates.channel,
-      updateId: updates.updateId,
       dev: __DEV__,
       hermes: isHermes(),
     },

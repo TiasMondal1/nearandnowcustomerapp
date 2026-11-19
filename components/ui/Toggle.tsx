@@ -13,7 +13,7 @@ export type ToggleProps = {
   accessibilityLabel?: string;
   /** Default true: `feedback.toggle(next)` (haptic + ui_toggle) after the value is applied. `false` = silent. */
   feedback?: boolean;
-  /** Thumb colour while on. Default C.primary; the dev panel passes C.text (no brand green on dev controls). */
+  /** Thumb colour while on. Default C.primary; the dev panel passes C.text (no brand colour on dev controls). */
   tint?: string;
   /** Track colour while on. Default C.primaryLight; the dev panel passes C.textLight. */
   trackTint?: string;

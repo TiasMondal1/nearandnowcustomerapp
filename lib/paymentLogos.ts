@@ -10,6 +10,8 @@ export const PAYMENT_LOGOS = {
   cred: require("../assets/payment/logo-cred.png"),
   bhim: require("../assets/payment/logo-bhim.png"),
   upi: require("../assets/payment/logo-upi.png"),
+  /** The Near & Now wallet — the app's own rounded icon, drawn full-size (no white tile behind it). */
+  wallet: require("../assets/brand/icon-rounded-128.png"),
 } as const;
 
 export type PaymentLogoKey = keyof typeof PAYMENT_LOGOS;

@@ -167,6 +167,7 @@ export default function LocationIndex(): React.JSX.Element {
   ) : loadError && !addresses ? (
     <EmptyState
       fill
+      tone="error"
       icon="cloud-off-outline"
       title="Couldn't load addresses"
       text={loadError}

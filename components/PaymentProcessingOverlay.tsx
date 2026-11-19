@@ -12,6 +12,7 @@ import Animated from "react-native-reanimated";
 import { C } from "../constants/colors";
 import { fontFamily, radius, shadow, space, text } from "../constants/ui";
 import type { PaymentPhase } from "../hooks/usePaymentFlow";
+import { BrandLogo } from "./brand";
 import { enter, exit, layoutTiming, PrimaryButton, Pulse, type IconName } from "./ui";
 
 type VisiblePhase = Exclude<PaymentPhase, "idle" | "awaiting_gateway">;
@@ -130,6 +131,7 @@ export function PaymentProcessingOverlay({ phase, orderId }: PaymentProcessingOv
       {content ? (
         <View style={styles.backdrop} accessibilityViewIsModal>
           <View style={styles.card} accessibilityState={{ busy: true }}>
+            <BrandLogo variant="horizontal" height={20} style={styles.logo} />
             <View style={styles.stage}>
               <Pulse
                 size={HALO_SIZE}
@@ -209,11 +211,12 @@ const styles = StyleSheet.create({
     backgroundColor: C.card,
     borderRadius: radius.xxxl,
     paddingHorizontal: space[24],
-    paddingTop: space[32],
+    paddingTop: space[24],
     paddingBottom: space[24],
     alignItems: "center",
     ...shadow.cardLg,
   },
+  logo: { marginBottom: space[16] },
   stage: {
     width: HALO_SIZE,
     height: HALO_SIZE,

@@ -3,18 +3,19 @@
 // The rail is memoised on the products array identity; each card is already memoised and subscribes to its own
 // cart quantity through the Stepper, so ADD on one card re-renders that card alone — never the rail, never the feed.
 import React from "react";
-import { FlatList, StyleSheet, Text, View, type ListRenderItemInfo } from "react-native";
+import { FlatList, StyleSheet, View, type ListRenderItemInfo } from "react-native";
 
-import { layout, text } from "../../constants/ui";
+import { layout } from "../../constants/ui";
 import type { Product } from "../../lib/productService";
+import { SectionHeader } from "../cards";
 import { PRODUCT_CARD, ProductCard } from "../ui";
 
 export type ProductRailProps = {
   /** Rail items (the screen passes the first 10). Pass the same array identity across renders to skip re-renders. */
   products: Product[];
-  /** Header title (`text.h3`). No header row when omitted. */
+  /** Header title (the shared `SectionHeader`, 44 dp). No header row when omitted. */
   title?: string;
-  /** 3 px bar colour left of the title, e.g. `C.deal` for "Frequently bought". No bar when omitted. */
+  /** 3 px bar colour left of the title, e.g. `C.primary` for "Frequently bought". No bar when omitted. */
   accent?: string;
   /** Root testID; the list gets `${testID}-list`. */
   testID?: string;
@@ -22,8 +23,6 @@ export type ProductRailProps = {
 
 /** Gap between cards; `getItemLayout` and the content container agree on it. */
 const GAP = layout.gridGap;
-const ACCENT_WIDTH = 3;
-const ACCENT_HEIGHT = 18;
 
 // Module-level so the FlatList never sees a new function identity (MAP §2.3 #15).
 const keyExtractor = (product: Product): string => product.id;
@@ -46,14 +45,7 @@ const renderItem = ({ item }: ListRenderItemInfo<Product>) => <ProductCard varia
 function ProductRailBase({ products, title, accent, testID }: ProductRailProps) {
   return (
     <View style={styles.root} testID={testID}>
-      {title ? (
-        <View style={styles.header}>
-          {accent ? <View style={[styles.accent, { backgroundColor: accent }]} /> : null}
-          <Text style={styles.title} numberOfLines={1} maxFontSizeMultiplier={1.3} accessibilityRole="header">
-            {title}
-          </Text>
-        </View>
-      ) : null}
+      {title ? <SectionHeader title={title} accent={accent} /> : null}
       <FlatList
         data={products}
         keyExtractor={keyExtractor}
@@ -84,9 +76,5 @@ ProductRail.displayName = "ProductRail";
 
 const styles = StyleSheet.create({
   root: {},
-  // 44 px tall: h3 line height 22 + 12 above + 10 below (HOME_ITEM_SIZE.sectionHeader).
-  header: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: layout.gutter, paddingTop: 12, paddingBottom: 10 },
-  accent: { width: ACCENT_WIDTH, height: ACCENT_HEIGHT, borderRadius: ACCENT_WIDTH / 2 },
-  title: { ...text.h3, flex: 1 },
   content: { paddingHorizontal: layout.gutter, gap: GAP },
 });

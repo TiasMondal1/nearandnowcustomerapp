@@ -124,6 +124,6 @@ const styles = StyleSheet.create({
   dotLive: { backgroundColor: C.success },
   dotPaused: { backgroundColor: C.textLight },
   label: { fontFamily: fontFamily.bold, fontSize: 11, letterSpacing: 0.3 },
-  labelLive: { color: C.success },
+  labelLive: { color: C.successText },
   labelPaused: { color: C.textSub },
 });

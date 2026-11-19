@@ -166,7 +166,7 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
   title: { ...text.h3, flexShrink: 1 },
   thanks: { flexDirection: "row", alignItems: "center", gap: 4 },
-  thanksText: { fontFamily: fontFamily.semibold, fontSize: 12, color: C.primary },
+  thanksText: { fontFamily: fontFamily.semibold, fontSize: 12, color: C.primaryDark },
   helper: { fontFamily: fontFamily.regular, fontSize: 12, lineHeight: 17, color: C.textSub, marginTop: 4, marginBottom: 14 },
   // Top padding leaves room for the "Most tipped" tag that overhangs the ₹20 chip.
   chips: { flexDirection: "row", gap: 8, paddingTop: 8 },
@@ -182,6 +182,6 @@ const styles = StyleSheet.create({
     borderRadius: radius.xs,
     backgroundColor: C.primaryXLight,
   },
-  tagText: { fontFamily: fontFamily.bold, fontSize: 11, lineHeight: 13, color: C.primary },
+  tagText: { fontFamily: fontFamily.bold, fontSize: 11, lineHeight: 13, color: C.primaryDark },
   customInput: { marginTop: 12 },
 });

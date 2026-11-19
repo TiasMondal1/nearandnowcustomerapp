@@ -2,7 +2,7 @@
 // Floating "DEV" pill (CONTRACTS §5, design §4.3): 48×28 r999 `C.text` capsule with an env dot, draggable anywhere,
 // snapping to the nearest horizontal edge on release, remembering its position in `nn:dev:pill`, never overlapping the
 // CartBar (its default and its vertical clamp compose `useCartBarLayout()`), hidden while a payment is in flight.
-// It is the only always-visible trace of dev mode, so it is deliberately near-black, not brand green.
+// It is the only always-visible trace of dev mode, so it is deliberately near-black, not the brand colour.
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import React, { useEffect, useState, useSyncExternalStore } from "react";

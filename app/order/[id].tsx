@@ -451,7 +451,7 @@ export default function OrderDetailScreen() {
         {/* Status */}
         <View style={styles.section}>
           <View style={styles.statusRow}>
-            <Badge label={statusMeta.label} bg={statusMeta.bg} color={statusMeta.color} icon={statusMeta.icon} iconSize={14} pill />
+            <Badge label={statusMeta.label} bg={statusMeta.bg} color={statusMeta.text} icon={statusMeta.icon} iconSize={14} pill />
             <Text style={styles.statusDate} numberOfLines={1} maxFontSizeMultiplier={1.3}>
               {dateLabel}
             </Text>
@@ -625,7 +625,7 @@ export default function OrderDetailScreen() {
               strikeValue={deliveryFee === 0 ? formatMoney(DELIVERY_FEE_WAS, { decimals: 0 }) : undefined}
               free={deliveryFee === 0}
             />
-            {order.discount_amount ? <BillLine label="Coupon discount" value={`-${formatMoney(order.discount_amount, { decimals: 2 })}`} /> : null}
+            {order.discount_amount ? <BillLine label="Coupon discount" value={`-${formatMoney(order.discount_amount, { decimals: 2 })}`} free /> : null}
             {order.tip_amount ? <BillLine label="Delivery partner tip" value={formatMoney(order.tip_amount, { decimals: 2 })} /> : null}
             <View style={styles.billRule} />
             <BillLine label={isPaid ? "Total paid" : "Total payable"} value={total} bold />
@@ -695,7 +695,7 @@ function BillLine({
   bold?: boolean;
   /** Shown struck through before `value` (e.g. a waived delivery fee's original price). */
   strikeValue?: string;
-  /** Styles `value` as a "free" highlight (green "FREE" text). */
+  /** Styles `value` as a benefit (green): the "FREE" delivery fee and the coupon discount. */
   free?: boolean;
 }) {
   return (
@@ -709,10 +709,10 @@ function BillLine({
   );
 }
 
-/** Loading twin: status block + three timeline rows. */
+/** Loading twin: status block + three timeline rows + three item rows (the real screen continues with Items). */
 function OrderDetailSkeleton() {
   return (
-    <SkeletonScreen label="Loading order details">
+    <SkeletonScreen label="Loading order details" style={styles.skeletonBody}>
       <View style={styles.section}>
         <View style={styles.statusRow}>
           <Skeleton width={110} height={24} radius={radius.pill} />
@@ -728,11 +728,21 @@ function OrderDetailSkeleton() {
         <Skeleton width={90} height={11} />
         {SKELETON_ROWS.map((i) => (
           <View key={i} style={styles.skelTimelineRow}>
-            <Skeleton width={24} height={24} radius={12} />
+            <Skeleton width={24} height={24} radius={radius.xl} />
             <View style={styles.skelTimelineText}>
               <Skeleton width={140} height={13} />
               <Skeleton width={60} height={11} />
             </View>
+          </View>
+        ))}
+      </View>
+      <View style={styles.band} />
+      <View style={styles.section}>
+        <Skeleton width={60} height={11} />
+        {SKELETON_ROWS.map((i) => (
+          <View key={i} style={styles.skelItemRow}>
+            <Skeleton width="60%" height={14} />
+            <Skeleton width={48} height={14} />
           </View>
         ))}
       </View>
@@ -748,10 +758,13 @@ const styles = StyleSheet.create({
   section: { paddingHorizontal: layout.gutter, paddingVertical: 16, gap: 12 },
   band: { height: 8, backgroundColor: C.surfaceBand },
 
+  // Gives way to the slow-load hint below it on short phones instead of pushing Retry off screen.
+  skeletonBody: { flex: 1, overflow: "hidden" },
   slowWrap: { alignItems: "center", gap: 6, paddingVertical: 12 },
   slowText: { ...text.caption, textAlign: "center" },
   skelTimelineRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 6 },
   skelTimelineText: { gap: 6 },
+  skelItemRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 6 },
 
   payBanner: {
     flexDirection: "row",
@@ -774,8 +787,8 @@ const styles = StyleSheet.create({
   infoRow: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
   infoIcon: { marginTop: 2 },
   infoText: { ...text.bodySm, flex: 1 },
-  paidText: { color: C.success },
-  pendingText: { color: C.warning },
+  paidText: { color: C.successText },
+  pendingText: { color: C.warningText },
 
   liveWrap: { marginTop: 4 },
   cancelButton: { marginTop: 12 },
@@ -789,9 +802,10 @@ const styles = StyleSheet.create({
     borderRadius: radius.xl,
   },
   liveRowPressed: { backgroundColor: C.primaryDark },
-  liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.onPrimary },
+  liveDot: { width: 8, height: 8, borderRadius: radius.xs, backgroundColor: C.onPrimary },
   liveTitle: { fontFamily: fontFamily.extrabold, fontSize: 14, color: C.onPrimary },
-  liveSub: { fontFamily: fontFamily.regular, fontSize: 12, color: C.onDarkSub, marginTop: 2 },
+  // Full white + semibold: the 88 % cream of C.onDarkSub is only 2.9:1 on the saffron face.
+  liveSub: { fontFamily: fontFamily.semibold, fontSize: 12, color: C.onPrimary, marginTop: 2 },
 
   cancelledBanner: {
     flexDirection: "row",
@@ -811,23 +825,23 @@ const styles = StyleSheet.create({
   timelineDot: {
     width: 24,
     height: 24,
-    borderRadius: 12,
+    borderRadius: radius.xl,
     backgroundColor: C.card,
     borderWidth: 2,
     borderColor: C.border,
     alignItems: "center",
     justifyContent: "center",
   },
-  timelineDotDone: { backgroundColor: C.primary, borderColor: C.primary },
+  timelineDotDone: { backgroundColor: C.success, borderColor: C.success },
   timelineLine: { flex: 1, width: 2, backgroundColor: C.border, marginVertical: 2, minHeight: 20 },
-  timelineLineDone: { backgroundColor: C.primary },
+  timelineLineDone: { backgroundColor: C.success },
   timelineContent: { flex: 1, paddingBottom: 18, paddingTop: 2 },
   timelineContentLast: { paddingBottom: 0 },
   timelineLabel: { fontFamily: fontFamily.semibold, fontSize: 13, color: C.textSub },
   timelineLabelDone: { color: C.text },
-  timelineLabelActive: { color: C.primary },
+  timelineLabelActive: { color: C.successText },
   timelineStamp: { ...text.caption, marginTop: 2 },
-  timelineStampActive: { color: C.primary },
+  timelineStampActive: { color: C.successText },
 
   itemsEmpty: { alignItems: "center", gap: 6, paddingVertical: 20 },
   itemsEmptyText: { ...text.bodySm },
@@ -847,7 +861,7 @@ const styles = StyleSheet.create({
   billLabelBold: { fontFamily: fontFamily.extrabold, color: C.text },
   billValue: { fontFamily: fontFamily.medium, fontSize: 14, color: C.text, fontVariant: ["tabular-nums"] },
   billValueBold: { fontFamily: fontFamily.extrabold, fontSize: 16 },
-  billValueFree: { fontFamily: fontFamily.bold, color: C.success },
+  billValueFree: { fontFamily: fontFamily.bold, color: C.successText },
   billStrike: { ...text.mrp },
 
   ctaBlock: { paddingHorizontal: layout.gutter, paddingVertical: 16, gap: 10 },

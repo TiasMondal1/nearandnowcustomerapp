@@ -11,11 +11,14 @@ import { router, useFocusEffect } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { PhotoCard, SectionHeader } from "../../components/cards";
 import {
   EmptyState,
   PressableScale,
+  PrimaryButton,
   Screen,
   Skeleton,
+  SkeletonFade,
   SkeletonScreen,
   TabHeader,
   useCartBarFootprint,
@@ -32,7 +35,8 @@ import { fontFamily, layout, motion, radius, text } from "../../constants/ui";
 import { useAuth } from "../../context/AuthContext";
 import { useLocation, type ActiveLocation } from "../../context/LocationContext";
 import { useProfileMenu } from "../../context/ProfileMenuContext";
-import { useForceSkeleton } from "../../hooks/useSlowLoad";
+import { useIsOnline } from "../../hooks/useIsOnline";
+import { useForceSkeleton, useSlowLoad } from "../../hooks/useSlowLoad";
 import { getAllCategories, peekCategories, type Category } from "../../lib/categoryService";
 import { useDevFlag } from "../../lib/devFlags";
 import { feedback } from "../../lib/feedback";
@@ -55,8 +59,12 @@ const SKELETON_TILES = [0, 1, 2, 3, 4, 5, 6, 7] as const;
 const TILE_GLYPH = 28;
 /** `cdnImage` width hint: a 25 % column on a 360 pt device is ~82 pt wide (≈ 2×). */
 const TILE_IMAGE_WIDTH_HINT = 160;
+/** The photo header card and the skeleton block that reserves its place. */
+const HEADER_CARD_HEIGHT = 120;
 
 type Counts = Record<string, number>;
+/** `nearby` is true only when `counts` came from the nearby view, i.e. the tiles really are limited to the radius. */
+type CatalogView = { counts: Counts | null; nearby: boolean };
 type Tile = { category: Category; tintIndex: number };
 type Section = { group: CategoryGroupDef; tiles: Tile[] };
 
@@ -83,6 +91,15 @@ function countsFromCache(cache: HomeCatalogCache | null, location: ActiveLocatio
     counts[name.toLowerCase().trim()] = list.length;
   }
   return counts;
+}
+
+/** The counts for `location` from the memory catalog, and whether they are the nearby view or the global fallback. */
+function readCatalogView(location: ActiveLocation | null): CatalogView {
+  const cache = getMemoryHomeCache();
+  const counts = countsFromCache(cache, location);
+  const nearby =
+    counts != null && location != null && peekNearbyProductFilter(location.latitude, location.longitude) != null;
+  return { counts, nearby };
 }
 
 /**
@@ -131,7 +148,7 @@ export default function CategoriesScreen() {
 
   // SWR seed (MAP §2.6 #27): the cached category list and the memory catalog paint on the first frame.
   const [categories, setCategories] = useState<Category[]>(() => peekCategories() ?? []);
-  const [counts, setCounts] = useState<Counts | null>(() => countsFromCache(getMemoryHomeCache(), location));
+  const [{ counts, nearby }, setCatalog] = useState<CatalogView>(() => readCatalogView(location));
   const [loading, setLoading] = useState(() => (peekCategories()?.length ?? 0) === 0);
   const [refreshing, setRefreshing] = useState(false);
   // 0 = the mount load (cache hit); every bump is a user-driven reload that forces the network.
@@ -145,7 +162,7 @@ export default function CategoriesScreen() {
       .then((list) => {
         if (cancelled) return;
         setCategories(list);
-        setCounts(countsFromCache(getMemoryHomeCache(), location));
+        setCatalog(readCatalogView(location));
       })
       .catch((err) => {
         if (!cancelled) logSilentFailure("Load categories", err);
@@ -165,12 +182,16 @@ export default function CategoriesScreen() {
   // Re-read the counts on every focus: Home may have resolved the nearby filter (or the location changed) meanwhile.
   useFocusEffect(
     useCallback(() => {
-      setCounts(countsFromCache(getMemoryHomeCache(), location));
+      setCatalog(readCatalogView(location));
     }, [location]),
   );
 
   const sections = useMemo(() => buildSections(categories, counts), [categories, counts]);
   const showSkeleton = useForceSkeleton(loading);
+  const slow = useSlowLoad(showSkeleton);
+  // getAllCategories never rejects (it falls back to the cache or []), so "offline with nothing to show" is the
+  // one signal that an empty list is a failed load rather than an empty catalogue.
+  const online = useIsOnline();
 
   const onRefresh = useCallback(() => {
     feedback.tapSound();
@@ -204,19 +225,53 @@ export default function CategoriesScreen() {
         testID="categories-header"
       />
 
-      {showSkeleton ? (
-        <CategoriesSkeleton />
-      ) : (
+      <SkeletonFade
+        loading={showSkeleton}
+        skeleton={
+          <>
+            <CategoriesSkeleton />
+            {slow ? (
+              <View style={[styles.slowWrap, { paddingBottom: layout.scrollBottomTab + cartBarFootprint }]}>
+                <Text style={styles.slowText}>Still loading… check your connection</Text>
+                <PrimaryButton size="xs" variant="ghost" label="Retry" onPress={retry} />
+              </View>
+            ) : null}
+          </>
+        }
+      >
         <ScrollView
           contentContainerStyle={scrollPadding}
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} colors={[C.primary]} />}
           testID="categories-scroll"
         >
-          {sections.length === 0 ? (
+          {sections.length > 0 ? (
+            <View style={styles.headerCard}>
+              <PhotoCard
+                slot="headerCategories"
+                title="Shop every aisle"
+                // The radius line only when the tiles really are the nearby view; over the global list it would be untrue.
+                subtitle={nearby ? "From stores within 4 km" : undefined}
+                height={HEADER_CARD_HEIGHT}
+                priority="high"
+                testID="categories-header-card"
+              />
+            </View>
+          ) : null}
+          {sections.length === 0 && !online ? (
+            <EmptyState
+              fill
+              tone="error"
+              icon="cloud-off-outline"
+              title="Couldn't load categories"
+              text="Check your connection and try again"
+              action={{ label: "Retry", onPress: retry }}
+            />
+          ) : sections.length === 0 ? (
             <EmptyState
               fill
               iconWrap
+              sprout
               icon="view-grid-outline"
               title="No categories yet"
               text="Check back soon for new categories"
@@ -225,9 +280,7 @@ export default function CategoriesScreen() {
           ) : (
             sections.map(({ group, tiles }) => (
               <View key={group.id} style={styles.section}>
-                <Text style={styles.sectionTitle} accessibilityRole="header" maxFontSizeMultiplier={1.3}>
-                  {group.title}
-                </Text>
+                <SectionHeader title={group.title} />
                 <View style={styles.grid}>
                   {tiles.map(({ category, tintIndex }) => (
                     <CategoryTile
@@ -242,7 +295,7 @@ export default function CategoriesScreen() {
             ))
           )}
         </ScrollView>
-      )}
+      </SkeletonFade>
     </Screen>
   );
 }
@@ -252,7 +305,7 @@ export default function CategoriesScreen() {
 /**
  * 25 % column: square tinted image wrap (`aspectRatio 1`, r14, no shadow — the clip is safe on Android because the
  * tile is flat) with the category art or the index-based fallback glyph, then a 12/600 two-line label. Press scale
- * 0.94 (`motion.scale.tile`), pressed face C.border, silent (navigation). No press-in warm-up (rev. 2): the category
+ * 0.97 (`motion.scale.tile`), pressed face C.border, silent (navigation). No press-in warm-up (rev. 2): the category
  * screen seeds itself from the memory catalog instead.
  */
 const CategoryTile = React.memo(function CategoryTile({
@@ -292,7 +345,7 @@ const CategoryTile = React.memo(function CategoryTile({
             accessibilityIgnoresInvertColors
           />
         ) : (
-          <MaterialCommunityIcons name={categoryFallbackIcon(tintIndex)} size={TILE_GLYPH} color={C.primary} />
+          <MaterialCommunityIcons name={categoryFallbackIcon(tintIndex)} size={TILE_GLYPH} color={C.primaryDark} />
         )}
       </View>
       <Text style={styles.tileLabel} numberOfLines={2} maxFontSizeMultiplier={1.3}>
@@ -308,6 +361,9 @@ const CategoryTile = React.memo(function CategoryTile({
 function CategoriesSkeleton() {
   return (
     <SkeletonScreen label="Loading categories…" style={styles.skeletonWrap}>
+      <View style={styles.headerCard}>
+        <Skeleton height={HEADER_CARD_HEIGHT} radius={radius.card} shimmer />
+      </View>
       {SKELETON_GROUPS.map((g) => (
         <View key={g} style={styles.section}>
           <Skeleton width={g === 0 ? 150 : 120} height={17} style={styles.skeletonTitle} />
@@ -332,10 +388,15 @@ function CategoriesSkeleton() {
 const styles = StyleSheet.create({
   scrollContent: { flexGrow: 1 },
   skeletonWrap: { flex: 1, overflow: "hidden" },
-  skeletonTitle: { marginBottom: 10 },
+  // 12 above, as SectionHeader pads its title.
+  skeletonTitle: { marginTop: 12, marginBottom: 10 },
+  // The tab bar is absolute: pad the hint clear of it (and of the CartBar above it).
+  slowWrap: { alignItems: "center", gap: 6, paddingTop: 12, paddingBottom: layout.scrollBottomTab },
+  slowText: { ...text.caption, textAlign: "center" },
 
-  section: { paddingTop: 20 },
-  sectionTitle: { ...text.h3, paddingHorizontal: layout.gutter, marginBottom: 10 },
+  headerCard: { paddingHorizontal: layout.gutter, paddingTop: 12 },
+  // SectionHeader pads 12 above its title, so 8 here keeps the title 20 below the previous block.
+  section: { paddingTop: 8 },
   // Tiles carry 4 px of their own horizontal padding, so the row pads 12 to land on the 16 px gutter.
   grid: { flexDirection: "row", flexWrap: "wrap", paddingHorizontal: layout.gutter - 4 },
 

@@ -8,35 +8,29 @@ import { Image, StyleSheet, View } from "react-native";
 import { Screen } from "../components/ui";
 import { C } from "../constants/colors";
 import { useAuth } from "../context/AuthContext";
-import { isFontsReady, markNavReady } from "../lib/bootGate";
-import { isNativePromptPending } from "../lib/pendingNativePrompts";
+import { isFontsReady, markNavReady, subscribeFontsReady } from "../lib/bootGate";
+import { onNativePromptsSettled } from "../lib/pendingNativePrompts";
 
-/** How often to re-check for a pending native dialog before navigating (ms). */
-const PROMPT_POLL_MS = 250;
-/** A stuck / never-released prompt flag must not strand the splash forever (ms). */
-const PROMPT_HARD_CAP_MS = 8000;
+/** Fonts that never settle must not strand the splash forever (ms). Applies to the fonts wait only. */
+const FONTS_HARD_CAP_MS = 8000;
 
 export default function BootRedirectScreen() {
   const { isLoading, isAuthenticated } = useAuth();
 
-  // Waits out a pending native permission dialog before navigating — with the GPS effect gone this resolves
-  // immediately in practice, but the push-registration prompt (hooks/usePushNotifications.dev.ts) can still be
-  // up on a clean install. Navigating blind into a native dialog is the hard-crash class fixed in welcome.tsx
-  // 2026-09-09 — see lib/pendingNativePrompts.ts and bug_fixes_2026-07-23.md. It also waits for the Jakarta
-  // faces (lib/bootGate `isFontsReady`, same hard cap) so Home's first frame never renders an unregistered
-  // family under the held splash (W3 R6-17).
+  // Two waits before the redirect. First the Jakarta faces (lib/bootGate `isFontsReady`, capped at 8 s) so Home's
+  // first frame never renders an unregistered family under the held splash (W3 R6-17). Then the native-prompt
+  // gate (lib/pendingNativePrompts): never navigate into a permission dialog or in the frame the Activity
+  // resumes from one — the first-login blank page, see bug_fixes_2026-07-23.md. Nothing prompts before login and
+  // the first-run prompts wait for Home, so that second wait passes at once on a normal cold start; it has no
+  // cap of its own while a dialog is up (a leaked flag is dropped by the gate).
   useEffect(() => {
     if (isLoading) return;
-    let cancelled = false;
-    let pollTimer: ReturnType<typeof setTimeout> | null = null;
-    const hardDeadline = Date.now() + PROMPT_HARD_CAP_MS;
+    let started = false;
+    let cancelSettled: (() => void) | null = null;
+    let unsubscribeFonts: (() => void) | null = null;
+    let fontsTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const tryAdvance = () => {
-      if (cancelled) return;
-      if ((isNativePromptPending() || !isFontsReady()) && Date.now() < hardDeadline) {
-        pollTimer = setTimeout(tryAdvance, PROMPT_POLL_MS);
-        return;
-      }
+    const redirect = () => {
       router.replace(isAuthenticated ? "/(tabs)/home" : "/phone");
       // Boot gate (speed-and-ease #6): flip nav-ready on the frame after the replace is issued. Deliberately
       // NOT cancelled in cleanup — this screen unmounts as a result of that very navigation, and the call is
@@ -47,19 +41,37 @@ export default function BootRedirectScreen() {
       });
     };
 
-    tryAdvance();
+    // Fonts settled (or the cap ran out): hand over to the prompt gate, once.
+    const afterFonts = () => {
+      if (started) return;
+      started = true;
+      unsubscribeFonts?.();
+      if (fontsTimer) clearTimeout(fontsTimer);
+      cancelSettled = onNativePromptsSettled(redirect);
+    };
+
+    if (isFontsReady()) {
+      afterFonts();
+    } else {
+      unsubscribeFonts = subscribeFontsReady(afterFonts);
+      fontsTimer = setTimeout(afterFonts, FONTS_HARD_CAP_MS);
+    }
+
     return () => {
-      cancelled = true;
-      if (pollTimer) clearTimeout(pollTimer);
+      // `started` also stops a fonts callback that is already queued from redirecting after cleanup.
+      started = true;
+      unsubscribeFonts?.();
+      if (fontsTimer) clearTimeout(fontsTimer);
+      cancelSettled?.();
     };
   }, [isLoading, isAuthenticated]);
 
   return (
     <Screen bg={C.card}>
       <View style={styles.container}>
-        {/* Same mark as the native splash so the hand-off is invisible if this frame is ever seen. */}
+        {/* Same logo as the native splash so the hand-off is invisible if this frame is ever seen. */}
         <Image
-          source={require("../assets/near_now_image_640.png")}
+          source={require("../assets/brand/logo-stacked.png")}
           style={styles.logo}
           resizeMode="contain"
           accessibilityIgnoresInvertColors
@@ -77,5 +89,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 32,
   },
-  logo: { width: 160, height: 145 },
+  // The native splash draws this logo 240 dp x 0.62 wide (scripts/generate-icons.js); 1024 x 749 artwork.
+  logo: { width: 149, height: 109 },
 });

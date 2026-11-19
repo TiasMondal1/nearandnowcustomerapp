@@ -288,7 +288,7 @@ export default function ProfileScreen() {
         style={styles.flex}
       >
         {/* Header — no onBack: BackButton's deep-link-safe fallback applies (MAP U27). */}
-        <ScreenHeader title="Edit Profile" backFallbackHref="/(tabs)/home" />
+        <ScreenHeader title="Edit profile" backFallbackHref="/(tabs)/home" />
 
         {/* Content */}
         <ScrollView
@@ -336,7 +336,7 @@ export default function ProfileScreen() {
                 <View style={styles.emailLabelRow}>
                   <Text style={styles.emailLabel}>Email</Text>
                   {isEmailVerified && !showEmailCodeStep ? (
-                    <Badge size="sm" pill tone="primary" label="Verified" />
+                    <Badge size="sm" pill tone="success" label="Verified" />
                   ) : !showEmailCodeStep ? (
                     <Badge size="sm" pill tone="warning" label="Unverified" />
                   ) : null}
@@ -481,7 +481,7 @@ const styles = StyleSheet.create({
     minWidth: 36,
     textAlign: "right",
   },
-  charCountFocused: { color: C.primary },
+  charCountFocused: { color: C.primaryDark },
 
   helperRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 },
   helper: { ...text.caption },

@@ -74,7 +74,7 @@ type TabIconProps = {
 };
 
 /**
- * Outline → filled swap plus a pop on FOCUS GAIN: `withSequence(withSpring(1.15, pop), withSpring(1, press))`.
+ * Outline → filled swap plus a pop on FOCUS GAIN: `withSequence(withSpring(1.08, gentle), withSpring(1, press))`.
  * No pop on mount (the initial tab is already selected), under reduced motion, `Dev_Amber_inhibit_TabPop` or
  * `Dev_Amber_inhibit_Feature`.
  */
@@ -94,7 +94,7 @@ function TabIcon({ focused, color, size, active, inactive }: TabIconProps) {
       return;
     }
     scale.set(
-      withSequence(withSpring(motion.scale.popLg, spr(motion.spring.pop)), withSpring(1, spr(motion.spring.press))),
+      withSequence(withSpring(motion.scale.pop, spr(motion.spring.gentle)), withSpring(1, spr(motion.spring.press))),
     );
   }, [focused, reduced, popOff, amberOff, scale]);
 
@@ -113,6 +113,7 @@ function TabIcon({ focused, color, size, active, inactive }: TabIconProps) {
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
+  const reduced = useMotionReduced();
 
   return (
     <Tabs
@@ -123,6 +124,9 @@ export default function TabLayout() {
         // noticeably snappier when only one feed is mounted at a time.
         lazy: true,
         freezeOnBlur: true,
+
+        // The navigator's own 150 ms cross-fade between tabs; a plain cut under reduced motion.
+        animation: reduced ? "none" : "fade",
 
         // Cream behind every scene so a tab switch never flashes white (MAP §7.3).
         sceneStyle: { backgroundColor: C.bg },

@@ -13,13 +13,13 @@ import * as Sentry from "@sentry/react-native";
 import { Stack, useRouter } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
-import * as Updates from "expo-updates";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Platform, StyleSheet, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaInsetsContext, SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { ErrorBoundary } from "../components/ErrorBoundary";
+import { ErrorBoundary, LastResortBoundary } from "../components/ErrorBoundary";
+import { NavActivityProbe } from "../components/NavActivityProbe";
 import { NavReadyProbe } from "../components/NavReadyProbe";
 import { PushBootstrap } from "../components/PushBootstrap";
 import { UpdateRequiredGate } from "../components/UpdateRequiredGate";
@@ -31,11 +31,13 @@ import { CartProvider, loadCartStore } from "../context/CartContext";
 import { DevModeProvider } from "../context/DevModeContext";
 import { getActiveLocationSync, loadLocationStore, LocationProvider } from "../context/LocationContext";
 import { ProfileMenuProvider } from "../context/ProfileMenuContext";
-import { getAppExtra } from "../lib/appExtra";
+import { getAppExtra, getBuildProfile } from "../lib/appExtra";
 import { markBoot, markFontsReady, useNavReady } from "../lib/bootGate";
 import { seedCategoriesFromDisk } from "../lib/categoryService";
 import { loadDevFlags, useDevFlag } from "../lib/devFlags";
+import { reportFatalError } from "../lib/fatalError";
 import { loadFeedbackPrefs, warmFeedback } from "../lib/feedback";
+import { logError } from "../lib/logError";
 import { logSilentFailure } from "../lib/logSilentFailure";
 import { startNetworkWatch } from "../lib/network";
 import { loadOrderHistoryFlag } from "../lib/orderHistoryFlag";
@@ -55,8 +57,10 @@ Sentry.init({
   dsn: SENTRY_DSN,
   enabled: !!SENTRY_DSN && !__DEV__,
   tracesSampleRate: 0.2,
-  // Updates.channel is null in local Gradle builds and only populated in EAS builds (MAP §7.10).
-  environment: Updates.channel ?? "local",
+  // The build profile app.config.js stamps into `extra` (EAS profile name; "local" for gradle builds). It used to be
+  // `Updates.channel` — expo-updates is no longer linked into the native build (package.json
+  // `expo.autolinking.exclude`), so nothing may import it.
+  environment: getBuildProfile(),
   // Logs written with Sentry.logger.* (console.* is not forwarded).
   enableLogs: true,
   // Session Replay: 10% of sessions, plus every session that hits an error. Everything on screen is masked — these
@@ -69,6 +73,48 @@ Sentry.init({
     Sentry.feedbackIntegration(),
   ],
 });
+
+// Uncaught JS errors (a throw in a timer, an event handler, a native callback — anything a React boundary never
+// sees). In a release build React Native reports a FATAL one natively and the host is destroyed. In the builds
+// that shipped with expo-updates linked-but-disabled nothing rethrew: the process survived with an empty Activity
+// that showed only the window background until the task was cleared from recents (the "blank grey page",
+// 2026-11-19). With expo-updates out of the native build the same teardown ends in a clean crash instead.
+// Installed AFTER Sentry.init so this is the outermost handler: record the error, forward it to the previous
+// handler as NON-fatal (the logcat line and Sentry's breadcrumbs stay; the teardown does not happen), then raise
+// the full-screen fallback (lib/fatalError → components/ErrorBoundary) with a real restart. Dev keeps React
+// Native's own red box: nothing is installed there. `ErrorUtils` does not exist on web, hence the lookup.
+// It covers timer, event-handler and native-callback errors only. Two paths never reach it: a RENDER error that no
+// boundary catches (React reports it to the native exceptions manager directly — which is why RootLayout wraps the
+// tree in LastResortBoundary, whose fallback cannot throw), and an exception thrown on a NATIVE thread, which
+// never passes through JS.
+const errorUtils = (globalThis as { ErrorUtils?: typeof ErrorUtils }).ErrorUtils;
+if (!__DEV__ && errorUtils) {
+  const previousHandler = errorUtils.getGlobalHandler();
+  errorUtils.setGlobalHandler((error: unknown, isFatal?: boolean) => {
+    if (!isFatal) {
+      previousHandler(error, isFatal);
+      return;
+    }
+    // Every step is best-effort and isolated: a sink that throws inside the crash path must not stop the next one.
+    try {
+      // First, so the event keeps level "fatal" (logError's own capture of the same object is then a no-op).
+      Sentry.captureException(error, { level: "fatal", tags: { context: "uncaught" } });
+    } catch {
+      // Sentry not initialised (no DSN) or itself the failing module.
+    }
+    try {
+      logError("Uncaught JS error", error);
+    } catch {
+      // Nothing left to report to.
+    }
+    try {
+      previousHandler(error, false);
+    } catch {
+      // The default handler only logs for a non-fatal error; if even that fails, carry on to the fallback.
+    }
+    reportFatalError(error);
+  });
+}
 
 // iOS 'modal' presents a UIKit view controller ABOVE every AppShell sibling (toasts, offline banner, dev stripe
 // vanish behind it); 'containedModal' (UIModalPresentationCurrentContext) stays inside the Stack's view, so the
@@ -225,11 +271,18 @@ function AppShell() {
               <OfflineBanner topInset={insets.top} onVisibleChange={setOfflineBannerVisible} />
               <SafeAreaInsetsContext.Provider value={shellInsets}>
                 <View style={styles.shell}>
+                  {/* contentStyle: every route container is cream. Without it native-stack paints react-navigation's
+                      default grey (rgb 242,242,242) behind any route that has not painted yet. */}
                   <Stack
                     screenOptions={
                       zephyrOff
-                        ? { headerShown: false }
-                        : { headerShown: false, animation, animationDuration: motion.duration.base }
+                        ? { headerShown: false, contentStyle: styles.stackContent }
+                        : {
+                            headerShown: false,
+                            contentStyle: styles.stackContent,
+                            animation,
+                            animationDuration: motion.duration.base,
+                          }
                     }
                   >
                     {zephyrOff ? null : (
@@ -253,6 +306,8 @@ function AppShell() {
               <PushBootstrap userId={userId} />
               {/* Boot gate from the root navigation state for URL cold starts where index never mounts (W3 R6-09). */}
               <NavReadyProbe />
+              {/* Feeds the native-prompt gate: route changes + "Home is focused" (lib/pendingNativePrompts). */}
+              <NavActivityProbe />
               {/* Above everything: an install below the server's minimum build is asked to update (2026-11-17). */}
               <UpdateRequiredGate />
             </View>
@@ -281,17 +336,19 @@ function RootLayout() {
   }
 
   return (
-    <ErrorBoundary>
-      <GestureHandlerRootView style={styles.shell}>
-        <SafeAreaProvider>
-          <MotionConfig>
-            <AuthProvider>
-              <AppShell />
-            </AuthProvider>
-          </MotionConfig>
-        </SafeAreaProvider>
-      </GestureHandlerRootView>
-    </ErrorBoundary>
+    <LastResortBoundary>
+      <ErrorBoundary>
+        <GestureHandlerRootView style={styles.shell}>
+          <SafeAreaProvider>
+            <MotionConfig>
+              <AuthProvider>
+                <AppShell />
+              </AuthProvider>
+            </MotionConfig>
+          </SafeAreaProvider>
+        </GestureHandlerRootView>
+      </ErrorBoundary>
+    </LastResortBoundary>
   );
 }
 
@@ -299,12 +356,13 @@ export default Sentry.wrap(RootLayout);
 
 const styles = StyleSheet.create({
   shell: { flex: 1 },
+  stackContent: { backgroundColor: C.bg },
   configErrorContainer: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 32,
-    backgroundColor: C.card,
+    backgroundColor: C.bg,
   },
   configErrorTitle: {
     fontSize: 20,

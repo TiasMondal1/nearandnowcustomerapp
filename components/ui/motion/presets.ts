@@ -71,22 +71,26 @@ export const ease: { standard: EasingFunction; decel: EasingFunction; accel: Eas
  * rise: FadeInUp over `slow` (340 ms), springified at damping 18 — CartBar, thank-you states, sheets' content.
  * drop: FadeInDown over `base` (220 ms), springified at damping 18 — dropdowns, banners from the top.
  * fade: FadeIn over `fast` (120 ms) — crossfades, collapsible content, new list rows.
+ * soft: FadeIn over `base` (220 ms) — whole regions arriving (content under a skeleton).
  */
 export const enter = {
   rise: () => FadeInUp.duration(dur(motion.duration.slow)).springify().damping(18),
   drop: () => FadeInDown.duration(dur(motion.duration.base)).springify().damping(18),
   fade: () => FadeIn.duration(dur(motion.duration.fast)),
+  soft: () => FadeIn.duration(dur(motion.duration.base)),
 };
 
 /**
  * fall: FadeOutDown over `base` (220 ms) — CartBar leaving, dismissed toasts.
  * lift: FadeOutUp over `base` (220 ms) — banners leaving upwards.
  * fade: FadeOut over `instant` (80 ms) — the exit half of every crossfade.
+ * soft: FadeOut over `base` (220 ms) — a skeleton fading out over its content (SkeletonFade).
  */
 export const exit = {
   fall: () => FadeOutDown.duration(dur(motion.duration.base)),
   lift: () => FadeOutUp.duration(dur(motion.duration.base)),
   fade: () => FadeOut.duration(dur(motion.duration.instant)),
+  soft: () => FadeOut.duration(dur(motion.duration.base)),
 };
 
 /**

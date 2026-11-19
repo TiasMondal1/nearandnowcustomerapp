@@ -39,13 +39,13 @@ export const TAB_HEADER_DOODLES: DoodleSpec[] = [
   { icon: "bottle-soda-outline", size: 20, top: 30, left: "64%", rotate: "-18deg" },
   { icon: "baguette", size: 22, top: 6, left: "73%", rotate: "35deg" },
   { icon: "cheese", size: 18, bottom: 2, left: "84%", rotate: "-12deg" },
-  { icon: "leaf", size: 26, top: -6, right: -4, rotate: "-24deg", opacity: 0.09 },
+  { icon: "sprout", size: 26, top: -6, right: -4, rotate: "-24deg", opacity: 0.09 },
 ];
 
 export type DoodleBackdropProps = {
   /** Hand-tuned scatter (one of the exported *_DOODLES constants or your own). */
   doodles: DoodleSpec[];
-  /** Glyph colour. Default `C.primary` (brand green). */
+  /** Glyph colour. Default `C.primary` (brand saffron). */
   color?: string;
   /** Opacity applied to every glyph without its own `opacity`. Default 0.08;
    *  wallpapers pass ~0.04–0.05. Keep ≤ 0.09 so text drawn over it stays legible. */

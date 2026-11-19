@@ -27,7 +27,7 @@ const LABEL_ICONS = { Home: "home-outline", Work: "office-building-outline", Oth
 type Step = "name" | "location";
 
 const LOGO_WIDTH = 160;
-const LOGO_HEIGHT = 145;
+const LOGO_HEIGHT = 117;
 const STEP_DOT = 10;
 const STEP_DOT_ACTIVE = 12;
 const PINCODE_WIDTH = 110;
@@ -210,7 +210,7 @@ export default function OnboardingScreen(): React.JSX.Element {
       >
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <View style={styles.logoWrap}>
-            <Image source={require("../assets/near_now_image_640.png")} style={styles.logo} resizeMode="contain" accessibilityIgnoresInvertColors />
+            <Image source={require("../assets/brand/logo-stacked.png")} style={styles.logo} resizeMode="contain" accessibilityIgnoresInvertColors />
           </View>
 
           <View style={styles.stepRow} accessible accessibilityRole="progressbar" accessibilityLabel={`Step ${stepIndex} of 2`}>

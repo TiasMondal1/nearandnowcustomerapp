@@ -1,7 +1,7 @@
 // codename: indigo
 // The developer panel (CONTRACTS §5, design §4.4): a `BottomSheet maxHeight 92%` titled "Developer" with an env Badge,
 // a version chip, a "×N" chip while Dev_Motion_inhibit_SpeedFactor ≠ 1 and a lock button; a sticky strip of private
-// pills — Env · Session · Flags · Actions · Storage (selected pill fills C.text, never brand green); and one scrolling
+// pills — Env · Session · Flags · Actions · Storage (selected pill fills C.text, never the brand colour); and one scrolling
 // body per tab. It is an internal tool: ink on white and sand, mono values in copyable chips, flag names verbatim.
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Application from "expo-application";
@@ -37,7 +37,7 @@ import { logSilentFailure } from "../../lib/logSilentFailure";
 import { checkPushPermissionStatus, getLastPushRegistrationError, getLastPushToken } from "../../lib/pushNotificationStatus";
 import { SUPABASE_HOST } from "../../lib/supabase";
 import { Badge, BottomSheet, ChevronRotate, Collapsible, IconButton, Input, PrimaryButton, type BadgeTone } from "../ui";
-import { DevActions, confirmAction, isHermes, isNnKey, maskPhone, readUpdates } from "./DevActions";
+import { DevActions, confirmAction, isHermes, isNnKey, maskPhone } from "./DevActions";
 import { DevFlagRow } from "./DevFlagRow";
 import { DevKeyValue, DevPills, DevSectionTitle, ValueChip, copyText, devText, type DevPillItem } from "./DevKeyValue";
 
@@ -216,7 +216,6 @@ export function DevPanel({ visible, onClose }: DevPanelProps): React.JSX.Element
 function EnvTab({ profile, version, build }: { profile: BuildProfile; version: string; build: string }): React.JSX.Element {
   const { width, height, scale, fontScale } = useWindowDimensions();
   const reduced = useReducedMotion();
-  const updates = readUpdates();
   const pinSource = getDevPinSource();
   const dsn = process.env.EXPO_PUBLIC_SENTRY_DSN || getAppExtra().sentryDsn || "";
   let locale = "—";
@@ -234,10 +233,6 @@ function EnvTab({ profile, version, build }: { profile: BuildProfile; version: s
       <DevKeyValue label="Native version" value={Application.nativeApplicationVersion} />
       <DevKeyValue label="Native build" value={Application.nativeBuildVersion} />
       <DevKeyValue label="Build profile" value={profile} />
-      <DevKeyValue label="Updates.channel" value={updates.channel} />
-      <DevKeyValue label="Updates.runtimeVersion" value={updates.runtimeVersion} />
-      <DevKeyValue label="Updates.updateId" value={updates.updateId} />
-      <DevKeyValue label="Updates.isEmbeddedLaunch" value={updates.isEmbeddedLaunch} />
       <DevKeyValue label="Execution environment" value={Constants.executionEnvironment} />
       <DevKeyValue label="__DEV__" value={__DEV__} />
       <DevKeyValue label="Hermes" value={isHermes()} />

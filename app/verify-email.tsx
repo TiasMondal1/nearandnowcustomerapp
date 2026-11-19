@@ -127,7 +127,7 @@ export default function VerifyEmailScreen() {
         <View style={styles.container}>
           <View style={styles.logoSection}>
             <Image
-              source={require("../assets/near_now_image_640.png")}
+              source={require("../assets/brand/logo-stacked.png")}
               style={styles.logo}
               resizeMode="contain"
               accessible={false}
@@ -231,7 +231,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   logoSection: { alignItems: "center", paddingTop: space[4] },
-  logo: { width: 160, height: 145 },
+  logo: { width: 160, height: 117 },
   header: { gap: space[8] },
   pageName: { ...text.eyebrow },
   title: { ...text.h1 },

@@ -1,6 +1,6 @@
 // Price — the one price primitive (CONTRACTS §4.8 · design/blinkit-parity §2.5 · BP-12). Amount through
 // `formatMoney` (en-IN grouping, 0 dp when whole), MRP struck only when it is higher, an optional "% OFF" deal badge
-// and, at lg, the " / unit" suffix. Prices are ink (C.text), never green; terracotta is reserved for the deal badge.
+// and, at lg, the " / unit" suffix. Prices are ink (C.text), never a brand colour; leaf green (C.deal) is reserved for the deal badge.
 import React from "react";
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
 

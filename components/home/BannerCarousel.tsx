@@ -29,7 +29,8 @@ import { C } from "../../constants/colors";
 import { fontFamily, layout, motion, radius, text } from "../../constants/ui";
 import { useDevFlag } from "../../lib/devFlags";
 import { cdnImage } from "../../lib/imageUrl";
-import { PressableScale, layoutSpring, useLayoutTransitionsEnabled, useMotionReduced } from "../ui";
+import { BrandPhoto, hasPhoto } from "../brand";
+import { PressableScale, layoutTiming, useLayoutTransitionsEnabled, useMotionReduced } from "../ui";
 
 export type BannerCarouselProps = {
   /** Already filtered + sorted (`getActiveBanners()`, merged with `getRemoteBanners()`). Nothing renders when empty. */
@@ -56,6 +57,28 @@ const DOTS_BOTTOM = 8;
 const ICON_SIZE = 28;
 const ICON_CIRCLE = 48;
 const CTA_CHEVRON = 14;
+/** Photo panel width as a share of the card: 44 % (144 dp at a 328 dp card), 38 % on a narrow card or at large text. */
+const PANEL_RATIO = 0.44;
+const PANEL_RATIO_NARROW = 0.38;
+/** Cards under this width use the narrow panel. */
+const PANEL_NARROW_BELOW = 300;
+/** Above this system font scale the narrow panel is used at every width, which gives the copy column more room. */
+const PANEL_MAX_FONT_SCALE = 1.1;
+/** Gap between the copy column and the photo panel. */
+const PANEL_GAP = 12;
+/** Floor for the two-line title's shrink-to-fit beside the panel. */
+const TITLE_MIN_FONT_SCALE = 0.88;
+const CTA_PILL_HEIGHT = 26;
+/** Floor for the subtitle's shrink-to-fit beside the panel. */
+const SUBTITLE_MIN_FONT_SCALE = 0.8;
+/** The same cap the copy's `maxFontSizeMultiplier` applies. */
+const COPY_MAX_FONT_SCALE = 1.3;
+/** Two title lines (2 x 22) and two subtitle lines (2 x 16), in dp at font scale 1. */
+const COPY_TEXT_HEIGHT = 76;
+/** The copy column's gaps (4 + 4), the pill's top margin (4) and the pill (26). */
+const COPY_FIXED_HEIGHT = 8 + 4 + CTA_PILL_HEIGHT;
+/** Room the tallest copy column must leave inside the card (4 dp above and below). */
+const COPY_MIN_CLEARANCE = 8;
 /** Rendered-width hint for `cdnImage` on image banners (hero-class, like the PDP image). */
 const IMAGE_WIDTH_HINT = 800;
 
@@ -77,8 +100,8 @@ const keyExtractor = (banner: Banner): string => banner.id;
 // ─── Carousel ─────────────────────────────────────────────────────────────────
 
 /**
- * Horizontal paged FlatList of banner cards (`width − 32`, aspect 2.25, r14, 1 px hairline) with 6 px dots that morph
- * into a 16 × 6 primary pill via `layoutSpring()`. Returns `null` when `banners` is empty.
+ * Horizontal paged FlatList of banner cards (`width − 32`, aspect 2.25, r16, 1 px hairline) with 6 px dots that morph
+ * into a 16 × 6 primary pill via `layoutTiming()` (no overshoot). Returns `null` when `banners` is empty.
  */
 export function BannerCarousel({ banners, focused, style, testID }: BannerCarouselProps): React.JSX.Element | null {
   const { width: windowWidth } = useWindowDimensions();
@@ -208,7 +231,7 @@ const BannerCard = React.memo(function BannerCard({
 }: {
   banner: Banner;
   width: number;
-  /** index 0 — image banners load at `priority="high"`. */
+  /** index 0 — image banners and banner photos load at `priority="high"`. */
   first: boolean;
   testID?: string;
 }) {
@@ -226,36 +249,71 @@ const BannerCard = React.memo(function BannerCard({
       innerStyle={styles.card}
       testID={testID}
     >
-      {banner.kind === "card" ? <CardFace banner={banner} /> : <ImageFace banner={banner} first={first} />}
+      {banner.kind === "card" ? <CardFace banner={banner} width={width} first={first} /> : <ImageFace banner={banner} first={first} />}
     </PressableScale>
   );
 });
 
-/** Typographic card: tint background, title h3 (2 lines), subtitle 12/500, cta 12/700 + chevron; 28 px glyph on a 48 px circle. */
-function CardFace({ banner }: { banner: CardBanner }) {
+/**
+ * Typographic card: tint background, title h3 (2 lines), subtitle 12/500 and a CTA pill on the left; the banner's
+ * bundled photo fills a panel at the right edge whose left corners repeat the logo's doorway, mirrored. With no
+ * photo (or an unfilled slot) the 28 px glyph on a 48 px circle stays.
+ */
+function CardFace({ banner, width, first }: { banner: CardBanner; width: number; first: boolean }) {
+  const { fontScale } = useWindowDimensions();
+  const photo = banner.photo != null && hasPhoto(banner.photo) ? banner.photo : null;
+  // The copy column is what the panel leaves: the wide panel only when the card is wide AND text is near default size.
+  const narrow = fontScale > PANEL_MAX_FONT_SCALE || width < PANEL_NARROW_BELOW;
+  const panelWidth = Math.round(width * (narrow ? PANEL_RATIO_NARROW : PANEL_RATIO));
+  const cardHeight = Math.round(width / BANNER_ASPECT_RATIO);
+  // Beside the photo the column is narrow, so the subtitle may wrap to a second line whenever the tallest copy
+  // (two title lines, two subtitle lines, the pill) still fits the card; otherwise it stays on one line and shrinks.
+  const copyHeight = COPY_TEXT_HEIGHT * Math.min(fontScale, COPY_MAX_FONT_SCALE) + COPY_FIXED_HEIGHT;
+  const subtitleLines = photo && copyHeight <= cardHeight - COPY_MIN_CLEARANCE ? 2 : 1;
   return (
-    <View style={[styles.face, tintStyles[banner.tint]]}>
+    <View style={[styles.face, tintStyles[banner.tint], photo ? { paddingRight: panelWidth + PANEL_GAP } : null]}>
       <View style={styles.copy}>
-        <Text style={styles.title} numberOfLines={2} maxFontSizeMultiplier={1.3}>
+        <Text
+          style={styles.title}
+          numberOfLines={2}
+          maxFontSizeMultiplier={1.3}
+          adjustsFontSizeToFit
+          minimumFontScale={TITLE_MIN_FONT_SCALE}
+        >
           {banner.title}
         </Text>
         {banner.subtitle ? (
-          <Text style={styles.subtitle} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+          <Text
+            style={styles.subtitle}
+            numberOfLines={subtitleLines}
+            maxFontSizeMultiplier={COPY_MAX_FONT_SCALE}
+            // Beside the photo it wraps to a second line when the card has the height; past that it shrinks a
+            // little instead of ending in "…".
+            adjustsFontSizeToFit
+            minimumFontScale={SUBTITLE_MIN_FONT_SCALE}
+          >
             {banner.subtitle}
           </Text>
         ) : null}
         {banner.cta ? (
-          <View style={styles.ctaRow}>
+          <View style={styles.ctaPill}>
             <Text style={styles.cta} numberOfLines={1} maxFontSizeMultiplier={1.3}>
               {banner.cta}
             </Text>
-            <MaterialCommunityIcons name="chevron-right" size={CTA_CHEVRON} color={C.primary} />
+            <MaterialCommunityIcons name="chevron-right" size={CTA_CHEVRON} color={C.primaryDark} />
           </View>
         ) : null}
       </View>
-      <View style={styles.iconCircle}>
-        <MaterialCommunityIcons name={banner.icon} size={ICON_SIZE} color={C.primary} />
-      </View>
+      {photo ? (
+        // The card clips the panel's right corners; the panel clips the photo to the mirrored doorway on its left.
+        <View style={[styles.panel, { width: panelWidth, borderTopLeftRadius: Math.round(cardHeight / 2) }]}>
+          <BrandPhoto slot={photo} shape="fill" priority={first ? "high" : "low"} />
+        </View>
+      ) : (
+        <View style={styles.iconCircle}>
+          <MaterialCommunityIcons name={banner.icon} size={ICON_SIZE} color={C.primary} />
+        </View>
+      )}
     </View>
   );
 }
@@ -282,12 +340,12 @@ function ImageFace({ banner, first }: { banner: ImageBanner; first: boolean }) {
 
 // ─── Dots ─────────────────────────────────────────────────────────────────────
 
-/** Decorative page indicator: 6 px `C.border` dots, the active one a 16 × 6 `C.primary` pill (layout spring, no entering/exiting). */
+/** Decorative page indicator: 6 px `C.border` dots, the active one a 16 × 6 `C.primary` pill (timed layout transition, no entering/exiting). */
 function Dots({ count, active, layoutOn }: { count: number; active: number; layoutOn: boolean }) {
   return (
     <View style={styles.dots} pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
       {Array.from({ length: count }, (_, i) => (
-        <Animated.View key={i} layout={layoutOn ? layoutSpring() : undefined} style={[styles.dot, i === active && styles.dotActive]} />
+        <Animated.View key={i} layout={layoutOn ? layoutTiming() : undefined} style={[styles.dot, i === active && styles.dotActive]} />
       ))}
     </View>
   );
@@ -307,7 +365,7 @@ const styles = StyleSheet.create({
   // Clips the face/image corners; therefore NO shadow (Android drops elevation under overflow hidden — MAP §7.4).
   card: {
     aspectRatio: BANNER_ASPECT_RATIO,
-    borderRadius: radius.xxl,
+    borderRadius: radius.card,
     borderWidth: 1,
     borderColor: C.hairline,
     backgroundColor: C.card,
@@ -318,14 +376,37 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: 8,
     gap: 12,
   },
   copy: { flex: 1, minWidth: 0, gap: 4 },
   title: { ...text.h3 },
   subtitle: { fontFamily: fontFamily.medium, fontSize: 12, lineHeight: 16, color: C.textSub },
-  ctaRow: { flexDirection: "row", alignItems: "center", gap: 2, marginTop: 2 },
-  cta: { fontFamily: fontFamily.bold, fontSize: 12, lineHeight: 16, color: C.primary },
+  // A pill, not a second button: the whole card is the one pressable.
+  ctaPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    maxWidth: "100%",
+    height: CTA_PILL_HEIGHT,
+    marginTop: 4,
+    paddingHorizontal: 10,
+    borderRadius: radius.pill,
+    backgroundColor: C.card,
+    borderWidth: 1,
+    borderColor: C.hairline,
+  },
+  // primaryDark: a 12 px label needs more contrast than saffron gives.
+  cta: { fontFamily: fontFamily.bold, fontSize: 12, lineHeight: 16, color: C.primaryDark, flexShrink: 1 },
+  panel: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    borderBottomLeftRadius: radius.xl,
+    backgroundColor: C.bgSoft,
+    overflow: "hidden",
+  },
   iconCircle: {
     width: ICON_CIRCLE,
     height: ICON_CIRCLE,

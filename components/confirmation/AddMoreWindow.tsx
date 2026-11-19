@@ -192,7 +192,7 @@ export function AddMoreWindow({
 
       {showDone ? (
         <View style={styles.doneRow} accessible accessibilityLiveRegion="polite">
-          <MaterialCommunityIcons name="check-circle-outline" size={iconSize.md} color={C.primary} />
+          <MaterialCommunityIcons name="check-circle-outline" size={iconSize.md} color={C.success} />
           <Text style={styles.doneText} maxFontSizeMultiplier={1.3}>
             Items added — they&apos;ll arrive with this delivery
           </Text>

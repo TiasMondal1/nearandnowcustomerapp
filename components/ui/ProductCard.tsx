@@ -63,7 +63,7 @@ export const PRODUCT_CARD = {
   railImageHeight: 116,
   rowThumb: 64,
   rowMinHeight: 88,
-  radius: 12,
+  radius: 14,
 } as const;
 
 /** Width hint for `cdnImage` per surface (≈ rendered px × 2–3; the PDP prefetch is 800). */

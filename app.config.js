@@ -85,7 +85,15 @@ module.exports = {
     scheme: "nearandnow",
     // Light only — the app has no dark theme; "automatic" + edgeToEdge gave dark-mode
     // devices dark status-bar icons / keyboard / Alerts over light surfaces (MAP C33).
+    // On Android this is only APPLIED when expo-system-ui is installed (prebuild otherwise
+    // just warns), which is why that package is a dependency although no code imports it.
     userInterfaceStyle: "light",
+    // The native root view / Android window background: what shows whenever React has
+    // nothing painted (before the first frame, during a reload, behind a dead host).
+    // Without it the bare window is the AppCompat DayNight default — #303030 on a
+    // dark-mode phone, the "blank grey page". Mirrors C.bg in constants/colors.ts (a
+    // config file cannot import TS); keep in sync. Takes effect at the next prebuild.
+    backgroundColor: "#FBF6EE",
     newArchEnabled: true,
     ios: {
       supportsTablet: false,
@@ -97,7 +105,8 @@ module.exports = {
     },
     android: {
       adaptiveIcon: {
-        backgroundColor: "#ffffff",
+        // Saffron — the logo pack's icon background (README: #E85D0F).
+        backgroundColor: "#E85D0F",
         foregroundImage: "./assets/images/adaptive-icon-foreground.png",
         monochromeImage: "./assets/images/adaptive-icon-monochrome.png",
       },
@@ -119,7 +128,7 @@ module.exports = {
       // when it comes from EAS's GOOGLE_SERVICES_JSON file env var it's an
       // absolute path elsewhere on the build machine, not relative to this file.
       ...(hasGoogleServicesFile ? { googleServicesFile: googleServicesFilePath } : {}),
-      versionCode: 7,
+      versionCode: 11,
       permissions: [
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
@@ -143,12 +152,14 @@ module.exports = {
       [
         "expo-splash-screen",
         {
-          image: "./assets/near_now_image.png",
+          // Stacked logo inside the centre 62 % of a square, so Android 12+'s circular splash mask
+          // never crops it (scripts/generate-icons.js); app/index.tsx draws it at the same size.
+          image: "./assets/images/splash-icon.png",
           imageWidth: 240,
           resizeMode: "contain",
           backgroundColor: "#ffffff",
           dark: {
-            image: "./assets/near_now_image.png",
+            image: "./assets/images/splash-icon.png",
             backgroundColor: "#ffffff",
           },
         },
@@ -168,7 +179,7 @@ module.exports = {
           icon: "./assets/images/notification-icon.png",
           // Android notification accent — the ONE hex that must live in config (a config
           // plugin cannot import TS). Mirrors C.primary in constants/colors.ts; keep in sync.
-          color: "#2D7A4F",
+          color: "#E85D0F",
           defaultChannel: "orders_v2",
           sounds: ["./assets/sounds/order_chime.wav"],
         },

@@ -1,11 +1,12 @@
 /**
- * Full-screen "Update Near & Now" when this build is below the server's minimum (lib/appUpdateGate.ts). Checked at
+ * Full-screen "Time for a quick update" (under the stacked logo) when this build is below the server's minimum (lib/appUpdateGate.ts). Checked at
  * launch and whenever the app comes back to the foreground; renders nothing otherwise. A leaf, so the root shell
  * never re-renders for it.
  */
 import { useEffect, useState } from 'react';
 import { AppState, Linking, StyleSheet, View } from 'react-native';
 
+import { BrandLogo } from './brand';
 import { EmptyState } from './ui';
 import { C } from '../constants/colors';
 import { checkAppUpdate, type UpdateRequirement } from '../lib/appUpdateGate';
@@ -37,7 +38,8 @@ export function UpdateRequiredGate() {
         fill
         iconWrap
         icon="cellphone-arrow-down"
-        title="Update Near & Now"
+        media={<BrandLogo variant="stacked" height={96} decorative={false} />}
+        title="Time for a quick update"
         text={state.message}
         action={{
           label: 'Update now',

@@ -9,6 +9,7 @@ import { AppState, InteractionManager, RefreshControl, StyleSheet, Text, View } 
 
 import { PaymentProcessingOverlay } from "../components/PaymentProcessingOverlay";
 import { OrderRow, orderDateLabel, reorderOrder, snapshotRatedOrders } from "../components/orders/OrderRow";
+import { BrandPhoto, hasPhoto } from "../components/brand";
 import {
   EmptyState,
   notify,
@@ -406,6 +407,7 @@ export default function OrdersScreen() {
     !inhibitFeature && segment === "active" ? (
       <EmptyState
         iconWrap
+        sprout
         icon="bike-fast"
         title="No active orders"
         text="Hungry? Fresh groceries in minutes"
@@ -415,6 +417,7 @@ export default function OrdersScreen() {
       <EmptyState
         iconWrap
         icon="package-variant-closed"
+        media={hasPhoto("emptyOrders") ? <BrandPhoto slot="emptyOrders" width={112} sprout /> : undefined}
         title="No orders yet"
         text="Your order history will appear here"
         action={{ label: "Start shopping", onPress: goHome }}

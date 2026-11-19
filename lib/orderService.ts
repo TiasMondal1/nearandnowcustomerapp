@@ -46,6 +46,8 @@ let memoryOrders: Order[] | null = null;
  * to STORE a late resolve but still resolves it to the caller).
  */
 let mirrorGen = 0;
+/** In-progress orders already reported as read with no items (see `keepKnownItems`). */
+const emptyReadLogged = new Set<string>();
 
 function rememberOrders(orders: Order[]): void {
   for (const o of orders) ordersById.set(o.id, o);
@@ -64,6 +66,21 @@ function rememberOrder(order: Order): void {
   }
 }
 
+/**
+ * A fresh copy of an order that arrives with no lines keeps the lines already known for it (the placed cart, or an
+ * earlier read): an order always has items, so an empty list is a read that lagged, not a change to show.
+ */
+function keepKnownItems(fresh: Order): Order {
+  if (fresh.items?.length) return fresh;
+  // One breadcrumb per order, not one per poll.
+  if (isActiveOrder(fresh) && !emptyReadLogged.has(fresh.id)) {
+    emptyReadLogged.add(fresh.id);
+    logSilentFailure('Order read returned no items', new Error(fresh.id));
+  }
+  const known = ordersById.get(fresh.id);
+  return known?.items?.length ? { ...fresh, items: known.items, items_count: known.items.length } : fresh;
+}
+
 /** Last known copy of an order from any fetch (list, disk cache, single read, placement); `undefined` when never seen. */
 export function peekOrder(orderId: string): Order | undefined {
   return ordersById.get(orderId);
@@ -78,6 +95,7 @@ export function getMemoryOrders(): Order[] | null {
 export function clearOrdersMemory(): void {
   mirrorGen += 1;
   ordersById.clear();
+  emptyReadLogged.clear();
   memoryOrders = null;
 }
 
@@ -144,6 +162,11 @@ async function writeUserOrdersCache(
 export function invalidateOrders(userId: string | null): void {
   invalidate('order:');
   if (userId) invalidate(QC_KEYS.orders(userId));
+}
+
+/** True when the user's list entry is gone from memory: right after a placement / cancel / payment (or before any fetch). */
+export function ordersListInvalidated(userId: string): boolean {
+  return peek<Order[]>(QC_KEYS.orders(userId)) === undefined;
 }
 
 /** Removes the per-user disk row AND invalidates the memory entries (`invalidateOrders`). */
@@ -806,7 +829,7 @@ export async function getOrderById(orderId: string): Promise<Order> {
       const raw = await apiFetch<BackendCustomerOrder>(
         `/api/orders/${encodeURIComponent(orderId)}`,
       );
-      return mapBackendOrder(raw);
+      return keepKnownItems(mapBackendOrder(raw));
     },
     { ttlMs: SINGLE_ORDER_TTL_MS, userScope: true },
   );
@@ -822,7 +845,7 @@ async function fetchUserOrders(userId: string): Promise<Order[]> {
   const rows = await apiFetch<BackendCustomerOrder[]>(
     `/api/orders/customer/${encodeURIComponent(userId)}`,
   );
-  const orders = Array.isArray(rows) ? rows.map(mapBackendOrder) : [];
+  const orders = Array.isArray(rows) ? rows.map((row) => keepKnownItems(mapBackendOrder(row))) : [];
   writeUserOrdersCache(userId, orders).catch((err) =>
     logSilentFailure('Write user-orders cache', err),
   );
@@ -867,7 +890,8 @@ export async function getUserOrders(userId: string, opts?: { force?: boolean }):
  *
  * Falls back to one full fetch (`getUserOrders` with `force`) when the cached history can't be patched: nothing
  * cached yet, an order that was in progress is no longer (delivered or cancelled: its final state is needed), or an
- * order in progress isn't in the history yet (placed on another device). Dev order flags also take the full path.
+ * order in progress isn't in the history yet (placed on another device), or the cached list changed while the poll
+ * was in flight. Dev order flags also take the full path.
  */
 export async function refreshActiveOrders(userId: string): Promise<Order[]> {
   if (!userId) return [];
@@ -881,7 +905,7 @@ export async function refreshActiveOrders(userId: string): Promise<Order[]> {
   const rows = await apiFetch<BackendCustomerOrder[]>(
     `/api/orders/customer/${encodeURIComponent(userId)}?active=true`,
   );
-  const inProgress = Array.isArray(rows) ? rows.map(mapBackendOrder) : [];
+  const inProgress = Array.isArray(rows) ? rows.map((row) => keepKnownItems(mapBackendOrder(row))) : [];
   const freshById = new Map(inProgress.map((o) => [o.id, o]));
   const known = new Set(history.map((o) => o.id));
   const setChanged =
@@ -890,6 +914,9 @@ export async function refreshActiveOrders(userId: string): Promise<Order[]> {
 
   const merged = history.map((o) => freshById.get(o.id) ?? o);
   if (gen !== mirrorGen) return merged; // logged out meanwhile: never repopulate the caches
+  // The list was invalidated or replaced during the request (an order placed, cancelled or paid): `history` is the
+  // older list, so writing the merge back would hide that change for a full TTL. Read the list again.
+  if (peek<Order[]>(key) !== history) return getUserOrders(userId, { force: true });
   setCached(key, merged, { ttlMs: ORDERS_LIST_TTL_MS, userScope: true });
   rememberOrders(merged);
   writeUserOrdersCache(userId, merged).catch((err) => logSilentFailure('Write user-orders cache', err));

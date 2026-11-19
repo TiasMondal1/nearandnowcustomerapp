@@ -35,6 +35,8 @@ export type ChipProps = {
    * haptic is right (CONTRACTS §8). Tip chips pass 'toggle'; pass `false` for chips that only navigate.
    */
   haptic?: HapticKind | false;
+  /** Press-in scale. Default `motion.scale.chip` (0.97); the Home category strip passes `motion.scale.row` (0.98). */
+  pressScale?: number;
   /** Outer (scaled) wrapper: margins, flex. */
   style?: StyleProp<ViewStyle>;
   /** Default: the label. */
@@ -49,7 +51,7 @@ export type ChipProps = {
 
 /**
  * Pill chip: idle C.card + 1px C.border + C.text; selected C.primary + C.onPrimary (`interpolateColor`, UI thread);
- * pressed-while-idle C.bgSoft; `PressableScale` scale 0.94 (`motion.scale.chip`); `accessibilityState.selected`.
+ * pressed-while-idle C.bgSoft; `PressableScale` scale 0.97 (`motion.scale.chip`); `accessibilityState.selected`.
  */
 function ChipBase({
   label,
@@ -60,6 +62,7 @@ function ChipBase({
   size = "md",
   disabled = false,
   haptic = "select",
+  pressScale = motion.scale.chip,
   style,
   accessibilityLabel,
   accessibilityRole = "button",
@@ -84,7 +87,7 @@ function ChipBase({
 
   return (
     <PressableScale
-      scale={motion.scale.chip}
+      scale={pressScale}
       haptic={haptic}
       accessibilityRole={accessibilityRole}
       accessibilityLabel={accessibilityLabel ?? label}

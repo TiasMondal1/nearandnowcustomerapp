@@ -104,6 +104,16 @@ export default function TrackOrderScreen() {
   const [expandedStoreOrderIds, setExpandedStoreOrderIds] = useState<Set<string>>(new Set());
   // Order code from the memory mirror so the header reads "Order #…" before the first poll lands (§2.17 peekOrder).
   const [seedCode] = useState(() => peekOrder(orderId)?.order_number ?? null);
+  // The mirror's item lines (the placed cart, or the last list/detail read), shown only when the payload carries none.
+  const [seedItems] = useState<TrackingOrderItem[]>(() =>
+    (peekOrder(orderId)?.items ?? []).map((it) => ({
+      product_name: it.name,
+      quantity: it.quantity,
+      unit_price: it.price,
+      image_url: it.image,
+      unit: it.unit,
+    })),
+  );
 
   const toggleStoreItems = (storeOrderId: string) =>
     setExpandedStoreOrderIds((prev) => {
@@ -232,7 +242,12 @@ export default function TrackOrderScreen() {
     [visibleHistory],
   );
 
-  const allItems = useMemo(() => storeOrders.flatMap((so) => so.order_items || []), [storeOrders]);
+  const allItems = useMemo(() => {
+    const fromPayload = storeOrders.flatMap((so) => so.order_items || []);
+    return fromPayload.length > 0 ? fromPayload : seedItems;
+  }, [storeOrders, seedItems]);
+  // Never "0 items": an order always has lines, so a zero here means they have not arrived.
+  const itemsTitle = allItems.length > 0 ? `${allItems.length} ${allItems.length === 1 ? "item" : "items"}` : "Items";
 
   // ─── Handlers (navigation is silent; the result of an action plays feedback — CONTRACTS §8) ───
   const onRetry = useCallback(() => {
@@ -295,7 +310,7 @@ export default function TrackOrderScreen() {
         ) : (
           <EmptyState
             fill
-            iconWrap
+            tone="error"
             icon="map-marker-off-outline"
             title="Couldn't load tracking"
             text={error ?? "Something went wrong while loading this order."}
@@ -331,7 +346,7 @@ export default function TrackOrderScreen() {
             action={{ label: "Back to Home", variant: "secondary", onPress: goHome }}
             style={styles.cancelledState}
           >
-            <Badge label={meta.label} bg={meta.bg} color={meta.color} icon={meta.icon} style={styles.cancelledBadge} />
+            <Badge label={meta.label} bg={meta.bg} color={meta.text} icon={meta.icon} style={styles.cancelledBadge} />
           </EmptyState>
         ) : (
           <ArrivalHero
@@ -388,10 +403,10 @@ export default function TrackOrderScreen() {
         {/* ─── Items (collapsible, default collapsed) ─── */}
         <Card size="lg" padded={false} borderColor={C.hairline} style={styles.section}>
           <SectionToggle
-            title={`${allItems.length} ${allItems.length === 1 ? "item" : "items"}`}
+            title={itemsTitle}
             open={showItems}
             onPress={() => setShowItems((v) => !v)}
-            accessibilityLabel={`${allItems.length} items, ${showItems ? "collapse" : "expand"}`}
+            accessibilityLabel={`${itemsTitle}, ${showItems ? "collapse" : "expand"}`}
           />
           <Collapsible open={showItems}>
             <View style={styles.itemsBody}>
@@ -651,7 +666,7 @@ function StoreCard({
       <Badge
         label={storeMeta.label}
         bg={storeMeta.bg}
-        color={storeMeta.color}
+        color={storeMeta.text}
         icon={storeMeta.icon}
         style={styles.storePill}
       />

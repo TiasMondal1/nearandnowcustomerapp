@@ -6,6 +6,7 @@ import type { Href } from 'expo-router';
 
 // TYPE-ONLY import: a value import from constants/ into the barrel would evaluate every
 // primitive at constants load (see constants/categoryTints.ts).
+import type { PhotoSlot } from '../components/brand/photos';
 import type { IconName } from '../components/ui/types';
 
 type BannerBase = {
@@ -29,7 +30,7 @@ export type ImageBanner = BannerBase & {
   alt: string;
 };
 
-/** Typographic card — tint background, 28 px icon right, title text.h3, subtitle 12/500, cta 12/700 C.primary. No image. */
+/** Typographic card — tint background, a bundled photo panel on the right (or a 28 px icon when there is none), title text.h3, subtitle 12/500, cta pill 12/700 C.primaryDark. */
 export type CardBanner = BannerBase & {
   kind: 'card';
   title: string;
@@ -38,25 +39,52 @@ export type CardBanner = BannerBase & {
   /** Background token name resolved by the carousel (C.primaryXLight | C.dealLight | C.warningLight). */
   tint: 'primaryXLight' | 'dealLight' | 'warningLight';
   icon: IconName;
+  /** Bundled photo filling the panel at the card's right edge, in place of the icon circle. The icon stays the fallback when the slot is unfilled. */
+  photo?: PhotoSlot;
 };
 
 export type Banner = ImageBanner | CardBanner;
 
 /** Carousel caps at this many after the active-window filter. */
-const MAX_ACTIVE_BANNERS = 5;
+const MAX_ACTIVE_BANNERS = 6;
 
-/** rev. 2: exactly three CardBanners (first-order coupon, wallet, categories). Add ImageBanners here when the owner supplies art. */
+/** Four CardBanners, each with a bundled photo: first-order coupon, categories, order again, wallet. Add ImageBanners here when the owner supplies art. */
 export const BANNERS: readonly Banner[] = [
   {
     kind: 'card',
     id: 'first-order',
     title: 'Free delivery on your first order',
-    subtitle: 'Use your welcome coupon at checkout',
+    subtitle: 'Use your welcome coupon',
     cta: 'See coupons',
     tint: 'dealLight',
     icon: 'ticket-percent-outline',
+    photo: 'bannerWelcome',
     href: '/product/coupons',
     sort: 1,
+  },
+  {
+    kind: 'card',
+    id: 'categories',
+    title: 'Fresh from shops near you',
+    subtitle: 'From stores within 4 km',
+    cta: 'Browse categories',
+    tint: 'primaryXLight',
+    icon: 'view-grid-outline',
+    photo: 'bannerFresh',
+    href: '/(tabs)/categories',
+    sort: 2,
+  },
+  {
+    kind: 'card',
+    id: 'reorder',
+    title: 'Order your usuals again',
+    subtitle: 'Your past items in one place',
+    cta: 'Order again',
+    tint: 'warningLight',
+    icon: 'history',
+    photo: 'bannerReorder',
+    href: '/(tabs)/order-again',
+    sort: 3,
   },
   {
     kind: 'card',
@@ -66,19 +94,9 @@ export const BANNERS: readonly Banner[] = [
     cta: 'Open wallet',
     tint: 'primaryXLight',
     icon: 'wallet-outline',
+    photo: 'bannerWallet',
     href: '/wallet',
-    sort: 2,
-  },
-  {
-    kind: 'card',
-    id: 'categories',
-    title: 'Browse every category',
-    subtitle: 'Fresh picks from stores within 4 km',
-    cta: 'See all',
-    tint: 'warningLight',
-    icon: 'view-grid-outline',
-    href: '/(tabs)/categories',
-    sort: 3,
+    sort: 4,
   },
 ];
 
@@ -99,7 +117,7 @@ function isActiveAt(b: Banner, now: number): boolean {
 
 /**
  * The banners to show at `now` (default `Date.now()`): inside their `activeFrom`/`activeTo`
- * window, sorted by `sort` ascending (ties by id), capped at 5. Returns a new array each call;
+ * window, sorted by `sort` ascending (ties by id), capped at 6. Returns a new array each call;
  * empty when nothing is active (the carousel then renders nothing). `source` defaults to
  * BANNERS; lib/bannerService.ts can pass `[...BANNERS, ...remote]` to apply the same rules.
  */

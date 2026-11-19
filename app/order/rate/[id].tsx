@@ -326,6 +326,7 @@ export default function RateOrderScreen() {
           <EmptyState
             fill
             iconWrap
+            sprout
             icon="heart"
             title="Thanks for rating!"
             text="It helps nearby stores improve"

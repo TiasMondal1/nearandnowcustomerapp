@@ -8,12 +8,13 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import React from "react";
-import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
+import { StyleSheet, Text, View, useWindowDimensions, type StyleProp, type ViewStyle } from "react-native";
 
 import { C } from "../../constants/colors";
 import { fontFamily, HIT_SLOP, motion, radius, text } from "../../constants/ui";
 import { useDeliveryEta } from "../../hooks/useDeliveryEta";
 import { useDevFlag } from "../../lib/devFlags";
+import { BrandLogo } from "../brand/BrandLogo";
 import { DoodleBackdrop, TAB_HEADER_DOODLES } from "./DoodleBackdrop";
 import { EtaLine } from "./EtaLine";
 import { AnimatedNumber } from "./motion/AnimatedNumber";
@@ -39,6 +40,11 @@ export type TabHeaderProps = {
   onAvatarPress: () => void;
   /** Default true; W2 screens pass `!Dev_Atlas_inhibit_Feature` on non-home tabs. */
   showAvatar?: boolean;
+  /**
+   * The 34 px brand mark (28 px wide) before the text column. Default true. It is dropped on its own when the font
+   * scale is above 1.15 or the window is narrower than 340, so the hero line never truncates.
+   */
+  showMark?: boolean;
   /** 8 px C.primary dot with a 2 px C.bg ring on the avatar (hidden under `Dev_Atlas_inhibit_UnreadDot`). Default false. */
   unread?: boolean;
   /** Optional extra control between the text column and the avatar (owner veto slot). Default none. */
@@ -56,6 +62,11 @@ export const TAB_HEADER_MIN_HEIGHT = 84;
 /** Doodle opacity on the band (design §2.1: ≤ 0.08 so the hero text stays legible). */
 const DOODLE_OPACITY = 0.08;
 const AVATAR_SIZE = 40;
+/** Brand mark height (width 28). */
+const MARK_HEIGHT = 34;
+/** The mark shows only at or below this font scale and at or above this window width. */
+const MARK_MAX_FONT_SCALE = 1.15;
+const MARK_MIN_WIDTH = 340;
 
 /**
  * Band = LinearGradient C.primaryXLight → C.bg (the ONE gradient) + TAB_HEADER_DOODLES at 0.08 in C.primary; content
@@ -73,6 +84,7 @@ export function TabHeader({
   avatarInitial,
   onAvatarPress,
   showAvatar = true,
+  showMark = true,
   unread = false,
   right,
   children,
@@ -81,6 +93,8 @@ export function TabHeader({
 }: TabHeaderProps): React.JSX.Element {
   const eta = useDeliveryEta();
   const inhibitDot = useDevFlag("Dev_Atlas_inhibit_UnreadDot");
+  const { fontScale, width: windowWidth } = useWindowDimensions();
+  const markVisible = showMark && fontScale <= MARK_MAX_FONT_SCALE && windowWidth >= MARK_MIN_WIDTH;
 
   return (
     <View style={[styles.band, style]} testID={testID}>
@@ -97,6 +111,7 @@ export function TabHeader({
       </View>
       <View style={styles.content}>
         <View style={styles.topRow}>
+          {markVisible ? <BrandLogo variant="mark" height={MARK_HEIGHT} style={styles.mark} /> : null}
           <View style={styles.textColumn}>
             {variant === "home" ? (
               <HomeHero eta={eta} />
@@ -225,7 +240,8 @@ function Avatar({ initial, unread, onPress, testID }: { initial?: string; unread
   const letter = (initial?.trim().charAt(0) || "?").toUpperCase();
   return (
     <PressableScale
-      scale={motion.scale.icon}
+      // Row-grade press (0.98), not the icon pop (0.9): the avatar is tapped constantly (owner, 2026-11-19).
+      scale={motion.scale.row}
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={unread ? "Account menu, unread notifications" : "Account menu"}
@@ -255,11 +271,12 @@ const styles = StyleSheet.create({
   backdrop: { ...StyleSheet.absoluteFillObject, overflow: "hidden" },
   content: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 10 },
   topRow: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
+  mark: { marginTop: 2 },
   textColumn: { flex: 1, minWidth: 0 },
   rightSlot: { alignSelf: "center" },
   // Home hero
   eyebrowRow: { flexDirection: "row", alignItems: "center", gap: 4 },
-  eyebrow: { ...text.eyebrow, color: C.primary, lineHeight: 14 },
+  eyebrow: { ...text.eyebrow, color: C.primaryDark, lineHeight: 14 },
   eyebrowClosed: { color: C.warningText },
   heroRow: { flexDirection: "row", alignItems: "baseline", marginTop: 2 },
   hero: { ...text.h2 },

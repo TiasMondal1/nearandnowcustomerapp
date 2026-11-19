@@ -1,6 +1,7 @@
 import React from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { BrandSignOff } from "../../components/brand";
 import { Card, Divider, Screen, ScreenHeader } from "../../components/ui";
 import { C } from "../../constants/colors";
 import { fontFamily, layout, text } from "../../constants/ui";
@@ -22,7 +23,7 @@ export default function TermsAndPrivacyScreen() {
         <Card style={styles.card}>
           <PolicySection title="1. Introduction">
             <Paragraph>
-              Near&Now is a digital platform that enables users to discover
+              Near & Now is a digital platform that enables users to discover
               nearby stores, browse products, and place delivery orders through a
               unified experience.
             </Paragraph>
@@ -32,13 +33,13 @@ export default function TermsAndPrivacyScreen() {
 
           <PolicySection title="2. Ownership & Responsibility">
             <Paragraph>
-              Near&Now is not a marketplace owner, retailer, or logistics
+              Near & Now is not a marketplace owner, retailer, or logistics
               operator. Individual stores, vendors, and delivery partners are
               independently owned and operated.
             </Paragraph>
 
             <Paragraph>
-              Near&Now does not assume responsibility for product quality,
+              Near & Now does not assume responsibility for product quality,
               pricing accuracy, fulfillment delays, or service availability
               offered by third-party merchants.
             </Paragraph>
@@ -48,7 +49,7 @@ export default function TermsAndPrivacyScreen() {
 
           <PolicySection title="3. Terms of Use">
             <Bullet>
-              You must be at least 18 years of age to use Near&Now.
+              You must be at least 18 years of age to use Near & Now.
             </Bullet>
             <Bullet>
               You agree to provide accurate and truthful information.
@@ -58,7 +59,7 @@ export default function TermsAndPrivacyScreen() {
               suspension or termination.
             </Bullet>
             <Bullet>
-              Near&Now reserves the right to modify or discontinue services
+              Near & Now reserves the right to modify or discontinue services
               without prior notice.
             </Bullet>
           </PolicySection>
@@ -67,8 +68,8 @@ export default function TermsAndPrivacyScreen() {
 
           <PolicySection title="4. Payments & Transactions">
             <Paragraph>
-              All payments processed through Near&Now are facilitated via
-              third-party payment gateways. Near&Now does not store sensitive
+              All payments processed through Near & Now are facilitated via
+              third-party payment gateways. Near & Now does not store sensitive
               payment credentials.
             </Paragraph>
 
@@ -82,7 +83,7 @@ export default function TermsAndPrivacyScreen() {
 
           <PolicySection title="5. Privacy Policy">
             <Paragraph>
-              Near&Now is committed to protecting user privacy and handling
+              Near & Now is committed to protecting user privacy and handling
               personal data responsibly.
             </Paragraph>
 
@@ -111,7 +112,7 @@ export default function TermsAndPrivacyScreen() {
             </Paragraph>
 
             <Paragraph>
-              By using Near&Now, you acknowledge and accept inherent risks
+              By using Near & Now, you acknowledge and accept inherent risks
               associated with digital platforms.
             </Paragraph>
           </PolicySection>
@@ -120,7 +121,7 @@ export default function TermsAndPrivacyScreen() {
 
           <PolicySection title="7. Limitation of Liability">
             <Paragraph>
-              Under no circumstances shall Near&Now be liable for indirect,
+              Under no circumstances shall Near & Now be liable for indirect,
               incidental, or consequential damages arising from use of the
               platform.
             </Paragraph>
@@ -136,15 +137,12 @@ export default function TermsAndPrivacyScreen() {
           </PolicySection>
 
           <Text style={styles.footerNote}>
-            By continuing to use Near&Now, you acknowledge that you have read,
+            By continuing to use Near & Now, you acknowledge that you have read,
             understood, and agreed to these Terms and Privacy Policy.
           </Text>
         </Card>
 
-        <View style={styles.footer}>
-          <Text style={styles.footerBrand}>Near & Now</Text>
-          <Text style={styles.footerTagline}>Digital Dukaan, local dil se</Text>
-        </View>
+        <BrandSignOff style={styles.footer} />
       </ScrollView>
     </Screen>
   );
@@ -196,7 +194,5 @@ const styles = StyleSheet.create({
   sectionDivider: { marginTop: 6, marginBottom: 16 },
 
   footerNote: { fontFamily: fontFamily.medium, fontSize: 12, lineHeight: 18, color: C.textSub, marginTop: 16, textAlign: "center" },
-  footer: { marginTop: 28, alignItems: "center" },
-  footerBrand: { fontFamily: fontFamily.extrabold, fontSize: 16, color: C.primary },
-  footerTagline: { fontFamily: fontFamily.semibold, fontSize: 12, color: C.textSub, marginTop: 4 },
+  footer: { marginTop: 28 },
 });

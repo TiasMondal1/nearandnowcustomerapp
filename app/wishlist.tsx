@@ -16,10 +16,12 @@ import {
   ProductCard,
   Screen,
   ScreenHeader,
+  SkeletonFade,
   SkeletonProductCard,
   SkeletonScreen,
   useCartBarFootprint,
 } from "../components/ui";
+import { BrandPhoto, hasPhoto } from "../components/brand";
 import { C } from "../constants/colors";
 import { layout } from "../constants/ui";
 import { useAuth } from "../context/AuthContext";
@@ -147,43 +149,51 @@ function WishlistBody() {
     <Screen bg={C.card}>
       <ScreenHeader size="lg" title="Wishlist" subtitle={subtitle} backFallbackHref="/(tabs)/home" testID="wishlist-header" />
 
-      {showSkeleton ? (
-        <SkeletonScreen label="Loading wishlist…" style={styles.skeletonWrap}>
-          {SKELETON_ROWS.map((i) => (
-            <SkeletonProductCard key={i} variant="row" />
-          ))}
-        </SkeletonScreen>
-      ) : error && items.length === 0 ? (
-        <EmptyState
-          fill
-          tone="error"
-          icon="alert-circle-outline"
-          title="Couldn't load your wishlist"
-          text={error}
-          action={{ label: "Retry", onPress: () => void refresh() }}
-        />
-      ) : items.length === 0 ? (
-        <EmptyState
-          fill
-          iconWrap
-          icon="heart-outline"
-          title="Your wishlist is empty"
-          text="Tap the heart on any product to save it here"
-          action={{ label: "Browse products", onPress: browseProducts }}
-        />
-      ) : (
-        <FlashList
-          data={products}
-          keyExtractor={keyExtractor}
-          getItemType={getItemType}
-          renderItem={renderItem}
-          contentContainerStyle={listContent}
-          showsVerticalScrollIndicator={false}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} colors={[C.primary]} />}
-          accessibilityLabel="Wishlist items"
-          testID="wishlist-list"
-        />
-      )}
+      <SkeletonFade
+        loading={showSkeleton}
+        bg={C.card}
+        skeleton={
+          <SkeletonScreen label="Loading wishlist…" style={styles.skeletonWrap}>
+            {SKELETON_ROWS.map((i) => (
+              <SkeletonProductCard key={i} variant="row" />
+            ))}
+          </SkeletonScreen>
+        }
+      >
+        {error && items.length === 0 ? (
+          <EmptyState
+            fill
+            tone="error"
+            icon="alert-circle-outline"
+            title="Couldn't load your wishlist"
+            text={error}
+            action={{ label: "Retry", onPress: () => void refresh() }}
+          />
+        ) : items.length === 0 ? (
+          <EmptyState
+            fill
+            iconWrap
+            sprout
+            icon="heart-outline"
+            media={hasPhoto("emptyWishlist") ? <BrandPhoto slot="emptyWishlist" width={112} sprout /> : undefined}
+            title="Your wishlist is empty"
+            text="Tap the heart on any product to save it here"
+            action={{ label: "Browse products", onPress: browseProducts }}
+          />
+        ) : (
+          <FlashList
+            data={products}
+            keyExtractor={keyExtractor}
+            getItemType={getItemType}
+            renderItem={renderItem}
+            contentContainerStyle={listContent}
+            showsVerticalScrollIndicator={false}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} colors={[C.primary]} />}
+            accessibilityLabel="Wishlist items"
+            testID="wishlist-list"
+          />
+        )}
+      </SkeletonFade>
     </Screen>
   );
 }

@@ -10,18 +10,18 @@
 // constants/ would evaluate every primitive at constants load and create a cycle.
 import type { IconName } from '../components/ui/types';
 
-/** Pastel tile washes, one per category index, cycled with `% 8`. These are the only
+/** Warm tile washes that sit on the cream ground, one per category index, cycled with `% 8`. These are the only
  *  colour literals outside constants/colors.ts: they are tints behind category art,
  *  never UI chrome, so they stay out of `C` (the W3 hex audit covers app/ + components/). */
 export const CATEGORY_TINTS = [
-  '#E8F5E9',
-  '#FFF8E1',
-  '#E3F2FD',
-  '#FCE4EC',
-  '#EDE7F6',
-  '#E0F7FA',
-  '#FBE9E7',
-  '#F9FBE7',
+  '#E6F2E4', // sage
+  '#FFF1CC', // butter
+  '#FDE8D8', // peach
+  '#FBE3DC', // rose cream
+  '#F1E7D8', // sand
+  '#EAF0D6', // olive mist
+  '#FCDFC6', // apricot
+  '#F6EBCF', // wheat
 ] as const;
 
 /** `index % length`, hardened: negatives/floats/NaN wrap or fall back to 0 instead of

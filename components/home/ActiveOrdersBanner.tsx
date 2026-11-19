@@ -78,7 +78,7 @@ function ActiveOrdersBannerBase({ order, onPress, extraCount = 0, testID }: Acti
         pressedStyle={styles.cardPressed}
         testID={testID ? `${testID}-row` : undefined}
       >
-        <View style={[styles.iconWrap, { backgroundColor: meta.bg }]}>
+        <View style={styles.iconWrap}>
           <MaterialCommunityIcons name={meta.icon} size={STATUS_ICON} color={meta.color} />
         </View>
         <View style={styles.textCol}>
@@ -103,8 +103,8 @@ function ActiveOrdersBannerBase({ order, onPress, extraCount = 0, testID }: Acti
 }
 
 /**
- * Status line: the live ETA (on a `C.primaryLight` pill so EtaLine's primary text and bolt stay legible on the
- * green card) while the order is in transit and an ETA is known; otherwise the status label.
+ * Status line: the live ETA (on a white `C.card` pill so EtaLine's brand text and bolt stay legible on the
+ * saffron card) while the order is in transit and an ETA is known; otherwise the status label.
  */
 function StatusLine({ status, label }: { status: string; label: string }) {
   const eta = useDeliveryEta();
@@ -131,7 +131,7 @@ ActiveOrdersBanner.displayName = "ActiveOrdersBanner";
 
 const styles = StyleSheet.create({
   wrap: { position: "absolute", left: 0, right: 0 },
-  // Solid brand green (the page and every card are cream/white, so a solid card is what reads as a distinct
+  // Solid brand saffron (the page and every card are cream/white, so a solid card is what reads as a distinct
   // floating unit). Shadow points up (`shadow.dock`), the same direction as the tab bar's own shadow.
   card: {
     flexDirection: "row",
@@ -149,21 +149,24 @@ const styles = StyleSheet.create({
     width: ICON_WRAP,
     height: ICON_WRAP,
     borderRadius: ICON_WRAP / 2,
+    // White, not the status tint: a gold / green / red wash on the saffron card read as a clash.
+    backgroundColor: C.card,
     alignItems: "center",
     justifyContent: "center",
   },
   textCol: { flex: 1, minWidth: 0 },
   title: { fontFamily: fontFamily.bold, fontSize: 13, lineHeight: 18, color: C.onPrimary },
-  status: { fontFamily: fontFamily.medium, fontSize: 12, lineHeight: 16, color: C.onDarkSub, marginTop: 2 },
+  // Full white + semibold (3.5:1): C.onDarkSub is 2.9:1 on saffron.
+  status: { fontFamily: fontFamily.semibold, fontSize: 12, lineHeight: 16, color: C.onPrimary, marginTop: 2 },
   etaPill: {
     alignSelf: "flex-start",
     marginTop: 3,
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: radius.pill,
-    backgroundColor: C.primaryLight,
+    backgroundColor: C.card,
   },
-  extra: { fontFamily: fontFamily.bold, fontSize: 11, lineHeight: 14, color: C.onDarkSub, fontVariant: ["tabular-nums"] },
+  extra: { fontFamily: fontFamily.bold, fontSize: 11, lineHeight: 14, color: C.onPrimary, fontVariant: ["tabular-nums"] },
   viewBtn: { backgroundColor: C.card, borderRadius: radius.pill, paddingVertical: 6, paddingHorizontal: 14 },
-  viewText: { fontFamily: fontFamily.bold, fontSize: 11, lineHeight: 14, color: C.primary, letterSpacing: 0.3 },
+  viewText: { fontFamily: fontFamily.bold, fontSize: 11, lineHeight: 14, color: C.primaryDark, letterSpacing: 0.3 },
 });

@@ -9,9 +9,10 @@ import type { IconName } from "./types";
 export type BadgeTone = "primary" | "success" | "warning" | "danger" | "info" | "neutral" | "deal" | "dealSoft";
 
 export const BADGE_TONES: Record<BadgeTone, { bg: string; color: string }> = {
-  primary: { bg: C.primaryXLight, color: C.primary },
-  success: { bg: C.successLight, color: C.success },
-  warning: { bg: C.warningLight, color: C.warning },
+  // Text-grade twins on the washes: badge labels are 11–12 px, so the fill colours (3.1–3.5:1) are too light.
+  primary: { bg: C.primaryXLight, color: C.primaryDark },
+  success: { bg: C.successLight, color: C.successText },
+  warning: { bg: C.warningLight, color: C.warningText },
   danger: { bg: C.dangerLight, color: C.danger },
   info: { bg: C.infoLight, color: C.info },
   neutral: { bg: C.bgSoft, color: C.textSub },

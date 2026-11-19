@@ -2,7 +2,7 @@
 // Key/value row for the dev panel (CONTRACTS §5) plus the small private kit every other `components/dev/*` file shares:
 // the D11 Q1 monospace face (allowed ONLY under components/dev for flag names and values), the copy-to-clipboard helper,
 // the value chip, the section eyebrow, and `DevPills` — the ONE sanctioned private control in components/dev
-// (CONTRACTS §5 rev. 2: Chip fills brand green when selected and SegmentedControl cannot wrap or change its tint, and an
+// (CONTRACTS §5 rev. 2: Chip fills the brand colour when selected and SegmentedControl cannot wrap or change its tint, and an
 // internal tool must never look like a brand surface). Nothing in this file imports another dev file, so it is cycle-free.
 import * as Clipboard from "expo-clipboard";
 import React from "react";
@@ -143,7 +143,7 @@ export type DevPillsProps<K extends string> = {
 
 /**
  * The one sanctioned private control in `components/dev` (CONTRACTS §5 rev. 2): a row of pills whose SELECTED pill fills
- * `C.text` with `C.white` text and whose idle pills are `C.bgSoft` / `C.textSub` — never brand green, so a developer can
+ * `C.text` with `C.white` text and whose idle pills are `C.bgSoft` / `C.textSub` — never the brand colour, so a developer can
  * tell the tool from the product at a glance. `PressableScale` (scale `motion.scale.chip`), gap 6, r999. Re-selecting the
  * current pill does nothing (no feedback, no onChange).
  */

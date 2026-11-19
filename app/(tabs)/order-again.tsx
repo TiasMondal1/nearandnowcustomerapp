@@ -26,6 +26,8 @@ import {
   type ListRenderItemInfo as RailRenderItemInfo,
 } from "react-native";
 
+import { BrandPhoto, Sprout, hasPhoto } from "../../components/brand";
+import { PhotoCard } from "../../components/cards";
 import {
   Chip,
   EmptyState,
@@ -35,6 +37,7 @@ import {
   ProductCard,
   Screen,
   Skeleton,
+  SkeletonFade,
   SkeletonProductCard,
   SkeletonScreen,
   TabHeader,
@@ -180,6 +183,9 @@ const goToSignIn = () => {
 // A tab switch, not a replace: REPLACE targeted at a sibling tab is swallowed by the tab router (W3 R6-02).
 const goToHome = () => {
   router.navigate("/(tabs)/home");
+};
+const goToCategories = () => {
+  router.push("/(tabs)/categories");
 };
 
 const EMPTY_CATEGORIES: Category[] = [];
@@ -369,14 +375,18 @@ const LastOrderCard = React.memo(function LastOrderCard({
   onAddAll: (order: Order) => void;
 }) {
   const handleAdd = useCallback(() => onAddAll(item.order), [item.order, onAddAll]);
-  const meta = `${plural(item.itemCount, "item")} · ${item.totalLabel}${item.whenLabel ? ` · ${item.whenLabel}` : ""}`;
+  // The count is dropped when unknown — the line never reads "0 items".
+  const parts = [item.itemCount > 0 ? plural(item.itemCount, "item") : null, item.totalLabel, item.whenLabel || null].filter(
+    Boolean,
+  );
+  const meta = parts.join(" · ");
   return (
     <View style={styles.lastOrderWrap}>
       <View style={styles.lastOrderCard}>
         <View
           style={styles.lastOrderTop}
           accessible
-          accessibilityLabel={`Your last order, ${plural(item.itemCount, "item")}, ${item.totalLabel}${item.whenLabel ? `, ${item.whenLabel}` : ""}`}
+          accessibilityLabel={`Your last order, ${parts.join(", ")}`}
         >
           <ThumbStack uris={item.thumbs} />
           <View style={styles.lastOrderText}>
@@ -593,12 +603,25 @@ const EndCell = React.memo(function EndCell({ item, onShowMore }: { item: EndIte
       </View>
     );
   }
+  // The photo card sits under the whole list, after the last Add button, never between two of them.
   return (
-    <View style={styles.endRow}>
-      <MaterialCommunityIcons name="history" size={14} color={C.textSub} />
-      <Text style={styles.endText} maxFontSizeMultiplier={1.3}>
-        That&apos;s everything you&apos;ve ordered
-      </Text>
+    <View>
+      <View style={styles.endCard}>
+        <PhotoCard
+          slot="reorderEnd"
+          title="Try something new"
+          subtitle="Browse categories from shops near you"
+          cta="Categories"
+          onPress={goToCategories}
+          testID="order-again-end-card"
+        />
+      </View>
+      <View style={styles.endRow}>
+        <Sprout width={16} />
+        <Text style={styles.endText} maxFontSizeMultiplier={1.3}>
+          That&apos;s everything you&apos;ve ordered
+        </Text>
+      </View>
     </View>
   );
 });
@@ -612,7 +635,7 @@ const EmptyCell = React.memo(function EmptyCell({ item, onRetry }: { item: Empty
       <View style={{ height: cellHeight }}>
         <EmptyState
           fill
-          iconWrap
+          tone="error"
           icon="cloud-off-outline"
           title="Couldn't load your orders"
           text={item.message ?? "Check your connection and try again."}
@@ -628,6 +651,7 @@ const EmptyCell = React.memo(function EmptyCell({ item, onRetry }: { item: Empty
         fill
         iconWrap
         icon="history"
+        media={hasPhoto("emptyOrders") ? <BrandPhoto slot="emptyOrders" width={112} sprout /> : undefined}
         title="Nothing to reorder yet"
         text="Your past orders will show up here"
         action={{ label: "Start shopping", onPress: goToHome }}
@@ -1044,41 +1068,43 @@ export default function OrderAgainScreen() {
     );
   }
 
-  if (loading) {
-    return (
-      <Screen bg={C.bg} edges={["top"]}>
-        <TabHeader
-          variant="tab"
-          title="Order again"
-          addressLabel={addressLabel}
-          addressLine={addressLine}
-          onAddressPress={goToSelectLocation}
-          avatarInitial={avatarInitial}
-          onAvatarPress={open}
-          showAvatar={!inhibitAtlas}
-          unread={unread}
-          testID="order-again-header"
-        />
-        <OrderAgainSkeleton slow={slow} onRetry={handleRetry} />
-      </Screen>
-    );
-  }
-
+  // Both layers start with the same header, so the skeleton fades out over a header that does not move.
   return (
     <Screen bg={C.bg} edges={["top"]}>
-      <FlashList
-        data={listData}
-        renderItem={renderItem}
-        keyExtractor={keyExtractor}
-        getItemType={getItemType}
-        stickyHeaderIndices={stickyIndices}
-        contentContainerStyle={contentContainerStyle}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} colors={[C.primary]} />
+      <SkeletonFade
+        loading={loading}
+        skeleton={
+          <>
+            <TabHeader
+              variant="tab"
+              title="Order again"
+              addressLabel={addressLabel}
+              addressLine={addressLine}
+              onAddressPress={goToSelectLocation}
+              avatarInitial={avatarInitial}
+              onAvatarPress={open}
+              showAvatar={!inhibitAtlas}
+              unread={unread}
+              testID="order-again-header"
+            />
+            <OrderAgainSkeleton slow={slow} onRetry={handleRetry} />
+          </>
         }
-        testID="order-again-list"
-      />
+      >
+        <FlashList
+          data={listData}
+          renderItem={renderItem}
+          keyExtractor={keyExtractor}
+          getItemType={getItemType}
+          stickyHeaderIndices={stickyIndices}
+          contentContainerStyle={contentContainerStyle}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} colors={[C.primary]} />
+          }
+          testID="order-again-list"
+        />
+      </SkeletonFade>
     </Screen>
   );
 }
@@ -1180,6 +1206,7 @@ const styles = StyleSheet.create({
   // End: paging button or the stamp.
   endMore: { alignItems: "center", gap: 8, paddingTop: 12, paddingBottom: 20 },
   endCaption: { ...text.caption },
+  endCard: { paddingHorizontal: layout.gutter, paddingTop: 20 },
   endRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 24 },
   endText: { fontFamily: fontFamily.semibold, fontSize: 12, color: C.textSub },
 

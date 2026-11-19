@@ -9,15 +9,14 @@ import { Linking, ScrollView, Share, StyleSheet, Text, View } from "react-native
 import {
   EmptyState,
   IconButton,
-  IconWrap,
   notify,
   PrimaryButton,
   Screen,
   ScreenHeader,
   Skeleton,
-  SkeletonCircle,
   SkeletonScreen,
 } from "../../../components/ui";
+import { BrandLogo } from "../../../components/brand";
 import { C } from "../../../constants/colors";
 import { fontFamily, layout, radius, text } from "../../../constants/ui";
 import { useForceSkeleton, useSlowLoad } from "../../../hooks/useSlowLoad";
@@ -132,7 +131,7 @@ export default function InvoiceScreen() {
     if (!invoice) return;
     try {
       await Share.share({
-        message: `Invoice ${invoice.invoice_number ?? ""} for order ${order?.order_number ?? orderId}${
+        message: `Near & Now tax invoice ${invoice.invoice_number ?? ""} for order ${order?.order_number ?? orderId}${
           grandTotal ? ` — ${grandTotal}` : ""
         }\n${invoice.url}`,
         title: invoice.invoice_number || "Invoice",
@@ -153,7 +152,7 @@ export default function InvoiceScreen() {
         <ScreenHeader title="Tax invoice" backFallbackHref="/orders" />
         <SkeletonScreen label="Loading invoice" style={styles.content}>
           <View style={styles.hero}>
-            <SkeletonCircle size={72} />
+            <Skeleton width={121} height={32} />
             <Skeleton width={160} height={16} />
           </View>
           <View style={styles.rows}>
@@ -224,7 +223,7 @@ export default function InvoiceScreen() {
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.hero}>
-          <IconWrap size={72} radius={radius.xxxl} icon="file-document-outline" iconSize={36} />
+          <BrandLogo variant="horizontal" height={32} decorative={false} />
           <Text style={styles.heroTitle} maxFontSizeMultiplier={1.3}>
             Your tax invoice is ready
           </Text>

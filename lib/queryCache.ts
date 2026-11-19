@@ -5,7 +5,8 @@
 //
 // Invariants (the C5 class of bug this module exists to prevent):
 //   • a rejecting fetcher stores NOTHING — the next call simply retries;
-//   • concurrent calls for one key share ONE promise (`force` included);
+//   • concurrent calls for one key share ONE promise (`force` included — except a forced call that finds
+//     the in-flight request older than STALE_IN_FLIGHT_MS: that one is presumed hung and replaced);
 //   • an entry removed while its fetch is in flight (invalidate / logout) is never
 //     resurrected by the late resolve, so one user's rows cannot leak to the next.
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -38,12 +39,16 @@ type Entry = {
   persist?: PersistSpec;
   /** the one request currently running for this key (shared by every concurrent caller) */
   promise?: Promise<unknown>;
+  /** ms epoch at which `promise` started — lets a forced call tell a hung request from a running one */
+  promiseStartedAt?: number;
 };
 
 type Envelope<T> = { version: number; savedAt: number; payload: T };
 
 /** Entries whose TTL is at or below this are marked stale by onReconnect() (short-lived data: balance, orders, notifications, wishlist). */
 const RECONNECT_TTL_CEILING_MS = 60_000;
+/** An in-flight request older than this is presumed hung: a forced call (Retry, pull-to-refresh) replaces it instead of joining it. */
+const STALE_IN_FLIGHT_MS = 20_000;
 
 const entries = new Map<string, Entry>();
 const subscribers = new Map<string, Set<() => void>>();
@@ -99,9 +104,14 @@ function newEntry(ttlMs: number, userScope: boolean): Entry {
 /**
  * Memory + in-flight dedupe + TTL. Resolves from memory when the entry is younger than
  * `ttlMs`; otherwise runs `fetcher` once and shares that promise with every concurrent
- * caller (also under `force`, which only skips the memory read). On resolve the value is
- * stored, persisted when `persist` is given (best-effort) and the key's subscribers are
- * notified. A rejecting fetcher stores NOTHING and the rejection propagates to the caller.
+ * caller (also under `force`, which only skips the memory read). The one exception: a
+ * forced call that finds the in-flight request more than 20 s old starts a fresh one —
+ * a request that never settles lives in module state, so without this Retry and
+ * pull-to-refresh would join the hung promise until the app was killed. The replaced
+ * request still settles for the callers already holding it, but is never stored. On
+ * resolve the value is stored, persisted when `persist` is given (best-effort) and the
+ * key's subscribers are notified. A rejecting fetcher stores NOTHING and the rejection
+ * propagates to the caller.
  * Under `Dev_Kepler_inhibit_QueryCache` / `Dev_Kepler_inhibit_Feature` the fetcher always
  * runs (in-flight dedupe still applies; the result is still stored so `peek` keeps painting).
  */
@@ -114,7 +124,9 @@ export function cached<T>(key: string, fetcher: () => Promise<T>, opts: CachedOp
     return Promise.resolve(existing.value as T);
   }
   if (existing?.promise) {
-    return existing.promise as Promise<T>;
+    const hung = !!opts.force && startedAt - (existing.promiseStartedAt ?? startedAt) > STALE_IN_FLIGHT_MS;
+    if (!hung) return existing.promise as Promise<T>;
+    // Fall through: the new request takes over `entry.promise`, so the old one fails the commit guard below.
   }
 
   const entry = existing ?? newEntry(opts.ttlMs, !!opts.userScope);
@@ -155,6 +167,7 @@ export function cached<T>(key: string, fetcher: () => Promise<T>, opts: CachedOp
     },
   );
   entry.promise = promise;
+  entry.promiseStartedAt = startedAt;
   return promise;
 }
 

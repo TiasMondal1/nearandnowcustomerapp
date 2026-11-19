@@ -34,7 +34,7 @@ The chain uses `||`, so an empty string falls through to the next layer. **`EXPO
 
 ## 3. What the pill and the stripe mean
 
-**DEV pill** (`components/dev/DevPill.tsx`): a 48 × 28 px near-black capsule (deliberately not brand green) that floats bottom-right by default. It is draggable anywhere, snaps to the nearest horizontal edge on release, remembers its position in `nn:dev:pill`, never overlaps the CartBar (it clamps above it, including Home's active-orders lift) and hides while a payment is in flight. Tap → panel (or PIN sheet while locked); long-press (600 ms) → a toast saying how many flags differ from default with a "Reset" action (or "No flags changed").
+**DEV pill** (`components/dev/DevPill.tsx`): a 48 × 28 px near-black capsule (deliberately not the brand colour) that floats bottom-right by default. It is draggable anywhere, snaps to the nearest horizontal edge on release, remembers its position in `nn:dev:pill`, never overlaps the CartBar (it clamps above it, including Home's active-orders lift) and hides while a payment is in flight. Tap → panel (or PIN sheet while locked); long-press (600 ms) → a toast saying how many flags differ from default with a "Reset" action (or "No flags changed").
 
 | Pill detail | Meaning |
 |---|---|
@@ -49,7 +49,7 @@ The chain uses `||`, so an empty string falls through to the next layer. **`EXPO
 
 `components/dev/DevPanel.tsx` is a bottom sheet titled **"Developer"** (max 92 % height) with an env badge, a version chip, a "×N" chip while `Dev_Motion_inhibit_SpeedFactor ≠ 1`, and a lock button. Five sections, selected with private pills (the one sanctioned private control; the selected pill fills ink, never brand green):
 
-- **Env** — app version / versionCode / native version and build, build profile, `expo-updates` channel / runtimeVersion / updateId / isEmbeddedLaunch, execution environment, `__DEV__`, Hermes, React Native version, API host, Supabase host, Sentry state, **PIN source** (red when `default`), device, screen, font scale, OS reduce-motion, locale.
+- **Env** — app version / versionCode / native version and build, build profile, execution environment, `__DEV__`, Hermes, React Native version, API host, Supabase host, Sentry state, **PIN source** (red when `default`), device, screen, font scale, OS reduce-motion, locale.
 - **Session** — user id (first 8 chars) and phone (masked), token present, push permission / token tail / last registration error, active location + source + nearby key, cart snapshot, the Sounds / Haptics user preferences, "Unlocked since", flags changed, simulation stripe state; the last 50 requests when `Dev_Perf_inhibit_NetworkLog` is on and the boot marks when `Dev_Perf_inhibit_BootTimeline` is on (both copyable).
 - **Flags** — every registry entry grouped by area in `DEV_FLAG_AREA_ORDER` (Sirius, Onyx, Motion, Indigo, then codenames A–Z, then areas), rendered by `type`: bool → switch (row tap flips it), number → editable value (numeric keyboard, clamped to min/max) plus preset pills, enum → pills, string → underline input with the registry's `validate` pattern. Names are shown **verbatim** in monospace (the only place monospace is allowed — D11 Q1), wrapping to three lines, with a per-row reset. A "Filter flags…" box narrows the list.
 - **Actions** — see below.

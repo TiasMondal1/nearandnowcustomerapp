@@ -65,6 +65,11 @@ export type BottomSheetProps = {
   dismissOnBack?: boolean;
   /** Default false; true wraps scrim + panel in a KeyboardAvoidingView (behavior "padding"). */
   keyboardAvoiding?: boolean;
+  /**
+   * Default false; true opens and closes with the reduced-motion recipe (a 120 ms fade, no slide or spring) even
+   * when the OS setting is off. For sheets opened constantly, where the slide reads as fuss (the profile menu).
+   */
+  calm?: boolean;
   /** Body wrapper style. Default `paddingHorizontal: 20`; `paddingBottom: max(insets.bottom, 12) + 12` is always applied. */
   contentStyle?: StyleProp<ViewStyle>;
   children: React.ReactNode;
@@ -113,13 +118,15 @@ export function BottomSheet({
   dismissOnScrim = true,
   dismissOnBack = true,
   keyboardAvoiding = false,
+  calm = false,
   contentStyle,
   children,
   testID,
 }: BottomSheetProps): React.JSX.Element {
   const plain = useDevFlag("Dev_Altair_inhibit_Feature");
   const panInhibited = useDevFlag("Dev_Altair_inhibit_PanDismiss");
-  const reduced = useMotionReduced();
+  const osReduced = useMotionReduced();
+  const reduced = osReduced || calm;
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
 

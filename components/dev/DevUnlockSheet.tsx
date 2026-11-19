@@ -1,7 +1,7 @@
 // codename: indigo
 // PIN sheet of the D2 gate (CONTRACTS §5, design §4.1): BottomSheet snapHeight 320 titled "Developer access" with an
 // underline number-pad Input (secure, autoFocus, max 8 digits) and an "Unlock" button (secondary — ink on sand, no brand
-// green on dev controls). `unlockDev(pin)` decides:
+// colour on dev controls). `unlockDev(pin)` decides:
 // 'ok' → feedback.success() → onUnlocked (the host opens the panel only in this sheet's onDismiss, never in the same tick
 // — MAP §7.5); 'wrong' → shake + feedback.error() + "Wrong PIN"; 'locked_out' → the button is disabled with a live
 // "Try again in N s" countdown read from getDevLockoutUntil() (persisted, so it survives a reload).

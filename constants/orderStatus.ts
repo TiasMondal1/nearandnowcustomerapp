@@ -48,38 +48,47 @@ export const ORDER_TIMELINE: {
 
 export interface StatusMeta {
   label: string;
+  /** Fill-grade: dots, icons, timeline marks. Too light for small labels on `bg`. */
   color: string;
+  /** Text-grade twin of `color` for the label on `bg` (AA at 11–12 px). */
+  text: string;
   bg: string;
   icon: keyof typeof MaterialCommunityIcons.glyphMap;
   /** Short customer-facing description ("Your order is being prepared", etc.) */
   description: string;
 }
 
+// Status colours are MEANING, never brand: gold = waiting on someone, green = going well / done, blue = with the
+// rider, red = cancelled. No status is saffron (C.primary) — a saffron pill would read as a button.
 export const STATUS_META: Record<OrderStatus, StatusMeta> = {
   pending_at_store: {
     label: 'Order placed',
     color: C.warning,
+    text: C.warningText,
     bg: C.warningLight,
     icon: 'receipt',
     description: 'Your order is waiting for the store to accept it.',
   },
   store_accepted: {
     label: 'Store accepted',
-    color: C.primary,
-    bg: C.primaryXLight,
+    color: C.success,
+    text: C.successText,
+    bg: C.successLight,
     icon: 'store-check-outline',
     description: 'The store has accepted your order and will start preparing it shortly.',
   },
   preparing_order: {
     label: 'Preparing',
-    color: C.primary,
-    bg: C.primaryXLight,
+    color: C.success,
+    text: C.successText,
+    bg: C.successLight,
     icon: 'package-variant',
     description: 'The store is preparing your order.',
   },
   ready_for_pickup: {
     label: 'Ready for pickup',
     color: C.warning,
+    text: C.warningText,
     bg: C.warningLight,
     icon: 'package-up',
     description: 'Your order is ready and waiting for a delivery partner.',
@@ -87,6 +96,7 @@ export const STATUS_META: Record<OrderStatus, StatusMeta> = {
   delivery_partner_assigned: {
     label: 'Rider assigned',
     color: C.info,
+    text: C.infoText,
     bg: C.infoLight,
     icon: 'account-check-outline',
     description: 'A delivery partner has been assigned and is heading to the store.',
@@ -94,6 +104,7 @@ export const STATUS_META: Record<OrderStatus, StatusMeta> = {
   picking_up: {
     label: 'Collecting items',
     color: C.info,
+    text: C.infoText,
     bg: C.infoLight,
     icon: 'store-marker-outline',
     description: 'Your rider is collecting items from multiple stores.',
@@ -101,6 +112,7 @@ export const STATUS_META: Record<OrderStatus, StatusMeta> = {
   order_picked_up: {
     label: 'Picked up',
     color: C.info,
+    text: C.infoText,
     bg: C.infoLight,
     icon: 'bike',
     description: 'Your delivery partner has picked up your order.',
@@ -108,6 +120,7 @@ export const STATUS_META: Record<OrderStatus, StatusMeta> = {
   in_transit: {
     label: 'On the way',
     color: C.info,
+    text: C.infoText,
     bg: C.infoLight,
     icon: 'map-marker-path',
     description: 'Your order is on its way to you.',
@@ -115,6 +128,7 @@ export const STATUS_META: Record<OrderStatus, StatusMeta> = {
   order_delivered: {
     label: 'Delivered',
     color: C.success,
+    text: C.successText,
     bg: C.successLight,
     icon: 'check-circle',
     description: 'Your order has been delivered. Enjoy!',
@@ -122,6 +136,7 @@ export const STATUS_META: Record<OrderStatus, StatusMeta> = {
   order_cancelled: {
     label: 'Cancelled',
     color: C.danger,
+    text: C.danger,
     bg: C.dangerLight,
     icon: 'close-circle-outline',
     description: 'This order was cancelled.',
@@ -132,6 +147,7 @@ export const STATUS_META: Record<OrderStatus, StatusMeta> = {
 export const UNKNOWN_STATUS_META: StatusMeta = {
   label: 'Processing',
   color: C.textSub,
+  text: C.textSub,
   bg: C.bgSoft,
   icon: 'progress-clock',
   description: 'Your order is being processed.',
