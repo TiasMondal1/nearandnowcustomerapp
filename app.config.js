@@ -182,6 +182,8 @@ module.exports = {
         },
       ],
       "expo-web-browser",
+      // Portrait-locked, but Play still lists it for tablets and Chromebooks (plugins/withOptionalPortrait.js).
+      "./plugins/withOptionalPortrait",
     ],
     extra: {
       supabaseUrl,
