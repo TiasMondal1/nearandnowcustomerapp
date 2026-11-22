@@ -17,12 +17,17 @@ export function calcDeliveryFee(): number {
  * bill at all, matching the website's checkout, which never displayed one
  * either. Only the **final payable** is rounded to the nearest rupee so the
  * pay button / Razorpay / DB agree on the same integer total.
+ *
+ * `feesWaived`: the cart is only internal payment-test items
+ * (master_products.fees_waived, see `allFeesWaived`) — no platform or
+ * handling fee, matching the backend's placeCheckoutOrder.
  */
 export function calcOrderTotal(
   subtotal: number,
   totalItems: number,
   distanceKm: number = 2,
   discount = 0,
+  feesWaived = false,
 ): {
   platformFee: number;
   handlingFee: number;
@@ -30,8 +35,8 @@ export function calcOrderTotal(
   projected: number;
   finalPayable: number;
 } {
-  const platformFee = PLATFORM_FEE;
-  const handlingFee = HANDLING_FEE;
+  const platformFee = feesWaived ? 0 : PLATFORM_FEE;
+  const handlingFee = feesWaived ? 0 : HANDLING_FEE;
   const deliveryFee = calcDeliveryFee();
   const projected = subtotal + platformFee + handlingFee + deliveryFee;
   const finalPayable = Math.round(Math.max(projected - discount, 0));

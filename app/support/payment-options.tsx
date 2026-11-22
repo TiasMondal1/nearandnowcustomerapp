@@ -23,6 +23,7 @@ import {
 } from "../../components/ui";
 import { C } from "../../constants/colors";
 import { calcOrderTotal } from "../../constants/fees";
+import { allFeesWaived } from "../../lib/productService";
 import { border, circle, fontFamily, layout, motion, opacity, radius, space, text } from "../../constants/ui";
 import { useAuth } from "../../context/AuthContext";
 import { useCart } from "../../context/CartContext";
@@ -127,7 +128,7 @@ function parseTip(raw: string | string[] | undefined): number {
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function PaymentOptionsScreen() {
-  const { subtotal, totalQty, discount } = useCart();
+  const { subtotal, totalQty, discount, items } = useCart();
   const { user } = useAuth();
   const userId = user?.id ?? null;
   const current = usePaymentSelection();
@@ -136,7 +137,7 @@ export default function PaymentOptionsScreen() {
 
   // Same math as checkout.tsx (baseFinalPayable + tipAmount, rounded like its pay button / order_total) — the
   // amount lives in the header only; rows never carry an inline "Pay ₹X" (C27).
-  const { projected } = calcOrderTotal(subtotal, totalQty, 2);
+  const { projected } = calcOrderTotal(subtotal, totalQty, 2, 0, allFeesWaived(items.map((i) => i.product_id)));
   const finalPayable = roundRupee(Math.max(projected - discount, 0) + tipAmount);
 
   // Wallet: the peeked (≤30 s old, user-scoped) balance paints on the first frame; the cached() revalidate

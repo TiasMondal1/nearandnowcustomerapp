@@ -81,7 +81,7 @@ import { markOrderPlaced } from "../../lib/orderHistoryFlag";
 import { cancelOrder, createOrder, invalidateOrders, type Order } from "../../lib/orderService";
 import { getPaymentSelection, subscribePaymentSelection } from "../../lib/paymentSelection";
 import { notePaymentConfirmed } from "../../lib/paymentConfirmedAt";
-import { getCachedProduct } from "../../lib/productService";
+import { allFeesWaived, getCachedProduct } from "../../lib/productService";
 import { clearSavedPaymentMethodsCache } from "../../lib/razorpayService";
 import { useGstinVerification } from "../../lib/useGstinVerification";
 import { getWalletBalance, payOrderWithWallet, peekWalletBalance } from "../../lib/walletService";
@@ -259,8 +259,9 @@ export default function CheckoutScreen() {
     // Supabase query (a batch product-to-store distance lookup, since deleted)
     // purely to compute a value that fed into it and was then ignored. Removed
     // 2026-09-09 — matches how payment-options.tsx calls this (no real distance).
-    () => calcOrderTotal(subtotal, totalQty),
-    [subtotal, totalQty],
+    // A cart of only internal payment-test items has no platform/handling fee (allFeesWaived).
+    () => calcOrderTotal(subtotal, totalQty, undefined, 0, allFeesWaived(items.map((i) => i.product_id))),
+    [subtotal, totalQty, items],
   );
   const baseFinalPayable = Math.max(projected - discount, 0);
   const tipAmount = useMemo(() => {

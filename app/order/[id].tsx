@@ -45,6 +45,7 @@ import { logError } from "../../lib/logError";
 import { logSilentFailure } from "../../lib/logSilentFailure";
 import { markOrderPlaced } from "../../lib/orderHistoryFlag";
 import { cancelOrder, getOrderById, getOrderPaymentStatus, invalidateOrders, peekOrder, type Order } from "../../lib/orderService";
+import { allFeesWaived } from "../../lib/productService";
 import { formatQuantityDisplay, isLooseOrderLine } from "../../lib/quantityFormat";
 import { clearSavedPaymentMethodsCache } from "../../lib/razorpayService";
 import { fetchOrderTrackingFull } from "../../lib/trackingService";
@@ -617,8 +618,13 @@ export default function OrderDetailScreen() {
           <SectionLabel>Bill summary</SectionLabel>
           <View style={styles.bill}>
             <BillLine label="Subtotal" value={formatMoney(order.subtotal ?? 0, { decimals: 2 })} />
-            <BillLine label="Platform fee" value={formatMoney(PLATFORM_FEE, { decimals: 2 })} />
-            <BillLine label="Handling charges" value={formatMoney(HANDLING_FEE, { decimals: 2 })} />
+            {/* No fee rows for an order of only internal payment-test items: checkout charged none (allFeesWaived). */}
+            {allFeesWaived((order.items ?? []).map((it) => it.master_product_id)) ? null : (
+              <>
+                <BillLine label="Platform fee" value={formatMoney(PLATFORM_FEE, { decimals: 2 })} />
+                <BillLine label="Handling charges" value={formatMoney(HANDLING_FEE, { decimals: 2 })} />
+              </>
+            )}
             <BillLine
               label="Delivery fee"
               value={deliveryFee === 0 ? "FREE" : formatMoney(deliveryFee, { decimals: 2 })}

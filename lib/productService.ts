@@ -11,7 +11,7 @@ import { withLoosePrice, withLoosePrices } from './loosePricing';
 // Real schema columns for popularity sorting are `rating` and `rating_count`
 // (NOT `avg_rating` / `review_count`); see `popularityScore` for how they combine.
 const MASTER_PRODUCT_FIELDS =
-  'id,name,category,base_price,discounted_price,gst_rate,unit,image_url,description,is_loose,max_quantity,piece_weight_g,is_active,created_at,rating,rating_count';
+  'id,name,category,base_price,discounted_price,gst_rate,unit,image_url,description,is_loose,max_quantity,piece_weight_g,is_active,created_at,rating,rating_count,fees_waived';
 
 // The product page only: the extra photos (migration 20261115000000). Kept off every list
 // query so catalog / search / category payloads don't carry gallery URLs they never show.
@@ -22,7 +22,7 @@ const MAX_ADDITIONAL_IMAGES = 8;
 // Lean field list used by the home catalog load. Excludes the potentially large `description`
 // field, which the home screen never renders — slashes payload size & parse time.
 const HOME_PRODUCT_FIELDS =
-  'id,name,category,base_price,discounted_price,gst_rate,unit,image_url,is_loose,max_quantity,piece_weight_g,is_active,created_at,rating,rating_count';
+  'id,name,category,base_price,discounted_price,gst_rate,unit,image_url,is_loose,max_quantity,piece_weight_g,is_active,created_at,rating,rating_count,fees_waived';
 
 /**
  * AsyncStorage key of the slim v2 home catalog envelope
@@ -84,6 +84,11 @@ export interface Product {
    * customer may also buy it by the piece at a fixed price (lib/looseQuantity.ts piecePrice).
    */
   pieceWeightG?: number;
+  /**
+   * Internal payment-test item (master_products.fees_waived): a cart of only these pays no platform/handling
+   * fee (`allFeesWaived`, constants/fees.ts). Only set when true.
+   */
+  feesWaived?: true;
   created_at?: string;
   avgRating?: number;
   reviewCount?: number;
@@ -104,6 +109,7 @@ interface MasterProductRow {
   is_loose?: boolean | null;
   max_quantity?: number | string | null;
   piece_weight_g?: number | string | null;
+  fees_waived?: boolean | null;
   is_active?: boolean | null;
   created_at?: string | null;
   rating?: number | string | null;
@@ -263,6 +269,7 @@ function masterRowToProduct(data: MasterProductRow): Product {
     isLoose: data.is_loose ?? false,
     ...(maxQuantity > 0 ? { maxQuantity } : {}),
     ...(data.is_loose && pieceWeightG > 0 ? { pieceWeightG } : {}),
+    ...(data.fees_waived === true ? { feesWaived: true as const } : {}),
     created_at: data.created_at ?? undefined,
     avgRating: Number.isFinite(avgRating as number) ? (avgRating as number) : undefined,
     reviewCount: Number.isFinite(reviewCount as number) ? (reviewCount as number) : undefined,
@@ -751,6 +758,18 @@ export function getCachedProduct(id: string): Product | undefined {
   }
   const hit = productIndex.get(id);
   return hit ? withLoosePrice(hit) : undefined;
+}
+
+/**
+ * True when every id is an internal payment-test item (`Product.feesWaived`), so the bill has no platform or
+ * handling fee — the backend's own rule in placeCheckoutOrder. False for an empty list, and for any id the memory
+ * catalog doesn't hold (the bill then shows the fees; the backend still charges the right total).
+ */
+export function allFeesWaived(masterProductIds: readonly (string | null | undefined)[]): boolean {
+  return (
+    masterProductIds.length > 0 &&
+    masterProductIds.every((id) => id != null && getCachedProduct(id)?.feesWaived === true)
+  );
 }
 
 let popularFor: HomeCatalogCache | null = null;
