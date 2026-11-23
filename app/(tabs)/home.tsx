@@ -473,16 +473,26 @@ export default function HomeScreen() {
    * `nearby` is given and the writer is still current, the nearby view is re-derived from the fresh set and painted.
    */
   const refreshGlobal = useCallback(
-    async (seq: number, nearby: NearbyFilter | null) => {
+    async (seq: number, nearby: NearbyFilter | null, opts?: { include?: ReadonlySet<string> }) => {
       // Only the products some live shop stocks, fetched by id in ≤ 150-id chunks (one request per chunk, so the URL
       // stays far under the 16 KB limit — MAP §7.11 C6, W3 R1-05). It used to page through the WHOLE platform
       // catalogue (16,110 rows, ~7.4 MB of JSON in 17 sequential requests) every 5 minutes to keep ~100 of them
       // (review 2026-11-17).
-      const activeIds = await getAllActiveProductIds();
+      let activeIds = await getAllActiveProductIds();
+      // `include` = pull-to-refresh's freshly read nearby ids. A product a shop has only just stocked is in them but
+      // can be missing from the (up to 10-minute-old) app-wide set; merging them in, rather than forcing a second read
+      // of every live shop's stock, costs no request and no extra round trip. They are live by definition, so the
+      // shared cache stays a subset of the app-wide catalogue (never one location's subset — see above).
+      if (opts?.include && opts.include.size > 0) {
+        const merged = new Set(activeIds);
+        for (const id of opts.include) merged.add(id);
+        activeIds = merged;
+      }
       // Empty = no live shop anywhere, or the id read failed with nothing cached: keep what is on screen and in the
       // cache (the nearby view already shows "no shops" when that is the truth).
       if (activeIds.size === 0) return;
-      const result: CatalogResult = await pullCatalog("global", activeIds);
+      // Own in-flight key with `include`: sharing an ordinary "global" pull already running would drop the new ids.
+      const result: CatalogResult = await pullCatalog(opts?.include ? "global:refresh" : "global", activeIds);
       // JSON.stringify of a few thousand rows is JS-thread work — keep it off the paint.
       InteractionManager.runAfterInteractions(() => {
         void writeHomeCatalogCache({ products: result.products, categories: result.categories });
@@ -1033,6 +1043,30 @@ export default function HomeScreen() {
     // the first paint and a bumped sequence would strand it.
     const current = nearbyRef.current;
     const seq = current ? ++seqRef.current : seqRef.current;
+    // Re-ask which shops are live nearby and what they stock (force: past the 5-minute nearby cache), so a shop that
+    // just went online or offline, or stocked or dropped an item, shows on this pull. It used to re-pull only the
+    // products already on screen from the cached shop list, and nothing at all when no shop had been live
+    // (2026-11-23). The fresh nearby ids are merged into the app-wide pull (refreshGlobal `include`) instead of
+    // forcing a second read of every live shop's stock: one shops query per pull, not two.
+    const reloadNearby = async () => {
+      if (!current || lat == null || lng == null) return;
+      const fresh = await getNearbyProductFilter(lat, lng, undefined, { force: true });
+      if (!fresh || seq !== seqRef.current) return;
+      const key = nearbyKey(lat, lng);
+      nearbyRef.current = { key, filter: fresh };
+      const noStoresNow = fresh.storeIds.length === 0;
+      setNoStores(noStoresNow);
+      if (noStoresNow) {
+        paintView(seq, {});
+        return;
+      }
+      if (instantNearby) {
+        await refreshGlobal(seq, fresh, { include: fresh.productIds });
+        return;
+      }
+      const result = await pullCatalog(`nearby:${key}`, fresh.productIds);
+      paintView(seq, result.productsByCategory, result.categories);
+    };
     try {
       await Promise.all([
         getAllCategories({ force: true }).then((data) => {
@@ -1041,20 +1075,14 @@ export default function HomeScreen() {
         getRemoteBanners().then((remote) => {
           if (seq === seqRef.current) setRemoteBanners(remote);
         }),
-        current && current.filter.storeIds.length > 0
-          ? instantNearby
-            ? refreshGlobal(seq, current.filter)
-            : pullCatalog(`nearby:${current.key}`, current.filter.productIds).then((result) =>
-                paintView(seq, result.productsByCategory, result.categories),
-              )
-          : Promise.resolve(),
+        reloadNearby(),
       ]);
     } catch (err) {
       logSilentFailure("Refresh home", err);
     } finally {
       setRefreshing(false);
     }
-  }, [instantNearby, refreshGlobal, paintView]);
+  }, [instantNearby, refreshGlobal, paintView, lat, lng]);
 
   const primaryOrder = activeOrders[0] ?? null;
   const primaryOrderId = primaryOrder?.id;

@@ -160,10 +160,11 @@ async function fetchAllActiveProductIds(): Promise<Set<string>> {
  * on error so a failure is never cached — the catch resolves the last known
  * value (`peek`) or an empty Set that is NOT stored (C5).
  * `Dev_Location_inhibit_NearbyFilter` / `Dev_Home_inhibit_NoStoresNearby` do not apply here.
+ * `force` skips the 10-minute cache (Home's pull-to-refresh).
  */
-export async function getAllActiveProductIds(): Promise<Set<string>> {
+export async function getAllActiveProductIds(opts?: { force?: boolean }): Promise<Set<string>> {
   try {
-    return await cached<Set<string>>(QC_KEYS.activeProductIds, fetchAllActiveProductIds, { ttlMs: 600_000 });
+    return await cached<Set<string>>(QC_KEYS.activeProductIds, fetchAllActiveProductIds, { ttlMs: 600_000, force: opts?.force });
   } catch (err) {
     logSilentFailure('Fetch active product ids', err);
     return peek<Set<string>>(QC_KEYS.activeProductIds) ?? new Set<string>();
@@ -312,6 +313,9 @@ export async function getNearbyProductFilter(
   lat: number,
   lng: number,
   radiusKm = NEARBY_RADIUS_KM,
+  /** `force`: skip the 5-minute cache and ask again — Home's pull-to-refresh, so a shop that just went online or
+   *  offline (or stocked / dropped an item) shows straight away. */
+  opts?: { force?: boolean },
 ): Promise<NearbyFilter | null> {
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
   const locationKey = nearbyKey(lat, lng);
@@ -323,14 +327,14 @@ export async function getNearbyProductFilter(
   }
 
   if (getDevFlag('Dev_Location_inhibit_NearbyFilter')) {
-    const filter = devAllStoresFilter(await getAllActiveProductIds());
+    const filter = devAllStoresFilter(await getAllActiveProductIds(opts));
     publishEta(locationKey, filter);
     return filter;
   }
 
   const key = cacheKeyFor(lat, lng, radiusKm);
   const fetcher = () => fetchNearbyPayload(lat, lng, radiusKm);
-  let payload = await cached<NearbyPayload>(key, fetcher, { ttlMs: NEARBY_TTL_MS, persist: NEARBY_PERSIST });
+  let payload = await cached<NearbyPayload>(key, fetcher, { ttlMs: NEARBY_TTL_MS, persist: NEARBY_PERSIST, force: opts?.force });
   // Another location's row, or yesterday's loose prices (they change at midnight): fetch again.
   if (payload.locationKey !== locationKey || payload.priceDate !== istToday()) {
     payload = await cached<NearbyPayload>(key, fetcher, { ttlMs: NEARBY_TTL_MS, persist: NEARBY_PERSIST, force: true });
