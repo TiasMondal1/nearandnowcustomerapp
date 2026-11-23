@@ -9,14 +9,14 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Sentry from "@sentry/react-native";
 import Constants, { ExecutionEnvironment } from "expo-constants";
 import { Image } from "expo-image";
-import * as Notifications from "expo-notifications";
+import type * as NotificationsModule from "expo-notifications";
 import React, { useEffect, useRef, useState } from "react";
 import { AccessibilityInfo, Alert, Dimensions, PixelRatio, Platform, StyleSheet, Text, View } from "react-native";
 
 import { C } from "../../constants/colors";
 import { radius } from "../../constants/ui";
 import { getCartSnapshot } from "../../context/CartContext";
-import { useDevMode } from "../../context/DevModeContext";
+import { useDevMode } from "../../context/devModeCore";
 import { getActiveLocationSync } from "../../context/LocationContext";
 import { simulateSessionExpiry } from "../../lib/apiClient";
 import { getAppVersion, getBuildProfile } from "../../lib/appExtra";
@@ -339,6 +339,11 @@ export function DevActions(): React.JSX.Element {
         notify({ title: "Notifications not permitted", message: `Permission is ${permission} — nothing would arrive`, tone: "warning" });
         return;
       }
+      // Loaded here, after the Expo Go check, never at the top of the file: importing expo-notifications in Expo Go on
+      // Android logs an error on every launch (SDK 53 removed remote push there). Same reason as the runtime switch in
+      // hooks/usePushNotifications.ts.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- keeps expo-notifications out of Expo Go
+      const Notifications: typeof NotificationsModule = require("expo-notifications");
       // Deep-link to the newest real order when one is in memory; a made-up id would only open the error state.
       const orderId = getMemoryOrders()?.[0]?.id;
       await Notifications.scheduleNotificationAsync({

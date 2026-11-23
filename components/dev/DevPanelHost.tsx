@@ -4,7 +4,7 @@
 // `__DEV__` build shows; a store build shows nothing at all until the D2 gate has been passed.
 import React, { useSyncExternalStore } from "react";
 
-import { useDevMode } from "../../context/DevModeContext";
+import { useDevMode } from "../../context/devModeCore";
 import { getChangedFlags, subscribeDevFlags, useDevFlag } from "../../lib/devFlags";
 import { DevPanel } from "./DevPanel";
 import { DevPill } from "./DevPill";

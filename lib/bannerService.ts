@@ -94,6 +94,9 @@ export async function getRemoteBanners(): Promise<Banner[]> {
   if (getDevFlag('Dev_Deneb_inhibit_Feature') || getDevFlag('Dev_Deneb_inhibit_RemoteBanners')) return [];
   try {
     const { data, error } = await supabase.from('banners').select('*').limit(10); // rev. 2 — every select limits (MAP §7.11)
+    // No `banners` table is the normal state (D6: no schema work), not a failure: say nothing. PGRST205 = PostgREST
+    // "table not in the schema cache"; 42P01 = Postgres "relation does not exist".
+    if (error && (error.code === 'PGRST205' || error.code === '42P01')) return [];
     if (error) throw new Error(error.message);
 
     const rows: unknown[] = Array.isArray(data) ? data : [];

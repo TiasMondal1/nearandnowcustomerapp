@@ -15,7 +15,7 @@ import { C } from "../../constants/colors";
 import { fontFamily, radius, text } from "../../constants/ui";
 import { useAuth } from "../../context/AuthContext";
 import { getCartSnapshot, subscribeCart } from "../../context/CartContext";
-import { useDevMode } from "../../context/DevModeContext";
+import { useDevMode } from "../../context/devModeCore";
 import { useLocation } from "../../context/LocationContext";
 import { getApiBase, getNetworkLog, type NetworkLogEntry } from "../../lib/apiClient";
 import { getAppExtra, getAppVersion, getBuildProfile, type BuildProfile } from "../../lib/appExtra";

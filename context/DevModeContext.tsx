@@ -12,7 +12,7 @@
  * `onDismiss`, so the toast renders in the root ToastHost — CONTRACTS §3.4 rev. 2). The shake hook is enabled only off
  * web and while neither the panel nor the PIN sheet is open; it never fires while a native prompt is pending.
  */
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 
 import { DevPanelHost } from '../components/dev/DevPanelHost';
@@ -21,29 +21,11 @@ import { useShakeDetector } from '../hooks/useShakeDetector';
 import { getAppVersion } from '../lib/appExtra';
 import { getDevFlag, isDevUnlocked, lockDev, useDevUnlocked } from '../lib/devFlags';
 import { feedback } from '../lib/feedback';
+import { DevModeContext, type DevModeValue, type DevUnlockSource } from './devModeCore';
 
-export type DevUnlockSource = 'shake' | 'long-press' | 'pill';
-
-export type DevModeValue = {
-  unlocked: boolean;
-  panelOpen: boolean;
-  openPanel: () => void;
-  closePanel: () => void;
-  /** Starts the D2 gate: version toast (id 'dev-version') → 5 taps within 3 s → PIN sheet. When already unlocked, opens the panel directly. */
-  requestUnlock: (source: DevUnlockSource) => void;
-  lock: () => Promise<void>;
-  // ── Optional extras (consumed by DevPanelHost / DevPanel only) ──
-  /** The PIN sheet is showing. */
-  pinOpen: boolean;
-  /** User intent to close the PIN sheet (scrim, pan, back, close button). */
-  closePin: () => void;
-  /** The PIN matched: closes the sheet and arms "open the panel once the sheet has dismissed". */
-  onPinUnlocked: () => void;
-  /** The PIN sheet's native Modal is gone: opens the panel if armed (never in the same tick as the close — MAP §7.5). */
-  onPinDismissed: () => void;
-  /** ms epoch of the unlock in this process; null while locked or when the unlock was hydrated from disk ("before launch"). */
-  unlockedAt: number | null;
-};
+// The context object, its types and useDevMode() live in ./devModeCore (no require cycle with the panel components
+// this file renders); re-exported so existing imports from here keep working.
+export { useDevMode, type DevModeValue, type DevUnlockSource } from './devModeCore';
 
 /** Toast id of the version toast (same id → re-notify restarts it instead of stacking). */
 const VERSION_TOAST_ID = 'dev-version';
@@ -54,8 +36,6 @@ const TAP_TARGET = 5;
 const TAP_WINDOW_MS = 3000;
 /** Extra time after the toast's duration before the tap counter resets (covers the exit animation). */
 const TOAST_EXIT_GRACE_MS = 500;
-
-const DevModeContext = createContext<DevModeValue | null>(null);
 
 /** Set by the mounted provider; read by `requestDevUnlock()`. */
 let mountedRequestUnlock: ((source: DevUnlockSource) => void) | null = null;
@@ -212,13 +192,6 @@ export function DevModeProvider({ children }: { children: React.ReactNode }): Re
       <DevPanelHost />
     </DevModeContext.Provider>
   );
-}
-
-/** Throws outside the provider (CONTRACTS §3.4). */
-export function useDevMode(): DevModeValue {
-  const ctx = useContext(DevModeContext);
-  if (!ctx) throw new Error('useDevMode must be used inside <DevModeProvider>');
-  return ctx;
 }
 
 /**

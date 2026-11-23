@@ -285,16 +285,18 @@ function AppShell() {
                           }
                     }
                   >
-                    {zephyrOff ? null : (
-                      <>
-                        <Stack.Screen name="index" options={{ animation: "fade" }} />
-                        <Stack.Screen name="welcome" options={{ animation: "fade" }} />
-                        <Stack.Screen name="select-location" options={{ presentation: MODAL, animation: modalAnimation }} />
-                        <Stack.Screen name="product/coupons" options={{ presentation: MODAL, animation: modalAnimation }} />
-                        <Stack.Screen name="support/payment-options" options={{ presentation: MODAL, animation: modalAnimation }} />
-                        <Stack.Screen name="notification-preferences" options={{ presentation: MODAL, animation: modalAnimation }} />
-                      </>
-                    )}
+                    {/* An array, not a <></> fragment: expo-router only reads Screen children (arrays are flattened,
+                        fragments are not), so a fragment here was skipped whole and none of these options applied. */}
+                    {zephyrOff
+                      ? null
+                      : [
+                          <Stack.Screen key="index" name="index" options={{ animation: "fade" }} />,
+                          <Stack.Screen key="welcome" name="welcome" options={{ animation: "fade" }} />,
+                          <Stack.Screen key="select-location" name="select-location" options={{ presentation: MODAL, animation: modalAnimation }} />,
+                          <Stack.Screen key="product/coupons" name="product/coupons" options={{ presentation: MODAL, animation: modalAnimation }} />,
+                          <Stack.Screen key="support/payment-options" name="support/payment-options" options={{ presentation: MODAL, animation: modalAnimation }} />,
+                          <Stack.Screen key="notification-preferences" name="notification-preferences" options={{ presentation: MODAL, animation: modalAnimation }} />,
+                        ]}
                   </Stack>
                 </View>
               </SafeAreaInsetsContext.Provider>
